@@ -209,7 +209,7 @@ SELECT * FROM nope
   (1 row)
   ```
 
-  不返回结果集的语句写 `Query OK, 1 row affected (0.01 sec)`，错误写 `ERROR 1146: Table 'sakila.nope' doesn't exist`（PostgreSQL 是 `ERROR:  relation "nope" does not exist`）。数字列右对齐，NULL 显示为 `NULL`。SQLite 不用 sqlite3 默认的竖线列表，因为不便阅读。表格格式化是纯函数，放在 `navidog-util`。
+  不返回结果集的语句写 `Query OK, 1 row affected (0.01 sec)`，错误写 `ERROR 1146: Table 'sakila.nope' doesn't exist`（PostgreSQL 是 `ERROR:  relation "nope" does not exist`）。数字列右对齐，NULL 显示为 `NULL`。列宽、补空格和表头居中统一按 Unicode 显示宽度计算，覆盖中日韩宽字符、全角字符和组合字符。SQLite 不用 sqlite3 默认的竖线列表，因为不便阅读。表格格式化是纯函数，放在 `navidog-util`。
 - 输出区最多保留最近 10,000 行。ponytail: 更早的输出丢弃；需要时再加“保存输出”。每条语句同样写进历史日志。
 
 ## 8. 菜单与快捷键
