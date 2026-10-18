@@ -15,9 +15,9 @@ use gpui_kit::{
     Render, Styled as _, Subscription, Window, div,
 };
 use navidog_core::actions::{
-    InsertText, NewQuery, NewQueryText, OpenConnection, OpenConsole, OpenExternalQuery,
-    OpenHistoryLog, OpenObject, RunQuery, ToggleFocusMode, ToggleHideObjectGroups,
-    ToggleOnlyActive, ToggleShowHidden, ToggleShowTableProfile,
+    DesignTable, InsertText, NewQuery, NewQueryText, NewTable, OpenConnection, OpenConsole,
+    OpenExternalQuery, OpenHistoryLog, OpenObject, RunQuery, ToggleFocusMode,
+    ToggleHideObjectGroups, ToggleOnlyActive, ToggleShowHidden, ToggleShowTableProfile,
 };
 use navidog_core::favorites::Favorites;
 use navidog_core::object::{ObjectKind, ObjectRef};
@@ -632,6 +632,31 @@ impl Render for MainWindow {
                 .text_color(p.label)
                 .on_action(cx.listener(|this, a: &OpenObject, window, cx| {
                     this.open_object(&a.object, window, cx)
+                }))
+                .on_action(cx.listener(|this, a: &DesignTable, window, cx| {
+                    if a.object.kind == ObjectKind::Table {
+                        let editor =
+                            navidog_designer::TableDesigner::open(a.object.clone(), window, cx);
+                        this.add_editor(panel_handle(editor), window, cx);
+                    }
+                }))
+                .on_action(cx.listener(|this, _: &NewTable, window, cx| {
+                    let scope = Workspace::global(cx).read(cx).selection().scope();
+                    if let Some(scope) = scope.filter(|scope| {
+                        Sessions::global(cx)
+                            .read(cx)
+                            .state(&scope.connection)
+                            .is_open()
+                    }) {
+                        let editor = navidog_designer::TableDesigner::new(scope, window, cx);
+                        this.add_editor(panel_handle(editor), window, cx);
+                    } else {
+                        use gpui_kit::component::WindowExt as _;
+                        window.push_notification(
+                            rust_i18n::t!("designer.choose_database").to_string(),
+                            cx,
+                        );
+                    }
                 }))
                 .on_action(cx.listener(|this, _: &NewQuery, window, cx| {
                     let editor = navidog_query::QueryEditor::untitled(window, cx);

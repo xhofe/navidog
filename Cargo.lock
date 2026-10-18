@@ -4956,6 +4956,7 @@ dependencies = [
  "navidog-connection",
  "navidog-core",
  "navidog-db",
+ "navidog-designer",
  "navidog-grid",
  "navidog-navigator",
  "navidog-plugin",
@@ -5027,6 +5028,19 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tracing",
+]
+
+[[package]]
+name = "navidog-designer"
+version = "0.0.1"
+dependencies = [
+ "gpui-kit",
+ "navidog-core",
+ "navidog-db",
+ "navidog-ui",
+ "rust-i18n",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -284,6 +284,32 @@ mod macos {
         cx.update_window(handle, |_, window, cx| window.close_all_dialogs(cx))
             .unwrap();
 
+        // M4: open an existing table design and preview a pending field addition.
+        dispatch(
+            &mut cx,
+            Box::new(navidog_core::actions::DesignTable {
+                object: actor_ref.clone(),
+            }),
+        );
+        wait(&mut cx, |_| false);
+        shot(&mut cx, "designer.png");
+        cx.update(|cx| Theme::change(ThemeMode::Dark, None, cx));
+        shot(&mut cx, "designer-dark.png");
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("designer-add", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.click("designer-save", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        shot(&mut cx, "designer-preview-dark.png");
+        cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
+        shot(&mut cx, "designer-preview.png");
+
         // Manage Connections, searching highlights the matches
         dispatch(&mut cx, Box::new(navidog_core::actions::ManageConnections));
         cx.run_until_parked();

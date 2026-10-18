@@ -151,5 +151,35 @@ fn close_tabs(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert_eq!(tab_count(cx), 1);
+    // Designer drafts also use the shared close guard, including a failed initial load.
+    cx.update(|cx| cx.set_reduce_motion(true));
+    dispatch(
+        cx,
+        Box::new(navidog_core::actions::DesignTable {
+            object: ObjectRef {
+                scope: Scope::new("c", "main", None),
+                kind: ObjectKind::Table,
+                name: "draft".into(),
+            },
+        }),
+    );
+    assert_eq!(tab_count(cx), 2);
+    dispatch(cx, Box::new(CloseTab));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("designer-close-cancel").is_some());
+        window.click("designer-close-cancel", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(tab_count(cx), 2, "cancel preserves the designer");
+    dispatch(cx, Box::new(CloseTab));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("designer-close-discard", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(tab_count(cx), 1, "explicit discard closes the designer");
     let _ = std::fs::remove_dir_all(home);
 }
