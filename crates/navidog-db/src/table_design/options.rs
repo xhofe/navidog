@@ -33,6 +33,7 @@ pub const POSTGRES_OPTIONS: &[&str] = &[
     "inherits",
     "fillfactor",
     "autovacuum_enabled",
+    "table_comment",
 ];
 
 #[derive(Clone, Debug)]

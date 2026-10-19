@@ -1,4 +1,5 @@
 //! Lossless table drafts and guarded, dialect-specific schema changes.
+mod comments;
 mod entries;
 mod options;
 mod parse;
@@ -22,6 +23,8 @@ pub struct DesignColumn {
     pub original: Option<String>,
     pub name: String,
     pub definition: String,
+    #[serde(default)]
+    pub comment: String,
 }
 impl DesignColumn {
     pub fn new(id: u64, name: impl Into<String>, definition: impl Into<String>) -> Self {
@@ -30,6 +33,7 @@ impl DesignColumn {
             original: None,
             name: name.into(),
             definition: definition.into(),
+            comment: String::new(),
         }
     }
 }
@@ -42,6 +46,8 @@ pub struct TableDesign {
     pub constraints: Vec<String>,
     pub indexes: Vec<String>,
     pub options: String,
+    #[serde(default)]
+    pub comment: String,
     #[serde(default)]
     pub owner: String,
     #[serde(default)]
@@ -106,6 +112,16 @@ impl TableDesign {
             }
             parse::fragment(&c.definition)?;
         }
+        if self.comment.contains('\0') || self.columns.iter().any(|c| c.comment.contains('\0')) {
+            return Err(DbError::msg("Comments cannot contain NUL characters."));
+        }
+        if dialect != Dialect::Postgres
+            && (!self.comment.is_empty() || self.columns.iter().any(|c| !c.comment.is_empty()))
+        {
+            return Err(DbError::msg(
+                "Separate comment definitions are supported only on PostgreSQL.",
+            ));
+        }
         for c in &self.constraints {
             parse::fragment(c)?;
         }
@@ -148,6 +164,7 @@ pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult
     let mut ddl = r.object_ddl(scope, ObjectKind::Table, name).await?;
     let mut design = parse::create(&ddl, name, dialect)?;
     if dialect == Dialect::Postgres {
+        design.migrate_comments(scope)?;
         // The general DDL view omits identity/generated flags and nondefault collations.
         // Include them in both the editable draft and the concurrency fingerprint.
         let table = dialect.qualified(scope, name);
@@ -215,13 +232,7 @@ pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult
                 definition.push_str(&format!(" DEFAULT {}", cell(3)));
             }
             column.definition = definition;
-            if !cell(8).is_empty() {
-                design.indexes.push(format!(
-                    "COMMENT ON COLUMN {table}.{} IS {}",
-                    dialect.quote_ident(cell(0)),
-                    dialect.string_literal(cell(8))
-                ));
-            }
+            column.comment = cell(8).into();
         }
         ddl.push_str(&format!(
             "\n-- Column metadata: {}",
@@ -262,6 +273,13 @@ pub async fn apply(
     after: &TableDesign,
 ) -> DbResult<TableSnapshot> {
     let d = r.dialect();
+    let mut legacy_before = before.cloned();
+    if d == Dialect::Postgres
+        && let Some(old) = &mut legacy_before
+    {
+        old.design.migrate_comments(scope)?;
+    }
+    let before = legacy_before.as_ref();
     if let Some(old) = before {
         let current = load(r, scope, &old.design.name).await?;
         if &current != old {

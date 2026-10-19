@@ -106,7 +106,7 @@ impl TableDelegate for DesignerGrid {
                                 || (col == 7
                                     && self
                                         .owner
-                                        .read_with(cx, |this, _| this.dialect != Dialect::MySql)
+                                        .read_with(cx, |this, _| this.dialect == Dialect::Sqlite)
                                         .unwrap_or(true)),
                         )
                         .flex_1(),

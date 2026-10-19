@@ -499,3 +499,138 @@ fn live_table_options_and_dialect_attributes() {
         }
     });
 }
+
+#[test]
+fn live_postgres_comments_round_trip_rename_rollback_and_concurrency() {
+    if std::env::var_os("NAVIDOG_LIVE").is_none() {
+        return;
+    }
+    crate::runtime::runtime().block_on(async {
+        let mut session = crate::connect(
+            Arc::new(crate::postgres::PostgresDriver::default()),
+            crate::ConnectParams {
+                host: "127.0.0.1".into(),
+                port: 15432,
+                database: Some("pagila".into()),
+                user: "postgres".into(),
+                password: Some("navidog".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let r = session.relational().unwrap();
+        let d = Dialect::Postgres;
+        let scope = Scope::new("test", "pagila", Some("public".into()));
+        let mut draft = TableDesign::new();
+        draft.name = format!("navidog_comments_{}_表", std::process::id());
+        draft.columns[0].name = "旧.字段\"".into();
+        draft.constraints = vec![format!(
+            "PRIMARY KEY ({})",
+            d.quote_ident(&draft.columns[0].name)
+        )];
+        draft.comment = "旧表".into();
+        draft.columns[0].comment = "旧字段".into();
+        let table = d.qualified(&scope, &draft.name);
+        r.execute(&format!("DROP TABLE IF EXISTS {table}"))
+            .await
+            .unwrap();
+        let old = apply(r, &scope, None, &draft).await.unwrap();
+        assert_eq!(old.design.comment, "旧表");
+        assert_eq!(old.design.columns[0].comment, "旧字段");
+        assert!(old.design.indexes.is_empty());
+        let mut legacy = old.clone();
+        legacy.design.comment.clear();
+        legacy.design.columns[0].comment.clear();
+        legacy
+            .design
+            .indexes
+            .push(format!("COMMENT ON TABLE {table} IS '旧表'"));
+        legacy.design.indexes.push(format!(
+            "COMMENT ON COLUMN {table}.{} IS '旧字段'",
+            d.quote_ident(&old.design.columns[0].name)
+        ));
+        assert_eq!(
+            apply(r, &scope, Some(&legacy), &legacy.design)
+                .await
+                .unwrap(),
+            old
+        );
+        r.execute(&format!("INSERT INTO {table} VALUES(1)"))
+            .await
+            .unwrap();
+        let mut next = old.design.clone();
+        next.columns[0].name = "新.字段\"".into();
+        let text = "中文 O'Brien \\ server; -- text\nsecond line";
+        next.columns[0].comment = text.into();
+        next.comment = format!("表 {text}");
+        r.execute("SET standard_conforming_strings=off")
+            .await
+            .unwrap();
+        let saved = apply(r, &scope, Some(&old), &next).await.unwrap();
+        assert_eq!(saved.design.columns[0].name, "新.字段\"");
+        assert_eq!(saved.design.columns[0].comment, text);
+        assert_eq!(saved.design.comment, format!("表 {text}"));
+        assert!(
+            plan(d, &scope, Some(&saved), &saved.design)
+                .unwrap()
+                .is_empty()
+        );
+        let mut failing = saved.design.clone();
+        failing.comment = "must roll back".into();
+        failing.columns[0].comment = "also roll back".into();
+        failing
+            .columns
+            .push(DesignColumn::new(9, "temporary_column", "INTEGER"));
+        failing.owner = format!("navidog_missing_owner_{}", std::process::id());
+        let failure_plan = plan(d, &scope, Some(&saved), &failing).unwrap();
+        assert!(failure_plan[failure_plan.len() - 2].starts_with("COMMENT ON COLUMN"));
+        assert!(failure_plan.last().unwrap().contains("OWNER TO"));
+        assert!(apply(r, &scope, Some(&saved), &failing).await.is_err());
+        assert_eq!(load(r, &scope, &draft.name).await.unwrap(), saved);
+        assert_eq!(failing.comment, "must roll back");
+        let mut clear = saved.design.clone();
+        clear.comment.clear();
+        clear.columns[0].comment.clear();
+        let clear_sql = plan(d, &scope, Some(&saved), &clear).unwrap();
+        assert_eq!(clear_sql.len(), 2);
+        assert!(clear_sql.iter().all(|s| s.ends_with("IS NULL")));
+        let cleared = apply(r, &scope, Some(&saved), &clear).await.unwrap();
+        assert!(cleared.design.comment.is_empty());
+        assert!(cleared.design.columns[0].comment.is_empty());
+        r.execute(&format!(
+            "COMMENT ON COLUMN {table}.{} IS 'external'",
+            d.quote_ident(&cleared.design.columns[0].name)
+        ))
+        .await
+        .unwrap();
+        assert!(
+            apply(r, &scope, Some(&cleared), &clear)
+                .await
+                .unwrap_err()
+                .message
+                .contains("outside")
+        );
+        let external = load(r, &scope, &draft.name).await.unwrap();
+        r.execute(&format!("COMMENT ON TABLE {table} IS 'external table'"))
+            .await
+            .unwrap();
+        assert!(
+            apply(r, &scope, Some(&external), &external.design)
+                .await
+                .unwrap_err()
+                .message
+                .contains("outside")
+        );
+        assert_eq!(
+            r.execute(&format!("SELECT count(*) FROM {table}"))
+                .await
+                .unwrap()[0]
+                .rows[0][0]
+                .as_deref(),
+            Some("1")
+        );
+        r.execute(&format!("DROP TABLE {table}")).await.unwrap();
+        session.close().await.unwrap();
+    });
+}

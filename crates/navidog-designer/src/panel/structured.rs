@@ -129,7 +129,11 @@ impl TableDesigner {
                         p.not_null.to_string(),
                         p.generated.to_string(),
                         self.is_primary(&c.name).to_string(),
-                        p.comment,
+                        if self.dialect == Dialect::Postgres {
+                            c.comment.clone()
+                        } else {
+                            p.comment
+                        },
                     ]
                 })
                 .collect();
@@ -248,7 +252,7 @@ impl TableDesigner {
                 1 => Some(self.properties[0].clone()),
                 2 => Some(self.properties[1].clone()),
                 3 => Some(self.properties[2].clone()),
-                7 if self.dialect == Dialect::MySql => Some(self.properties[3].clone()),
+                7 if self.dialect != Dialect::Sqlite => Some(self.properties[3].clone()),
                 _ => None,
             };
             if let Some(input) = input {
@@ -279,6 +283,20 @@ impl TableDesigner {
         else {
             return;
         };
+        if ix == 3 && self.dialect == Dialect::Postgres {
+            if value.contains('\0') {
+                self.invalid_inputs
+                    .insert(ix, "Comments cannot contain NUL characters.".into());
+            } else {
+                c.comment = value;
+                self.invalid_inputs.remove(&ix);
+                self.preview = None;
+            }
+            self.error = self.invalid_inputs.values().next().cloned();
+            self.refresh_grid(cx);
+            cx.notify();
+            return;
+        }
         match edit_column(&c.definition, PROPERTIES[ix], &value, self.dialect) {
             Ok(sql) => {
                 c.definition = sql.clone();

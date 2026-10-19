@@ -15,6 +15,8 @@ impl TableDesigner {
         for (key, input) in &self.table_option_inputs {
             let value = if *key == "owner" {
                 self.draft.owner.clone()
+            } else if *key == "table_comment" && self.dialect == Dialect::Postgres {
+                self.draft.comment.clone()
             } else {
                 table_option(&self.draft.options, key, self.dialect).unwrap_or_default()
             };
@@ -33,7 +35,14 @@ impl TableDesigner {
         }
         let key = keys(self.dialect)[ix];
         let value = self.table_option_inputs[key].read(cx).value().to_string();
-        let result = if key == "owner" {
+        let result = if key == "table_comment" && self.dialect == Dialect::Postgres {
+            if value.contains('\0') {
+                Err(DbError::msg("Comments cannot contain NUL characters."))
+            } else {
+                self.draft.comment = value;
+                Ok(self.draft.options.clone())
+            }
+        } else if key == "owner" {
             if value.contains('\0') {
                 Err(DbError::msg("Invalid owner name."))
             } else {
@@ -103,6 +112,7 @@ impl TableDesigner {
             .gap_2()
             .children(keys(self.dialect).iter().enumerate().map(|(ix, key)| {
                 let parse_error = *key != "owner"
+                    && !(*key == "table_comment" && self.dialect == Dialect::Postgres)
                     && table_option(&self.draft.options, key, self.dialect).is_err();
                 let values: Vec<String> = match *key {
                     "engine" => vec!["InnoDB", "MyISAM", "MEMORY", "ARCHIVE"],

@@ -7,10 +7,23 @@ pub fn plan(
     before: Option<&TableSnapshot>,
     after: &TableDesign,
 ) -> DbResult<Vec<String>> {
+    let mut after = after.clone();
+    let mut before = before.cloned();
+    if d == Dialect::Postgres {
+        after.migrate_comments(scope)?;
+        if let Some(old) = &mut before {
+            old.design.migrate_comments(scope)?;
+        }
+    }
+    let after = &after;
+    let before = before.as_ref();
     after.validate(d)?;
     let Some(before) = before else {
         let mut out = vec![after.create_sql(d, scope, &after.name)?];
         out.extend(after.indexes.clone());
+        if d == Dialect::Postgres {
+            out.extend(comments::statements(scope, None, after));
+        }
         if d == Dialect::Postgres && !after.owner.is_empty() {
             out.push(format!(
                 "ALTER TABLE {} OWNER TO {}",
@@ -236,6 +249,9 @@ pub fn plan(
             .filter(|s| !old.indexes.contains(s))
             .cloned(),
     );
+    if d == Dialect::Postgres {
+        out.extend(comments::statements(scope, Some(old), after));
+    }
     if d == Dialect::Postgres && old.owner != after.owner {
         if after.owner.is_empty() {
             return Err(DbError::msg("An existing PostgreSQL table needs an owner."));

@@ -709,3 +709,134 @@ fn option_forms_use_saved_dialect_and_guard_invalid_previews(cx: &mut TestAppCon
             .unwrap();
     }
 }
+
+#[gpui_kit::test]
+fn postgres_comments_edit_in_the_grid_preview_and_restore(cx: &mut TestAppContext) {
+    use gpui_kit::component::dock::{BasePanel as _, PanelInfo};
+    use navidog_core::{connection::Connection, crypto::Key, store::ConnectionStore};
+    use navidog_db::table_design::TableDesign;
+    let (_guard, _home) = isolate_home("pg-comments");
+    let id = cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_core::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_ui::tabs::init(cx);
+        navidog_db::init(cx);
+        crate::init(cx);
+        ConnectionStore::global(cx).update(cx, |store, cx| {
+            store.set_key(Key::random());
+            let c = Connection::new("postgres");
+            let id = c.id.clone();
+            store.upsert(c, &[], cx).unwrap();
+            id
+        })
+    });
+    let (handle, panel) = cx.update(|cx| {
+        let mut panel = None;
+        let handle = gpui_kit::open_window(WindowOptions::default(), cx, |w, cx| {
+            let mut draft = TableDesign::new();
+            draft.name = "commented".into();
+            draft.indexes = vec![
+                "COMMENT ON TABLE public.commented IS '旧表注释'".into(),
+                "COMMENT ON COLUMN public.commented.id IS '旧字段注释'".into(),
+            ];
+            let p = TableDesigner::restore(
+                super::Saved {
+                    scope: Scope::new(id, "test", Some("public".into())),
+                    draft,
+                    baseline: None,
+                    property_height: None,
+                },
+                w,
+                cx,
+            );
+            panel = Some(p.clone());
+            cx.new(|_| Host(p))
+        })
+        .unwrap();
+        (handle.0, panel.unwrap())
+    });
+    cx.update(|cx| {
+        let p = panel.read(cx);
+        assert_eq!(p.draft.comment, "旧表注释");
+        assert_eq!(p.draft.columns[0].comment, "旧字段注释");
+        assert!(p.draft.indexes.is_empty());
+    });
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.render_frame(cx);
+        let row = w.find(("row", 0usize)).bounds();
+        let col = w.find(("col-header", 7usize)).bounds();
+        w.click_at(
+            ("row", 0usize),
+            gpui_kit::point(
+                col.left() - row.left() + col.size.width / 4.,
+                row.size.height / 2.,
+            ),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.click("designer-field-comment", cx);
+        w.press("secondary-a", cx);
+        w.input("字段 O'Brien \\ path", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| w.click("designer-page-options", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.click("designer-option-table_comment", cx);
+        w.press("secondary-a", cx);
+        w.input("表 O'Brien", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| w.click("designer-save", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        let p = panel.read(cx);
+        let preview = p.preview.as_ref().unwrap();
+        assert!(
+            preview
+                .iter()
+                .any(|s| s.contains("COMMENT ON COLUMN") && s.contains("字段 O''Brien \\\\ path")),
+            "{preview:?}"
+        );
+        assert!(
+            preview
+                .iter()
+                .any(|s| s.contains("COMMENT ON TABLE") && s.contains("表 O''Brien"))
+        );
+        let PanelInfo::Panel(value) = p.dump(cx).info else {
+            panic!("saved draft")
+        };
+        let restored = TableDesigner::restore(serde_json::from_value(value).unwrap(), w, cx);
+        assert_eq!(
+            restored.read(cx).draft.columns[0].comment,
+            "字段 O'Brien \\ path"
+        );
+        assert_eq!(restored.read(cx).draft.comment, "表 O'Brien");
+        assert!(restored.read(cx).preview.is_none());
+    })
+    .unwrap();
+    cx.update_window(handle, |_, w, cx| w.click("designer-page-fields", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.click("designer-field-default", cx);
+        w.press("cmd-d", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let p = panel.read(cx);
+        assert_eq!(p.draft.columns.len(), 2);
+        assert_eq!(p.draft.columns[1].comment, "字段 O'Brien \\ path");
+        assert!(p.draft.columns[1].original.is_none());
+    });
+}

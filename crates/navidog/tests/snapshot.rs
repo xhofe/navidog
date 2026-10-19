@@ -633,6 +633,143 @@ mod macos {
                 .unwrap();
                 cx.update_window(options_window.0, |_, w, _| w.remove_window())
                     .unwrap();
+                if driver == "postgres" {
+                    use gpui_kit::component::dock::{BasePanel as _, PanelInfo};
+                    let name = format!("navidog_comment_snapshot_{}", std::process::id());
+                    let table = format!("public.\"{name}\"");
+                    let sql = format!(
+                        "CREATE TABLE {table}(id INTEGER PRIMARY KEY); COMMENT ON TABLE {table} IS '原表注释'; COMMENT ON COLUMN {table}.id IS '原字段注释'"
+                    );
+                    let job = cx
+                        .update(|cx| {
+                            Sessions::global(cx)
+                                .read(cx)
+                                .run_rel(&id, Some(database), move |r| {
+                                    Box::pin(async move { r.execute(&sql).await })
+                                })
+                        })
+                        .unwrap();
+                    navidog_db::runtime::runtime()
+                        .block_on(job)
+                        .unwrap()
+                        .unwrap();
+                    let mut comments = None;
+                    let comments_window = cx
+                        .update(|cx| {
+                            gpui_kit::open_window(
+                                navidog::main_window_options(&AppState::default(), cx),
+                                cx,
+                                |w, cx| {
+                                    let p = navidog_designer::TableDesigner::open(
+                                        ObjectRef {
+                                            scope: Scope::new(
+                                                id.clone(),
+                                                database,
+                                                Some("public".into()),
+                                            ),
+                                            kind: ObjectKind::Table,
+                                            name: name.clone(),
+                                        },
+                                        w,
+                                        cx,
+                                    );
+                                    comments = Some(p.clone());
+                                    p
+                                },
+                            )
+                        })
+                        .unwrap();
+                    let comments = comments.unwrap();
+                    wait(&mut cx, |cx| match comments.read(cx).dump(cx).info {
+                        PanelInfo::Panel(value) => value["baseline"].is_object(),
+                        _ => false,
+                    });
+                    cx.update(|cx| {
+                        let PanelInfo::Panel(value) = comments.read(cx).dump(cx).info else {
+                            panic!("comments draft")
+                        };
+                        assert_eq!(value["draft"]["comment"], "原表注释");
+                        assert_eq!(value["draft"]["columns"][0]["comment"], "原字段注释");
+                    });
+                    cx.update_window(comments_window.0, |_, w, cx| {
+                        w.render_frame(cx);
+                        w.render_frame(cx);
+                        let row = w.find(("row", 0usize)).bounds();
+                        let col = w.find(("col-header", 7usize)).bounds();
+                        w.click_at(
+                            ("row", 0usize),
+                            gpui_kit::point(
+                                col.left() - row.left() + col.size.width / 4.,
+                                row.size.height / 2.,
+                            ),
+                            cx,
+                        );
+                    })
+                    .unwrap();
+                    cx.run_until_parked();
+                    cx.update_window(comments_window.0, |_, w, cx| {
+                        w.click("designer-field-comment", cx);
+                        w.press("secondary-a", cx);
+                        w.input("客户编号 O'Brien", cx);
+                    })
+                    .unwrap();
+                    cx.run_until_parked();
+                    for (mode, suffix) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+                        cx.update(|cx| Theme::change(mode, None, cx));
+                        shot_of(
+                            &mut cx,
+                            comments_window.0,
+                            &format!("designer-comments-postgres-fields-{suffix}.png"),
+                        );
+                    }
+                    cx.update_window(comments_window.0, |_, w, cx| {
+                        w.click("designer-page-options", cx)
+                    })
+                    .unwrap();
+                    cx.run_until_parked();
+                    cx.update_window(comments_window.0, |_, w, cx| {
+                        w.click("designer-option-table_comment", cx);
+                        w.press("secondary-a", cx);
+                        w.input("客户资料表 O'Brien", cx);
+                    })
+                    .unwrap();
+                    cx.run_until_parked();
+                    for (mode, suffix) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+                        cx.update(|cx| Theme::change(mode, None, cx));
+                        shot_of(
+                            &mut cx,
+                            comments_window.0,
+                            &format!("designer-comments-postgres-table-{suffix}.png"),
+                        );
+                    }
+                    cx.update_window(comments_window.0, |_, w, cx| w.click("designer-save", cx))
+                        .unwrap();
+                    cx.run_until_parked();
+                    for (mode, suffix) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+                        cx.update(|cx| Theme::change(mode, None, cx));
+                        shot_of(
+                            &mut cx,
+                            comments_window.0,
+                            &format!("designer-comments-postgres-preview-{suffix}.png"),
+                        );
+                    }
+                    cx.update_window(comments_window.0, |_, w, _| w.remove_window())
+                        .unwrap();
+                    let sql = format!("DROP TABLE {table}");
+                    let job = cx
+                        .update(|cx| {
+                            Sessions::global(cx)
+                                .read(cx)
+                                .run_rel(&id, Some(database), move |r| {
+                                    Box::pin(async move { r.execute(&sql).await })
+                                })
+                        })
+                        .unwrap();
+                    navidog_db::runtime::runtime()
+                        .block_on(job)
+                        .unwrap()
+                        .unwrap();
+                }
                 cx.update(|cx| Sessions::global(cx).update(cx, |s, cx| s.close(&id, cx)));
             }
         }

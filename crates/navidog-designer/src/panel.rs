@@ -252,8 +252,38 @@ impl TableDesigner {
         });
         entity
     }
-    fn restore(saved: Saved, window: &mut Window, cx: &mut App) -> Entity<Self> {
+    fn restore(mut saved: Saved, window: &mut Window, cx: &mut App) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
+            let dialect = Sessions::global(cx)
+                .read(cx)
+                .dialect(&saved.scope.connection)
+                .or_else(|| {
+                    navidog_core::store::ConnectionStore::global(cx)
+                        .read(cx)
+                        .get(&saved.scope.connection)
+                        .and_then(|c| match c.driver.as_str() {
+                            "mysql" | "mariadb" => Some(Dialect::MySql),
+                            "postgres" => Some(Dialect::Postgres),
+                            "sqlite" => Some(Dialect::Sqlite),
+                            _ => None,
+                        })
+                })
+                .unwrap_or(Dialect::Sqlite);
+            let migration_error = if dialect == Dialect::Postgres {
+                saved
+                    .draft
+                    .migrate_comments(&saved.scope)
+                    .and_then(|_| {
+                        if let Some(old) = &mut saved.baseline {
+                            old.design.migrate_comments(&saved.scope)?;
+                        }
+                        Ok(())
+                    })
+                    .err()
+                    .map(|e| e.to_string())
+            } else {
+                None
+            };
             let input = |value: String, window: &mut Window, cx: &mut Context<Self>| {
                 cx.new(|cx| InputState::new(window, cx).default_value(value))
             };
@@ -365,21 +395,6 @@ impl TableDesigner {
                     },
                 ));
             }
-            let dialect = Sessions::global(cx)
-                .read(cx)
-                .dialect(&saved.scope.connection)
-                .or_else(|| {
-                    navidog_core::store::ConnectionStore::global(cx)
-                        .read(cx)
-                        .get(&saved.scope.connection)
-                        .and_then(|c| match c.driver.as_str() {
-                            "mysql" | "mariadb" => Some(Dialect::MySql),
-                            "postgres" => Some(Dialect::Postgres),
-                            "sqlite" => Some(Dialect::Sqlite),
-                            _ => None,
-                        })
-                })
-                .unwrap_or(Dialect::Sqlite);
             let table_option_inputs: std::collections::BTreeMap<_, _> = options::keys(dialect)
                 .iter()
                 .enumerate()
@@ -426,7 +441,7 @@ impl TableDesigner {
                 busy: false,
                 loaded: true,
                 needs_reload: false,
-                error: None,
+                error: migration_error,
                 preview: None,
                 close_approved: false,
                 task: None,
@@ -512,7 +527,11 @@ impl TableDesigner {
             props.data_type,
             props.length,
             props.scale,
-            props.comment,
+            if self.dialect == Dialect::Postgres {
+                c.map(|c| c.comment.clone()).unwrap_or_default()
+            } else {
+                props.comment
+            },
             props.default,
             props.collation,
             props.charset,
@@ -550,9 +569,17 @@ impl TableDesigner {
         };
         let id = self.next_id;
         self.next_id += 1;
-        self.draft
-            .columns
-            .push(DesignColumn::new(id, format!("field_{id}"), definition));
+        let mut column = DesignColumn::new(id, format!("field_{id}"), definition);
+        if duplicate {
+            column.comment = self
+                .draft
+                .columns
+                .iter()
+                .find(|c| Some(c.id) == self.selected)
+                .map(|c| c.comment.clone())
+                .unwrap_or_default();
+        }
+        self.draft.columns.push(column);
         self.selected = Some(id);
         self.active_cell = Some(0);
         self.preview = None;
