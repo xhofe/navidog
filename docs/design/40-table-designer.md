@@ -85,3 +85,17 @@
 - [x] 真实键盘/复选框交互、预览守卫、浅深色截图并提交原图。
 
 语法依据：[MySQL 8.4 CREATE TABLE](https://dev.mysql.com/doc/refman/8.4/en/create-table.html)、[PostgreSQL 16 ALTER TABLE](https://www.postgresql.org/docs/16/sql-altertable.html)、[SQLite STRICT](https://www.sqlite.org/stricttables.html)。表单尺寸沿用已有 token；Nib 私有资料不提交。
+
+## 9. PostgreSQL 表与字段注释（2026-10-20）
+
+字段注释沿用八列网格的“注释”单元格与现有输入框；表注释放在选项页的“注释”行，复用已有 FormRow 尺寸。加载表和字段现有注释，输入只修改草稿；清空表示移除注释。MySQL 注释继续由字段定义和表选项处理，SQLite 不显示无效注释编辑器。
+
+PG 表注释和每个字段注释独立保存，旧版补充 SQL 中的 COMMENT ON TABLE/COLUMN 在加载旧草稿时迁移，不能按索引删除处理。无法安全识别、重复或指向其他对象的旧注释保留原文并阻止保存，不能猜测归属。字段注释按 original 身份跟随重命名；新字段可带注释，删除字段不再向旧字段发送注释。注释未改变时不生成重复语句。
+
+SQL 计划先完成字段/约束/索引与选项变更，再执行 COMMENT ON TABLE/COLUMN，最后才转移拥有者。空字符串生成 IS NULL；名称按方言引用，文本使用显式 E 字符串转义，支持中文、引号、反斜杠、换行和 SQL 标点，拒绝 NUL。注释与表结构在同一事务内保存、失败回滚；外部注释变化也应触发并发结构检查。预览和恢复草稿不执行 SQL。
+
+语法依据：[PostgreSQL 16 COMMENT](https://www.postgresql.org/docs/16/sql-comment.html)。不在本次扩展索引/约束注释编辑或修改其他设计器。
+
+- [ ] 注释差异、新增/清空/重命名/删除字段、旧草稿与文本转义测试。
+- [ ] PostgreSQL 实库读写、事务回滚和外部注释变化检查。
+- [ ] 真实界面输入、草稿恢复、SQL 预览及浅深色截图随代码提交。
