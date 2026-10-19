@@ -199,7 +199,7 @@ pub fn column_properties(s: &str) -> ColumnProperties {
             (args, "")
         };
         (
-            ty[..a].trim().to_string(),
+            format!("{}{}", ty[..a].trim(), ty.get(b + 1..).unwrap_or_default()),
             length.trim().to_string(),
             scale.trim().to_string(),
         )
@@ -245,6 +245,7 @@ pub fn edit_column(
                 if [
                     "TEXT",
                     "BLOB",
+                    "BYTEA",
                     "JSON",
                     "JSONB",
                     "BOOLEAN",
@@ -275,11 +276,29 @@ pub fn edit_column(
         } else {
             format!("({},{})", p.length, p.scale)
         };
-        return Ok(
-            format!("{}{} {}", p.data_type, args, s[type_end(s)..].trim())
-                .trim()
-                .to_string(),
-        );
+        let original_type = s[..type_end(s)].trim();
+        let ty = if property != ColumnProperty::Type
+            && let Some(a) = original_type.find('(')
+            && let Some(b) = original_type.rfind(')')
+        {
+            // A length edit changes only the arguments, preserving array and timezone suffixes.
+            format!("{}{args}{}", &original_type[..a], &original_type[b + 1..])
+        } else {
+            let upper = p.data_type.to_ascii_uppercase();
+            let at = [
+                upper.find(" WITH TIME ZONE"),
+                upper.find(" WITHOUT TIME ZONE"),
+                upper.find('['),
+            ]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(p.data_type.len());
+            format!("{}{args}{}", &p.data_type[..at], &p.data_type[at..])
+        };
+        return Ok(format!("{ty} {}", s[type_end(s)..].trim())
+            .trim()
+            .to_string());
     }
     if matches!(
         property,
@@ -456,6 +475,30 @@ mod tests {
     use super::*;
     #[test]
     fn postgres_default_cast_and_generated_clauses_are_not_truncated() {
+        assert_eq!(
+            column_properties("timestamp(6) with time zone NOT NULL").data_type,
+            "timestamp with time zone"
+        );
+        assert_eq!(
+            edit_column(
+                "timestamp(6) with time zone NOT NULL",
+                ColumnProperty::Length,
+                "3",
+                Dialect::Postgres
+            )
+            .unwrap(),
+            "timestamp(3) with time zone NOT NULL"
+        );
+        assert_eq!(
+            edit_column(
+                "character varying(80)[] DEFAULT '{}'::character varying[]",
+                ColumnProperty::Length,
+                "100",
+                Dialect::Postgres
+            )
+            .unwrap(),
+            "character varying(100)[] DEFAULT '{}'::character varying[]"
+        );
         let s = "character varying(80) NOT NULL DEFAULT 'before'::character varying";
         let edited = edit_column(s, ColumnProperty::Default, "'after'", Dialect::Postgres).unwrap();
         assert_eq!(edited, "character varying(80) NOT NULL DEFAULT 'after'");
