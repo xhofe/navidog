@@ -26,7 +26,7 @@
 | `cargo audit` | 通过，9 条已允许的间接依赖 unmaintained 警告 |
 | `cargo test -p navidog --test snapshot --locked` | 通过，生成 31 张；新增字段和 SQL 预览的浅深色 4 张已逐张查看 |
 
-截图在本地 `target/snapshots/designer.png`、`designer-dark.png`、`designer-preview.png`、`designer-preview-dark.png`，构建产物不进 Git。
+截图测试输出到本地 `target/snapshots/`；当前版本的 17 张设计器截图已单独归档到[截图集](screenshots/m4/README.md)，其余构建产物不进 Git。
 
 性能程序实际执行：10 万行 × 20 列网格逐行平均 3.09ms、p95 3.92ms，跳跃平均 3.87ms、p95 4.63ms；均 0/300 帧超过 8.3ms。导航树逐行/跳跃平均 0.53/0.71ms，均 0/300 帧超限。5 万行 SQL 首次解析约 340ms，四个场景平均 1.54~1.60ms，均 0/300 帧超限。这些是本机测量，不代表任意硬件的保证。
 
@@ -63,7 +63,7 @@ PR #3 的 Linux/Windows 界面测试失败于字段名称断言：测试使用 `
 - 截图测试输出 44 张，本次设计器 17 张（字段、预览、索引、外键、检查和选项浅深色，以及宽窗和真正的小视口）逐张检查。`TestPlatform::resize` 只改截图尺寸而不发出布局回调，因此小视口改为单独创建窗口，避免把裁剪图当作窄窗布局。
 - deny/audit 通过，仍有已允许的间接依赖警告。网格 10 万 × 20：逐行均值 2.88ms、p95 3.43ms；跳跃 3.98ms、p95 4.58ms；导航树均值 0.52/0.75ms；5 万行 SQL 四场景均值 1.52~1.55ms，均 0/300 帧超过 8.3ms。
 
-运行态 Navicat 的辅助功能曾能读到连接表单，随后屏幕采集报错，最终工具明确返回 Mac 已锁定。本次没有宣称完成并排像素校准；用户可直接检查 `target/snapshots/designer-wide-dark.png` 和 `designer-minimum-light.png`。远程 CI 与本机证据分开，按 PR 的对应提交检查。
+运行态 Navicat 的辅助功能曾能读到连接表单，随后屏幕采集报错，最终工具明确返回 Mac 已锁定。本次没有宣称完成并排像素校准；用户可直接检查归档的[宽窗深色](screenshots/m4/designer-wide-dark.png)和[小视口浅色](screenshots/m4/designer-minimum-light.png)，全部 17 张见[截图集](screenshots/m4/README.md)。远程 CI 与本机证据分开，按 PR 的对应提交检查。
 
 仍待完成：字段拖放、全部方言专属属性、引用对象元数据级联选择、完整表选项表单，以及 PostgreSQL 已有注释编辑。现有方言迁移限制不变，F-DSG-001/002/003/004/007/009 和 M4 整体继续标为部分/进行中。
 
