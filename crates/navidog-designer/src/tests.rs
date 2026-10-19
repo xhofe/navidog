@@ -154,7 +154,7 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
         if page == "indexes" {
             cx.update_window(handle, |_, w, cx| {
                 w.render_frame(cx);
-                assert_eq!(w.find("designer-entry-method").disabled(), Some(true));
+                assert_eq!(w.find("designer-choices-12").disabled(), Some(true));
             })
             .unwrap();
         }
