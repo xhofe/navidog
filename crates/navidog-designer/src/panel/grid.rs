@@ -130,7 +130,15 @@ impl TableDelegate for DesignerGrid {
                             "DATE",
                             "TIME",
                             "TIMESTAMP",
-                            "BLOB",
+                            if self
+                                .owner
+                                .read_with(cx, |this, _| this.dialect == Dialect::Postgres)
+                                .unwrap_or(false)
+                            {
+                                "BYTEA"
+                            } else {
+                                "BLOB"
+                            },
                             "JSON",
                         ]
                         .into_iter()

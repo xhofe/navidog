@@ -316,6 +316,7 @@ mod macos {
             ("indexes", "designer-indexes"),
             ("foreign_keys", "designer-foreign-keys"),
             ("checks", "designer-checks"),
+            ("options", "designer-options"),
         ] {
             cx.update_window(handle, |_, w, cx| {
                 w.click(
@@ -325,7 +326,7 @@ mod macos {
             })
             .unwrap();
             cx.run_until_parked();
-            if page != "fields" {
+            if page != "fields" && page != "options" {
                 cx.update_window(handle, |_, w, cx| w.click("designer-add", cx))
                     .unwrap();
                 cx.run_until_parked();

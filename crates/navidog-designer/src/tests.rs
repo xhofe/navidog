@@ -151,6 +151,20 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
         cx.update_window(handle, |_, w, cx| w.click("designer-add", cx))
             .unwrap();
         cx.run_until_parked();
+        if page == "indexes" {
+            cx.update_window(handle, |_, w, cx| {
+                w.render_frame(cx);
+                assert_eq!(w.find("designer-entry-method").disabled(), Some(true));
+            })
+            .unwrap();
+        }
+        if page == "foreign_keys" {
+            cx.update_window(handle, |_, w, cx| {
+                w.render_frame(cx);
+                assert!(w.try_find("designer-entry-reference_schema").is_none());
+            })
+            .unwrap();
+        }
         cx.update_window(handle, |_, w, cx| {
             w.click("designer-entry-name", cx);
             w.press("secondary-a", cx);

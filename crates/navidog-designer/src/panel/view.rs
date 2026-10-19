@@ -157,7 +157,11 @@ impl TableDesigner {
                     row.child(choices(
                         cx.entity().downgrade(),
                         ix,
-                        vec!["VIRTUAL".into(), "STORED".into()],
+                        if self.dialect == Dialect::Postgres {
+                            vec!["STORED".into()]
+                        } else {
+                            vec!["VIRTUAL".into(), "STORED".into()]
+                        },
                         disabled,
                     ))
                 }),
@@ -246,9 +250,20 @@ impl TableDesigner {
                 indexes
                     .into_iter()
                     .filter(|ix| {
-                        !(*ix == 2 && entry.as_ref().is_some_and(|e| e.kind != EntryKind::Index))
+                        !(self.page == Page::Indexes
+                            && [2, 3, 9].contains(ix)
+                            && entry.as_ref().is_some_and(|e| e.kind != EntryKind::Index))
+                            && !(self.page == Page::ForeignKeys
+                                && *ix == 4
+                                && self.dialect == Dialect::Sqlite)
                     })
                     .map(|ix| {
+                        let control_disabled = disabled
+                            || (ix == 3 && self.dialect != Dialect::MySql)
+                            || (ix == 2 && self.dialect == Dialect::Sqlite)
+                            || (ix == 9
+                                && self.page == Page::Indexes
+                                && self.dialect == Dialect::MySql);
                         FormRow::new(
                             t!(format!("designer.{}", ENTRY_KEYS[ix])).to_string(),
                             h_flex()
@@ -262,9 +277,7 @@ impl TableDesigner {
                                             ENTRY_KEYS[ix]
                                         )))
                                         .small()
-                                        .disabled(
-                                            disabled || (ix == 3 && self.dialect != Dialect::MySql),
-                                        )
+                                        .disabled(control_disabled)
                                         .flex_1(),
                                 )
                                 .when([1, 2, 7, 8].contains(&ix), |row| {
@@ -275,10 +288,14 @@ impl TableDesigner {
                                             .iter()
                                             .map(|c| c.name.clone())
                                             .collect(),
-                                        2 => vec!["BTREE", "HASH", "GIN", "GIST", "BRIN"]
-                                            .into_iter()
-                                            .map(String::from)
-                                            .collect(),
+                                        2 => (if self.dialect == Dialect::MySql {
+                                            vec!["BTREE", "HASH"]
+                                        } else {
+                                            vec!["BTREE", "HASH", "GIN", "GIST", "BRIN"]
+                                        })
+                                        .into_iter()
+                                        .map(String::from)
+                                        .collect(),
                                         _ => vec![
                                             "NO ACTION",
                                             "RESTRICT",
@@ -294,7 +311,7 @@ impl TableDesigner {
                                         cx.entity().downgrade(),
                                         ix + 10,
                                         values,
-                                        disabled,
+                                        control_disabled,
                                     ))
                                 }),
                         )
@@ -504,13 +521,22 @@ impl Render for TableDesigner {
                         Page::Preview => Editor::new(&self.sql).size_full().into_any_element(),
                         Page::Options => v_flex()
                             .size_full()
+                            .p_3()
+                            .gap_2()
                             .child(
                                 gpui_kit::div()
-                                    .p_2()
                                     .text_color(p.label_secondary)
-                                    .child(t!("designer.options_help").to_string()),
+                                    .child(t!("designer.options_pending").to_string()),
                             )
-                            .child(Editor::new(&self.options).disabled(disabled).size_full())
+                            .child(
+                                Button::new("designer-options-advanced")
+                                    .ghost()
+                                    .small()
+                                    .label(t!("designer.advanced").to_string())
+                                    .on_click(cx.listener(|this, _, w, cx| {
+                                        this.switch_page(Page::Advanced, w, cx)
+                                    })),
+                            )
                             .into_any_element(),
                         Page::Advanced => v_flex()
                             .size_full()
@@ -544,6 +570,17 @@ impl Render for TableDesigner {
                             )
                             .child(
                                 Editor::new(&self.indexes)
+                                    .disabled(disabled)
+                                    .flex_1()
+                                    .min_h_0(),
+                            )
+                            .child(
+                                gpui_kit::div()
+                                    .px_2()
+                                    .child(t!("designer.options").to_string()),
+                            )
+                            .child(
+                                Editor::new(&self.options)
                                     .disabled(disabled)
                                     .flex_1()
                                     .min_h_0(),
