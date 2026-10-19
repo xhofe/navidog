@@ -150,28 +150,50 @@ fn live_table_design_create_alter_rename_and_constraints() {
                 "value",
                 "VARCHAR(80) NOT NULL DEFAULT 'before'",
             ));
-            draft.constraints.push(format!(
-                "CONSTRAINT {} CHECK (id > 0)",
-                d.quote_ident("positive_id")
-            ));
+            let mut check = DesignEntry::new(EntryKind::Check);
+            check.name = "positive_id".into();
+            check.expression = "id > 0".into();
+            draft
+                .constraints
+                .push(check.sql(d, &scope, &name, false).unwrap());
             draft
                 .columns
                 .push(DesignColumn::new(3, "parent_id", "INTEGER"));
-            draft.constraints.push(format!(
-                "CONSTRAINT {} FOREIGN KEY (parent_id) REFERENCES {table}(id)",
-                d.quote_ident(&format!("fk_design_{}_{port}", std::process::id()))
-            ));
-            draft.indexes.push(format!(
-                "CREATE INDEX {} ON {table}(value)",
-                d.quote_ident(&format!("ix_design_{}_{port}", std::process::id()))
-            ));
+            let mut fk = DesignEntry::new(EntryKind::ForeignKey);
+            fk.name = format!("fk_design_{}_{port}", std::process::id());
+            fk.fields = d.quote_ident("parent_id");
+            fk.reference_table = name.clone();
+            fk.reference_fields = d.quote_ident("id");
+            fk.on_delete = "SET NULL".into();
+            draft
+                .constraints
+                .push(fk.sql(d, &scope, &name, false).unwrap());
+            let mut index = DesignEntry::new(EntryKind::Index);
+            index.name = format!("ix_design_{}_{port}", std::process::id());
+            index.fields = d.quote_ident("value");
+            draft
+                .indexes
+                .push(index.sql(d, &scope, &name, true).unwrap());
             let saved = apply(r, &scope, None, &draft).await.unwrap();
             r.execute(&format!("INSERT INTO {table} (id) VALUES(1)"))
                 .await
                 .unwrap();
             let mut changed = saved.design.clone();
             changed.columns[1].name = "renamed".into();
-            changed.columns[1].definition = "VARCHAR(100) NOT NULL DEFAULT 'after'".into();
+            changed.columns[1].definition = edit_column(
+                &changed.columns[1].definition,
+                ColumnProperty::Length,
+                "100",
+                d,
+            )
+            .unwrap();
+            changed.columns[1].definition = edit_column(
+                &changed.columns[1].definition,
+                ColumnProperty::Default,
+                "'after'",
+                d,
+            )
+            .unwrap();
             changed
                 .columns
                 .push(DesignColumn::new(99, "extra", "INTEGER DEFAULT 7"));

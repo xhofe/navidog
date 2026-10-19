@@ -102,3 +102,111 @@ designer:
   reload_title:
     en: Reload table and discard changes?
     zh-CN: 重新加载并放弃修改？
+  data_type:
+    en: Type
+    zh-CN: 类型
+  length:
+    en: Length
+    zh-CN: 长度
+  scale:
+    en: Decimals
+    zh-CN: 小数点
+  not_null:
+    en: Not null
+    zh-CN: 不是 null
+  virtual:
+    en: Virtual
+    zh-CN: 虚拟
+  key:
+    en: Key
+    zh-CN: 键
+  comment:
+    en: Comment
+    zh-CN: 注释
+  default_value:
+    en: Default value
+    zh-CN: 默认值
+  collation:
+    en: Collation
+    zh-CN: 排序规则
+  charset:
+    en: Character set
+    zh-CN: 字符集
+  auto_increment:
+    en: Auto increment
+    zh-CN: 自动递增
+  unsigned:
+    en: Unsigned
+    zh-CN: 无符号
+  primary:
+    en: Primary key
+    zh-CN: 主键
+  foreign_keys:
+    en: Foreign keys
+    zh-CN: 外键
+  checks:
+    en: Checks
+    zh-CN: 检查
+  advanced:
+    en: Advanced
+    zh-CN: 高级
+  method:
+    en: Index method
+    zh-CN: 索引方法
+  index_type:
+    en: Index type
+    zh-CN: 索引类型
+  reference_schema:
+    en: Referenced schema
+    zh-CN: 被引用模式
+  reference_table:
+    en: Referenced table
+    zh-CN: 被引用表
+  reference_fields:
+    en: Referenced fields
+    zh-CN: 被引用字段
+  on_delete:
+    en: On delete
+    zh-CN: 删除时
+  on_update:
+    en: On update
+    zh-CN: 更新时
+  expression:
+    en: Expression
+    zh-CN: 表达式
+  unique:
+    en: Unique
+    zh-CN: 唯一
+  empty:
+    en: No definitions. Use Add to create one.
+    zh-CN: 没有定义，点按添加来创建。
+  add_object:
+    en: Add
+    zh-CN: 添加
+  delete_object:
+    en: Delete
+    zh-CN: 删除
+  advanced_help:
+    en: Advanced definitions preserve attributes that the forms cannot represent. Changes still require SQL preview and execution.
+    zh-CN: 高级定义保留表单无法表达的属性，修改后仍需 SQL 预览及执行。
+  generated_help:
+    en: Generated expressions and storage are preserved; unsupported migrations are rejected.
+    zh-CN: 生成表达式和存储方式会保留，不支持的迁移会明确拒绝。
+  actions_help:
+    en: 'Actions: NO ACTION, RESTRICT, CASCADE, SET NULL, SET DEFAULT.'
+    zh-CN: 操作：NO ACTION、RESTRICT、CASCADE、SET NULL、SET DEFAULT。
+  inline_primary:
+    en: This primary key is part of the field definition. Edit it in Advanced.
+    zh-CN: 此主键位于字段定义中，请在高级页修改。
+  generated_storage:
+    en: Generated type
+    zh-CN: 生成类型
+  choose:
+    en: Choose a value
+    zh-CN: 选择值
+  preserved_help:
+    en: Some definitions have additional attributes. They are preserved in Advanced.
+    zh-CN: 部分定义包含额外属性，已原样保留在高级页。
+  sqlite_auto_integer:
+    en: SQLite auto increment requires a single INTEGER primary key.
+    zh-CN: SQLite 自动递增需要单字段 INTEGER 主键。

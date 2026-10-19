@@ -1,5 +1,9 @@
 //! Lossless table drafts and guarded, dialect-specific schema changes.
+mod entries;
 mod parse;
+mod properties;
+pub use entries::{DesignEntry, EntryKind, parse_entry, split_field_list};
+pub use properties::{ColumnProperties, ColumnProperty, column_properties, edit_column};
 mod plan;
 #[cfg(test)]
 mod tests;

@@ -310,6 +310,71 @@ mod macos {
         cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
         shot(&mut cx, "designer-preview.png");
 
+        // Table designer pages and a narrow viewport retain their structured controls.
+        for (page, name) in [
+            ("fields", "designer-grid"),
+            ("indexes", "designer-indexes"),
+            ("foreign_keys", "designer-foreign-keys"),
+            ("checks", "designer-checks"),
+        ] {
+            cx.update_window(handle, |_, w, cx| {
+                w.click(
+                    gpui_kit::SharedString::from(format!("designer-page-{page}")),
+                    cx,
+                )
+            })
+            .unwrap();
+            cx.run_until_parked();
+            if page != "fields" {
+                cx.update_window(handle, |_, w, cx| w.click("designer-add", cx))
+                    .unwrap();
+                cx.run_until_parked();
+            }
+            for (mode, suffix) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
+                cx.update(|cx| Theme::change(mode, None, cx));
+                shot(&mut cx, &format!("{name}-{suffix}.png"));
+            }
+        }
+        cx.update_window(handle, |_, w, cx| w.click("designer-page-fields", cx))
+            .unwrap();
+        cx.run_until_parked();
+        dispatch(&mut cx, Box::new(navidog::actions::ToggleInfoPane));
+        cx.run_until_parked();
+        shot(&mut cx, "designer-wide-dark.png");
+        // TestPlatform::resize changes only the capture dimensions, not the layout callback.
+        // Open a genuinely narrow designer viewport instead of cropping the full-size frame.
+        // raw-px: headless window rem size resolved from the shared font token.
+        let snapshot_rem = gpui_kit::px(navidog_ui::tokens::font::SIZE_BODY.value());
+        let small = cx
+            .update(|cx| {
+                gpui_kit::open_window(
+                    gpui_kit::WindowOptions {
+                        show: false,
+                        focus: false,
+                        window_bounds: Some(gpui_kit::WindowBounds::Windowed(
+                            gpui_kit::Bounds::new(
+                                gpui_kit::point(gpui_kit::Pixels::ZERO, gpui_kit::Pixels::ZERO),
+                                gpui_kit::size(
+                                    navidog_ui::tokens::window::MIN_WIDTH.to_pixels(snapshot_rem),
+                                    navidog_ui::tokens::window::MIN_HEIGHT.to_pixels(snapshot_rem),
+                                ),
+                            ),
+                        )),
+                        ..Default::default()
+                    },
+                    cx,
+                    |w, cx| navidog_designer::TableDesigner::open(actor_ref.clone(), w, cx),
+                )
+            })
+            .unwrap();
+        wait(&mut cx, |_| false);
+        shot_of(&mut cx, small.0, "designer-minimum-dark.png");
+        cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
+        shot_of(&mut cx, small.0, "designer-minimum-light.png");
+        cx.update_window(small.0, |_, w, _| w.remove_window())
+            .unwrap();
+        dispatch(&mut cx, Box::new(navidog::actions::ToggleInfoPane));
+
         // Manage Connections, searching highlights the matches
         dispatch(&mut cx, Box::new(navidog_core::actions::ManageConnections));
         cx.run_until_parked();

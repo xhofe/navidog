@@ -4,15 +4,21 @@ use gpui_kit::component::dock::{
     register_panel,
 };
 use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
+use gpui_kit::component::table::{DataTable, TableEvent, TableState};
 use gpui_kit::component::{
     Disableable as _, Selectable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, SharedString,
-    Subscription, Task, WeakEntity, Window, prelude::*, uniform_list,
+    Subscription, Task, WeakEntity, Window, prelude::*,
 };
+use grid::DesignerGrid;
 use navidog_core::actions::TableStructureChanged;
 use navidog_core::object::{ObjectRef, Scope};
+use navidog_db::table_design::{
+    ColumnProperty, DesignEntry, EntryKind, column_properties, edit_column, parse_entry,
+    split_field_list,
+};
 use navidog_db::{
     DbError, DbResult,
     dialect::Dialect,
@@ -38,12 +44,22 @@ gpui_kit::actions!(
         DeleteField,
         DuplicateField,
         MoveFieldUp,
-        MoveFieldDown
+        MoveFieldDown,
+        TogglePrimary
     ]
 );
 
+#[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
+#[action(namespace = designer, no_json)]
+struct ChooseValue {
+    target: usize,
+    value: String,
+}
+
 pub(crate) fn init(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("cmd-shift-k", TogglePrimary, Some("TableDesigner")),
+        KeyBinding::new("cmd-shift-k", TogglePrimary, Some("TableDesigner > Input")),
         KeyBinding::new("cmd-s", Save, Some("TableDesigner")),
         KeyBinding::new("cmd-+", AddField, Some("TableDesigner")),
         KeyBinding::new("cmd--", DeleteField, Some("TableDesigner")),
@@ -66,6 +82,7 @@ pub(crate) fn init(cx: &mut App) {
             scope: Scope::new("", "", None),
             draft: TableDesign::new(),
             baseline: None,
+            property_height: None,
         });
         panel_handle(TableDesigner::restore(saved, window, cx))
     });
@@ -75,17 +92,29 @@ struct Saved {
     scope: Scope,
     draft: TableDesign,
     baseline: Option<TableSnapshot>,
+    #[serde(default)]
+    property_height: Option<f32>,
 }
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Fields,
-    Constraints,
+    ForeignKeys,
+    Checks,
+    Advanced,
     Indexes,
     Options,
     Preview,
 }
 
 pub struct TableDesigner {
+    table: Entity<TableState<DesignerGrid>>,
+    properties: Vec<Entity<InputState>>,
+    entry_inputs: Vec<Entity<InputState>>,
+    entry_selected: Option<usize>,
+    active_cell: Option<usize>,
+    syncing: bool,
+    invalid_inputs: std::collections::BTreeMap<usize, String>,
+    property_height: Option<gpui_kit::Pixels>,
     focus: FocusHandle,
     scope: Scope,
     draft: TableDesign,
@@ -125,6 +154,7 @@ impl BasePanel for TableDesigner {
             scope: self.scope.clone(),
             draft: self.draft.clone(),
             baseline: self.baseline.clone(),
+            property_height: self.property_height.map(f32::from),
         };
         saved.draft.name = self.table_name.read(cx).value().to_string();
         PanelState {
@@ -203,6 +233,7 @@ impl TableDesigner {
                 scope,
                 draft: TableDesign::new(),
                 baseline: None,
+                property_height: None,
             },
             window,
             cx,
@@ -265,13 +296,53 @@ impl TableDesigner {
             let options = editor(saved.draft.options.clone(), window, cx);
             let sql = cx.new(|cx| EditorState::new(window, cx).language("sql"));
             sql.update(cx, |s, cx| s.set_readonly(true, cx));
-            let mut subscriptions = Vec::new();
+            let properties: Vec<_> = (0..9).map(|_| input(String::new(), window, cx)).collect();
+            let entry_inputs: Vec<_> = (0..10).map(|_| input(String::new(), window, cx)).collect();
+            let owner = cx.entity().downgrade();
+            let table = cx.new(|cx| {
+                TableState::new(DesignerGrid::new(owner, window), window, cx)
+                    .cell_selectable(true)
+                    .row_header(false)
+                    .row_selectable(false)
+                    .col_selectable(false)
+                    .sortable(false)
+            });
+            let mut subscriptions =
+                vec![
+                    cx.subscribe_in(&table, window, |this, _, event: &TableEvent, w, cx| {
+                        if let TableEvent::SelectCell(row, col) = event {
+                            this.select_cell(*row, *col, w, cx);
+                        }
+                    }),
+                ];
+            for (ix, field) in properties.iter().enumerate() {
+                subscriptions.push(cx.subscribe_in(
+                    field,
+                    window,
+                    move |this, _, event: &InputEvent, w, cx| {
+                        if matches!(event, InputEvent::Change) && !this.syncing {
+                            this.property_changed(ix, w, cx);
+                        }
+                    },
+                ));
+            }
+            for (ix, field) in entry_inputs.iter().enumerate() {
+                subscriptions.push(cx.subscribe_in(
+                    field,
+                    window,
+                    move |this, _, event: &InputEvent, w, cx| {
+                        if matches!(event, InputEvent::Change) && !this.syncing {
+                            this.entry_changed(ix, w, cx);
+                        }
+                    },
+                ));
+            }
             for field in [&table_name, &name, &definition] {
                 subscriptions.push(cx.subscribe_in(
                     field,
                     window,
                     |this, _, event: &InputEvent, _, cx| {
-                        if matches!(event, InputEvent::Change) {
+                        if matches!(event, InputEvent::Change) && !this.syncing {
                             this.flush(cx);
                             cx.notify();
                         }
@@ -283,7 +354,7 @@ impl TableDesigner {
                     field,
                     window,
                     |this, _, event: &InputEvent, _, cx| {
-                        if matches!(event, InputEvent::Change) {
+                        if matches!(event, InputEvent::Change) && !this.syncing {
                             this.flush(cx);
                             cx.notify();
                         }
@@ -294,7 +365,16 @@ impl TableDesigner {
                 .read(cx)
                 .dialect(&saved.scope.connection)
                 .unwrap_or(Dialect::Sqlite);
-            Self {
+            let mut this = Self {
+                table,
+                properties,
+                entry_inputs,
+                entry_selected: None,
+                active_cell: None,
+                syncing: false,
+                invalid_inputs: Default::default(),
+                // raw-px: the user-controlled splitter position restored from layout state
+                property_height: saved.property_height.map(gpui_kit::px),
                 focus: cx.focus_handle().tab_stop(true),
                 scope: saved.scope,
                 selected: saved.draft.columns.first().map(|c| c.id),
@@ -318,15 +398,20 @@ impl TableDesigner {
                 close_approved: false,
                 task: None,
                 _subscriptions: subscriptions,
-            }
+            };
+            this.sync_column(window, cx);
+            this.refresh_grid(cx);
+            this
         })
     }
     fn dirty(&self) -> bool {
-        self.baseline
-            .as_ref()
-            .is_none_or(|old| old.design != self.draft)
+        !self.invalid_inputs.is_empty()
+            || self
+                .baseline
+                .as_ref()
+                .is_none_or(|old| old.design != self.draft)
     }
-    fn flush(&mut self, cx: &App) {
+    fn flush(&mut self, cx: &mut Context<Self>) {
         let previous = self.draft.clone();
         self.draft.name = self.table_name.read(cx).value().to_string();
         if let Some(c) = self
@@ -355,10 +440,11 @@ impl TableDesigner {
         self.draft.options = self.options.read(cx).value().to_string();
         if self.draft != previous {
             self.preview = None;
+            self.refresh_grid(cx);
         }
     }
     fn select(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy {
+        if !self.invalid_inputs.is_empty() || self.busy {
             return;
         }
         self.flush(cx);
@@ -366,12 +452,16 @@ impl TableDesigner {
         self.sync_column(window, cx);
         cx.notify();
     }
-    fn sync_column(&self, window: &mut Window, cx: &mut Context<Self>) {
+    fn sync_column(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let c = self
             .draft
             .columns
             .iter()
             .find(|c| Some(c.id) == self.selected);
+        let props = c
+            .map(|c| column_properties(&c.definition))
+            .unwrap_or_default();
+        self.syncing = true;
         self.name.update(cx, |s, cx| {
             s.set_value(c.map(|c| c.name.clone()).unwrap_or_default(), window, cx)
         });
@@ -382,9 +472,31 @@ impl TableDesigner {
                 cx,
             )
         });
+        for (input, value) in self.properties.iter().zip([
+            props.data_type,
+            props.length,
+            props.scale,
+            props.comment,
+            props.default,
+            props.collation,
+            props.charset,
+            props.generated_expression,
+            props.generated_storage,
+        ]) {
+            input.update(cx, |s, cx| s.set_value(value, window, cx));
+        }
+        self.syncing = false;
+        self.refresh_grid(cx);
     }
     fn add(&mut self, duplicate: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy || !self.loaded {
+        if self.page != Page::Fields {
+            if duplicate {
+                return;
+            }
+            self.add_entry(window, cx);
+            return;
+        }
+        if !self.invalid_inputs.is_empty() || self.busy || !self.loaded {
             return;
         }
         self.flush(cx);
@@ -404,12 +516,17 @@ impl TableDesigner {
             .columns
             .push(DesignColumn::new(id, format!("field_{id}"), definition));
         self.selected = Some(id);
+        self.active_cell = Some(0);
         self.preview = None;
         self.sync_column(window, cx);
         cx.notify();
     }
     fn delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy || !self.loaded {
+        if self.page != Page::Fields {
+            self.delete_entry(window, cx);
+            return;
+        }
+        if !self.invalid_inputs.is_empty() || self.busy || !self.loaded {
             return;
         }
         self.flush(cx);
@@ -420,7 +537,10 @@ impl TableDesigner {
         cx.notify();
     }
     fn move_field(&mut self, up: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy || !self.loaded {
+        if self.page != Page::Fields {
+            return;
+        }
+        if !self.invalid_inputs.is_empty() || self.busy || !self.loaded {
             return;
         }
         self.flush(cx);
@@ -443,6 +563,10 @@ impl TableDesigner {
     }
     fn show_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy || !self.loaded || self.needs_reload {
+            return;
+        }
+        if !self.invalid_inputs.is_empty() {
+            cx.notify();
             return;
         }
         self.flush(cx);
@@ -527,6 +651,7 @@ impl TableDesigner {
             return;
         };
         self.busy = true;
+        self.refresh_grid(cx);
         self.error = None;
         let scope = self.scope.clone();
         let draft = self.draft.clone();
@@ -589,12 +714,13 @@ impl TableDesigner {
                         }
                     }
                 }
+                this.refresh_grid(cx);
                 cx.notify();
             });
         }));
         cx.notify();
     }
-    fn sync_all(&self, window: &mut Window, cx: &mut Context<Self>) {
+    fn sync_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.table_name
             .update(cx, |s, cx| s.set_value(self.draft.name.clone(), window, cx));
         self.constraints.update(cx, |s, cx| {
@@ -659,6 +785,8 @@ impl TableDesigner {
         });
     }
 }
+mod grid;
+mod structured;
 mod view;
 
 #[cfg(test)]

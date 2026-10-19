@@ -64,12 +64,108 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
         // Input uses Command on macOS and Control on Linux/Windows.
         window.press("secondary-a", cx);
         window.input("display_name", cx);
-        window.click("designer-field-definition", cx);
-        window.press("secondary-a", cx);
-        window.input("TEXT NOT NULL DEFAULT 'guest'", cx);
+        window.click(("designer-flag", 12usize), cx);
     })
     .unwrap();
     cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.click("designer-field-default", cx);
+        window.input("'guest'", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.render_frame(cx);
+        let row = w.find(("row", 1usize)).bounds();
+        let col = w.find(("col-header", 1usize)).bounds();
+        w.click_at(
+            ("row", 1usize),
+            gpui_kit::point(col.center().x - row.left(), row.size.height / 2.),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.click("designer-field-type", cx);
+        w.press("secondary-a", cx);
+        w.input("VARCHAR", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.render_frame(cx);
+        let row = w.find(("row", 1usize)).bounds();
+        let col = w.find(("col-header", 2usize)).bounds();
+        w.click_at(
+            ("row", 1usize),
+            gpui_kit::point(col.center().x - row.left(), row.size.height / 2.),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.click("designer-field-length", cx);
+        w.input("80; invalid", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| w.click("designer-save", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let p = panel.read(cx);
+        assert!(
+            p.preview.is_none(),
+            "length={:?} definition={:?} errors={:?} page={:?}",
+            p.properties[1].read(cx).value(),
+            p.draft.columns[1].definition,
+            p.invalid_inputs,
+            p.page == super::Page::Preview
+        );
+        assert!(!panel.read(cx).invalid_inputs.is_empty());
+    });
+    cx.update_window(handle, |_, w, cx| {
+        w.click("designer-field-length", cx);
+        w.press("secondary-a", cx);
+        w.input("80", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    for (page, name) in [
+        ("indexes", "idx_people"),
+        ("foreign_keys", "fk_people"),
+        ("checks", "chk_people"),
+    ] {
+        cx.update_window(handle, |_, w, cx| {
+            w.click(
+                gpui_kit::SharedString::from(format!("designer-page-{page}")),
+                cx,
+            )
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, w, cx| w.click("designer-add", cx))
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, w, cx| {
+            w.click("designer-entry-name", cx);
+            w.press("secondary-a", cx);
+            w.input(name, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    cx.update(|cx| {
+        let p = panel.read(cx);
+        assert_eq!(p.draft.indexes.len(), 1);
+        assert!(p.draft.indexes[0].contains("idx_people"));
+        assert!(p.draft.constraints.iter().any(|s| s.contains("fk_people")));
+        assert!(p.draft.constraints.iter().any(|s| s.contains("chk_people")));
+    });
     cx.update_window(handle, |_, window, cx| {
         window.click("designer-save", cx);
     })
@@ -87,7 +183,7 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
         assert_eq!(value["draft"]["columns"][1]["name"], "display_name");
         assert_eq!(
             value["draft"]["columns"][1]["definition"],
-            "TEXT NOT NULL DEFAULT 'guest'"
+            "VARCHAR(80) NOT NULL DEFAULT 'guest'"
         );
     });
     cx.update_window(handle, |_, window, cx| {
@@ -112,7 +208,7 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        window.click("designer-field-definition", cx);
+        window.click("designer-field-default", cx);
         window.press("cmd-d", cx);
     })
     .unwrap();
@@ -218,6 +314,9 @@ fn saves_only_after_preview_and_keeps_failed_draft(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| w.click("designer-auto-increment", cx))
+        .unwrap();
+    cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.click("designer-save", cx);
     })
@@ -250,9 +349,7 @@ fn saves_only_after_preview_and_keeps_failed_draft(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        window.click("designer-field-definition", cx);
-        window.press("secondary-a", cx);
-        window.input("TEXT NOT NULL", cx);
+        window.click(("designer-flag", 12usize), cx);
     })
     .unwrap();
     cx.run_until_parked();
