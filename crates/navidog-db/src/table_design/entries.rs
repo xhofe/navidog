@@ -69,6 +69,16 @@ impl DesignEntry {
             EntryKind::Unique => format!("{name}UNIQUE ({})", self.fields),
             EntryKind::Check => format!("{name}CHECK ({})", self.expression),
             EntryKind::ForeignKey => {
+                let local = split_field_list(&self.fields)?;
+                let referenced = split_field_list(&self.reference_fields)?;
+                if self.reference_table.is_empty()
+                    || local.is_empty()
+                    || local.len() != referenced.len()
+                {
+                    return Err(DbError::msg(
+                        "Foreign key requires a referenced table and matching field counts.",
+                    ));
+                }
                 let target = if self.reference_schema.is_empty() {
                     q(&self.reference_table)
                 } else {

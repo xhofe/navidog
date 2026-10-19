@@ -549,8 +549,19 @@ impl TableDesigner {
             input.update(cx, |s, cx| s.set_value(value, window, cx));
         }
         self.syncing = false;
+        if self.page == Page::ForeignKeys {
+            self.load_references(window, cx);
+        }
     }
-    pub(super) fn entry_changed(&mut self, _: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn entry_changed(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.page == Page::ForeignKeys && [4, 5].contains(&ix) {
+            self.syncing = true;
+            for dependent in (ix + 1)..=6 {
+                self.entry_inputs[dependent].update(cx, |s, cx| s.set_value("", window, cx));
+            }
+            self.syncing = false;
+            self.load_references(window, cx);
+        }
         self.write_entry(None, window, cx);
     }
     pub(super) fn write_entry(
@@ -710,7 +721,7 @@ impl TableDesigner {
             let Some(input) = self.entry_inputs.get(ix).cloned() else {
                 return;
             };
-            let value = if ix == 1 {
+            let value = if ix == 1 || ix == 6 {
                 let field = self.dialect.quote_ident(&action.value);
                 let old = input.read(cx).value().to_string();
                 let fields = split_field_list(&old).unwrap_or_default();

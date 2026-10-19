@@ -137,6 +137,8 @@ pub struct TableDesigner {
     preview: Option<Vec<String>>,
     close_approved: bool,
     task: Option<Task<()>>,
+    references: references::ReferenceChoices,
+    reference_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 impl EventEmitter<PanelEvent> for TableDesigner {}
@@ -203,6 +205,7 @@ impl BasePanel for TableDesigner {
             return;
         }
         self.task.take();
+        self.reference_task.take();
     }
 }
 impl Panel for TableDesigner {
@@ -397,6 +400,8 @@ impl TableDesigner {
                 preview: None,
                 close_approved: false,
                 task: None,
+                references: Default::default(),
+                reference_task: None,
                 _subscriptions: subscriptions,
             };
             this.sync_column(window, cx);
@@ -786,6 +791,7 @@ impl TableDesigner {
     }
 }
 mod grid;
+mod references;
 mod structured;
 mod view;
 

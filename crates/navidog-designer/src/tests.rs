@@ -171,6 +171,10 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
             cx.update_window(handle, |_, w, cx| {
                 w.render_frame(cx);
                 assert!(w.try_find("designer-entry-reference_schema").is_none());
+                assert_eq!(
+                    panel.read(cx).references.error.as_deref(),
+                    Some(rust_i18n::t!("designer.disconnected").as_ref())
+                );
             })
             .unwrap();
         }
@@ -412,4 +416,193 @@ fn saves_only_after_preview_and_keeps_failed_draft(cx: &mut TestAppContext) {
         sql("SELECT count(*) FROM people")[0].rows[0][0].as_deref(),
         Some("1")
     );
+}
+
+#[gpui_kit::test]
+fn cascades_real_reference_metadata_and_preserves_drafts(cx: &mut TestAppContext) {
+    use crate::panel::ChooseValue;
+    use navidog_core::{connection::Connection, crypto::Key, store::ConnectionStore};
+    use navidog_db::{ConnectParams, Secrets, sessions::Sessions};
+    use std::sync::Arc;
+    let (_guard, home) = isolate_home("references");
+    cx.executor().allow_parking();
+    let file = home.join(format!(
+        "references-{}.db",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    navidog_db::runtime::runtime().block_on(async {
+        let mut session = navidog_db::connect(Arc::new(navidog_db::sqlite::SqliteDriver::default()), ConnectParams { file: Some(file.clone()), create_new: true, ..Default::default() }).await.unwrap();
+        session.relational().unwrap().execute("CREATE TABLE parent (a INTEGER, b INTEGER, PRIMARY KEY(a,b)); CREATE TABLE other (other_id INTEGER PRIMARY KEY)").await.unwrap();
+        session.close().await.unwrap();
+    });
+    let id = cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_core::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_ui::tabs::init(cx);
+        navidog_db::init(cx);
+        crate::init(cx);
+        ConnectionStore::global(cx).update(cx, |store, cx| {
+            store.set_key(Key::random());
+            let mut connection = Connection::new("sqlite");
+            connection.name = "reference-test".into();
+            connection.general.file = Some(file.to_string_lossy().into_owned());
+            let id = connection.id.clone();
+            store.upsert(connection, &[], cx).unwrap();
+            id
+        })
+    });
+    cx.update(|cx| {
+        Sessions::global(cx).update(cx, |s, cx| s.open(id.clone(), Secrets::default(), cx))
+    });
+    let wait = |cx: &mut TestAppContext, done: &dyn Fn(&mut TestAppContext) -> bool| {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !done(cx) {
+            assert!(std::time::Instant::now() < end);
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    wait(cx, &|cx| {
+        cx.update(|cx| Sessions::global(cx).read(cx).state(&id).is_open())
+    });
+    let (handle, panel) = cx.update(|cx| {
+        let mut panel = None;
+        let handle = gpui_kit::open_window(WindowOptions::default(), cx, |w, cx| {
+            let p = TableDesigner::new(Scope::new(id, "main", None), w, cx);
+            panel = Some(p.clone());
+            cx.new(|_| Host(p))
+        })
+        .unwrap();
+        (handle.0, panel.unwrap())
+    });
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.click("designer-table-name", cx);
+        w.input("child", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| w.click("designer-add", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| w.click("designer-page-foreign_keys", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| w.click("designer-add", cx))
+        .unwrap();
+    cx.run_until_parked();
+    wait(cx, &|cx| cx.update(|cx| !panel.read(cx).references.loading));
+    cx.update(|cx| {
+        let p = panel.read(cx);
+        assert!(p.references.error.is_none(), "{:?}", p.references.error);
+        assert_eq!(p.references.tables, vec!["other", "parent"]);
+        assert!(p.reference_values(5, cx).contains(&"child".into()));
+    });
+    // Dispatch the same semantic actions emitted by native menu items.
+    for table in ["other", "parent"] {
+        cx.update_window(handle, |_, w, cx| {
+            w.render_frame(cx);
+            let focus = panel.read(cx).focus.clone();
+            w.focus(&focus, cx);
+            w.dispatch_action(
+                Box::new(ChooseValue {
+                    target: 15,
+                    value: table.into(),
+                }),
+                cx,
+            );
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    wait(cx, &|cx| cx.update(|cx| !panel.read(cx).references.loading));
+    cx.update(|cx| {
+        let p = panel.read(cx);
+        assert_eq!(p.reference_values(6, cx), vec!["a", "b"]);
+        assert_eq!(p.entry_inputs[6].read(cx).value(), "");
+        assert!(!p.invalid_inputs.is_empty());
+    });
+    cx.update_window(handle, |_, w, cx| w.click("designer-save", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert!(panel.read(cx).preview.is_none()));
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        let focus = panel.read(cx).focus.clone();
+        w.focus(&focus, cx);
+        w.dispatch_action(
+            Box::new(ChooseValue {
+                target: 16,
+                value: "a".into(),
+            }),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let p = panel.read(cx);
+        assert!(p.invalid_inputs.is_empty());
+        assert!(
+            p.draft
+                .constraints
+                .iter()
+                .any(|s| s.contains("REFERENCES \"parent\" (\"a\")"))
+        );
+    });
+    cx.update_window(handle, |_, w, cx| {
+        w.click("designer-entry-fields", cx);
+        w.press("secondary-a", cx);
+        w.input("\"id\", \"field_2\"", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert!(!panel.read(cx).invalid_inputs.is_empty()));
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        let focus = panel.read(cx).focus.clone();
+        w.focus(&focus, cx);
+        w.dispatch_action(
+            Box::new(ChooseValue {
+                target: 16,
+                value: "b".into(),
+            }),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let p = panel.read(cx);
+        assert!(p.invalid_inputs.is_empty());
+        assert!(
+            p.draft
+                .constraints
+                .iter()
+                .any(|s| s.contains("REFERENCES \"parent\" (\"a\", \"b\")"))
+        );
+    });
+    let before = cx.update(|cx| panel.read(cx).draft.clone());
+    cx.update_window(handle, |_, w, cx| w.click("designer-reference-refresh", cx))
+        .unwrap();
+    cx.run_until_parked();
+    wait(cx, &|cx| cx.update(|cx| !panel.read(cx).references.loading));
+    cx.update(|cx| assert_eq!(panel.read(cx).draft, before));
+    cx.update_window(handle, |_, w, cx| {
+        w.click("designer-entry-reference_table", cx);
+        w.press("secondary-a", cx);
+        w.input("child", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    wait(cx, &|cx| cx.update(|cx| !panel.read(cx).references.loading));
+    cx.update(|cx| {
+        let p = panel.read(cx);
+        assert_eq!(p.reference_values(6, cx), vec!["id", "field_2"]);
+        assert_eq!(p.entry_inputs[6].read(cx).value(), "");
+    });
 }

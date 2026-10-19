@@ -280,40 +280,50 @@ impl TableDesigner {
                                         .disabled(control_disabled)
                                         .flex_1(),
                                 )
-                                .when([1, 2, 7, 8].contains(&ix), |row| {
-                                    let values = match ix {
-                                        1 => self
-                                            .draft
-                                            .columns
-                                            .iter()
-                                            .map(|c| c.name.clone())
+                                .when(
+                                    [1, 2, 7, 8].contains(&ix)
+                                        || (self.page == Page::ForeignKeys
+                                            && [4, 5, 6].contains(&ix)),
+                                    |row| {
+                                        let values = match ix {
+                                            4..=6 => self.reference_values(ix, cx),
+                                            1 => self
+                                                .draft
+                                                .columns
+                                                .iter()
+                                                .map(|c| c.name.clone())
+                                                .collect(),
+                                            2 => (if self.dialect == Dialect::MySql {
+                                                vec!["BTREE", "HASH"]
+                                            } else {
+                                                vec!["BTREE", "HASH", "GIN", "GIST", "BRIN"]
+                                            })
+                                            .into_iter()
+                                            .map(String::from)
                                             .collect(),
-                                        2 => (if self.dialect == Dialect::MySql {
-                                            vec!["BTREE", "HASH"]
-                                        } else {
-                                            vec!["BTREE", "HASH", "GIN", "GIST", "BRIN"]
-                                        })
-                                        .into_iter()
-                                        .map(String::from)
-                                        .collect(),
-                                        _ => vec![
-                                            "NO ACTION",
-                                            "RESTRICT",
-                                            "CASCADE",
-                                            "SET NULL",
-                                            "SET DEFAULT",
-                                        ]
-                                        .into_iter()
-                                        .map(String::from)
-                                        .collect(),
-                                    };
-                                    row.child(choices(
-                                        cx.entity().downgrade(),
-                                        ix + 10,
-                                        values,
-                                        control_disabled,
-                                    ))
-                                }),
+                                            _ => vec![
+                                                "NO ACTION",
+                                                "RESTRICT",
+                                                "CASCADE",
+                                                "SET NULL",
+                                                "SET DEFAULT",
+                                            ]
+                                            .into_iter()
+                                            .map(String::from)
+                                            .collect(),
+                                        };
+                                        row.child(choices(
+                                            cx.entity().downgrade(),
+                                            ix + 10,
+                                            values.clone(),
+                                            control_disabled
+                                                || (self.page == Page::ForeignKeys
+                                                    && [4, 5, 6].contains(&ix)
+                                                    && (self.references.loading
+                                                        || values.is_empty())),
+                                        ))
+                                    },
+                                ),
                         )
                     }),
             )
@@ -334,6 +344,20 @@ impl TableDesigner {
             )
             .when(self.page == Page::ForeignKeys, |v| {
                 v.child(
+                    Button::new("designer-reference-refresh")
+                        .ghost()
+                        .small()
+                        .label(t!("designer.refresh_references").to_string())
+                        .disabled(disabled || self.references.loading)
+                        .on_click(cx.listener(|this, _, w, cx| this.load_references(w, cx))),
+                )
+                .when(self.references.loading, |v| {
+                    v.child(t!("designer.loading_references").to_string())
+                })
+                .when_some(self.references.error.clone(), |v, error| {
+                    v.child(gpui_kit::div().text_color(palette(cx).danger).child(error))
+                })
+                .child(
                     gpui_kit::div()
                         .text_color(palette(cx).label_secondary)
                         .child(t!("designer.actions_help").to_string()),

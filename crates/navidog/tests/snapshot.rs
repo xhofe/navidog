@@ -331,6 +331,21 @@ mod macos {
                     .unwrap();
                 cx.run_until_parked();
             }
+            if page == "foreign_keys" {
+                cx.update_window(handle, |_, w, cx| {
+                    w.click("designer-entry-reference_table", cx);
+                    w.press("secondary-a", cx);
+                    w.input("actor", cx);
+                })
+                .unwrap();
+                cx.run_until_parked();
+                cx.update_window(handle, |_, w, cx| {
+                    w.click("designer-entry-reference_fields", cx);
+                    w.input("\"id\"", cx);
+                })
+                .unwrap();
+                wait(&mut cx, |_| false);
+            }
             for (mode, suffix) in [(ThemeMode::Light, "light"), (ThemeMode::Dark, "dark")] {
                 cx.update(|cx| Theme::change(mode, None, cx));
                 shot(&mut cx, &format!("{name}-{suffix}.png"));

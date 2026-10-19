@@ -223,3 +223,17 @@ fn live_table_design_create_alter_rename_and_constraints() {
         }
     });
 }
+
+#[test]
+fn foreign_key_requires_matching_nonempty_field_lists() {
+    let scope = Scope::new("test", "main", None);
+    let mut e = DesignEntry::new(EntryKind::ForeignKey);
+    e.fields = "\"local,a\", b".into();
+    e.reference_table = "parent".into();
+    e.reference_fields = "a".into();
+    assert!(e.sql(Dialect::Sqlite, &scope, "child", false).is_err());
+    e.reference_fields = "a, b".into();
+    assert!(e.sql(Dialect::Sqlite, &scope, "child", false).is_ok());
+    e.reference_table.clear();
+    assert!(e.sql(Dialect::Sqlite, &scope, "child", false).is_err());
+}

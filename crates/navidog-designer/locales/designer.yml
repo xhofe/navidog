@@ -213,3 +213,9 @@ designer:
   options_pending:
     en: Structured table options are not available yet. Existing options are preserved; use Advanced to edit their definitions.
     zh-CN: 表选项的结构化表单尚未完成，现有选项会原样保留；可在高级页编辑定义。
+  refresh_references:
+    en: Refresh referenced objects
+    zh-CN: 刷新被引用对象
+  loading_references:
+    en: Loading referenced objects…
+    zh-CN: 正在加载被引用对象…
