@@ -68,3 +68,18 @@
 
 - [x] SQLite 真实连接验证表/字段候选、依赖清空、多字段引用及 SQL 预览阻止无效草稿。
 - [x] 旧请求结果隔离、断线提示、刷新不改写定义及浅深色截图。
+
+## 8. 表选项与方言属性
+
+选项页采用现有 FormRow 的 300pt 输入宽度、22pt 控件和 8pt 间距，纵向滚动；沿用输入框旁的选择菜单及复选框。只修改草稿，保存仍先预览再执行。空输入代表未显式指定；已有 MySQL 参数清空时不能假装服务器会恢复默认，无法生成明确重置语句时阻止预览。未知/重复选项保留原文，不能安全拆分时禁用结构化编辑并提供高级入口。
+
+- MySQL/MariaDB：引擎、字符集、排序规则、自增值、行格式、平均行长度、最大/最小行数、键块大小、统计信息自动重算/持久化/采样页数、校验和、延迟键写、打包键、插入方法、连接、数据/索引目录、表空间、压缩、加密和表注释。枚举菜单提供常用合法值，版本/引擎能力由服务器验证；不猜测其他引擎私有属性。
+- PostgreSQL：拥有者、表空间、继承（有序、可带模式的引用表列表）、填充因子、autovacuum_enabled 和 UNLOGGED。读取 pg_class/pg_inherits，存储参数、拥有者和持久性纳入并发指纹；修改生成 OWNER TO、SET TABLESPACE、INHERIT/NO INHERIT、SET/RESET、SET LOGGED/UNLOGGED，和其他表结构变更放在同一事务中。高级存储参数保留，不因编辑填充因子而丢失。不提供新版本已删除的 OIDS。
+- SQLite：WITHOUT ROWID 与 STRICT；启用 WITHOUT ROWID 会丢弃隐式 rowid，普通表与 WITHOUT ROWID 的相互转换明确拒绝（创建新表允许）；STRICT 修改沿用事务重建，类型/现有数据不兼容时回滚。
+- 字段补充 MySQL/MariaDB 的 ON UPDATE 表达式与 ZEROFILL；PostgreSQL identity 模式（无/ALWAYS/BY DEFAULT），编辑已有 identity 仅支持模式切换，复杂 sequence 选项保持原样，不猜测降级。
+
+参考本地 TableDesignOptionsModule_mysql/pgsql/sqlite 导出，以及 PostgreSQL 16 ALTER TABLE、MySQL 8.4 CREATE TABLE 与 SQLite STRICT 官方语法。排除约束、分区和引擎私有选项仍在各自规格范围，不以本节宣称完整 M4 验收。
+
+- [ ] 三种方言选项解析/编辑/迁移及未知选项保留测试。
+- [ ] MySQL、MariaDB、PostgreSQL、SQLite 实库创建/修改、数据保留与失败回滚。
+- [ ] 真实键盘/复选框交互、预览守卫、浅深色截图并提交原图。
