@@ -237,3 +237,265 @@ fn foreign_key_requires_matching_nonempty_field_lists() {
     e.reference_table.clear();
     assert!(e.sql(Dialect::Sqlite, &scope, "child", false).is_err());
 }
+
+#[test]
+fn sqlite_strict_rebuild_preserves_data_and_rejects_rowid_conversion() {
+    crate::runtime::runtime().block_on(async {
+        let mut session = crate::connect(
+            Arc::new(crate::sqlite::SqliteDriver::default()),
+            crate::ConnectParams {
+                file: Some(":memory:".into()),
+                create_new: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let r = session.relational().unwrap();
+        let scope = Scope::new("test", "main", None);
+        r.execute(
+            "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT); INSERT INTO t VALUES(8,'eight')",
+        )
+        .await
+        .unwrap();
+        let old = load(r, &scope, "t").await.unwrap();
+        let mut next = old.design.clone();
+        next.options = edit_table_option(&next.options, "strict", "true", Dialect::Sqlite).unwrap();
+        let strict = apply(r, &scope, Some(&old), &next).await.unwrap();
+        assert_eq!(
+            table_option(&strict.design.options, "strict", Dialect::Sqlite).unwrap(),
+            "true"
+        );
+        assert_eq!(
+            r.execute("SELECT id,v FROM t").await.unwrap()[0].rows[0][0].as_deref(),
+            Some("8")
+        );
+        let mut next = strict.design.clone();
+        next.options =
+            edit_table_option(&next.options, "without_rowid", "true", Dialect::Sqlite).unwrap();
+        assert!(
+            plan(Dialect::Sqlite, &scope, Some(&strict), &next)
+                .unwrap_err()
+                .message
+                .contains("row identity")
+        );
+        r.execute("CREATE TABLE bad(v INTEGER); INSERT INTO bad VALUES('text')")
+            .await
+            .unwrap();
+        let bad = load(r, &scope, "bad").await.unwrap();
+        let mut next = bad.design.clone();
+        next.options = "STRICT".into();
+        assert!(apply(r, &scope, Some(&bad), &next).await.is_err());
+        assert_eq!(load(r, &scope, "bad").await.unwrap(), bad);
+        let mut fresh = TableDesign::new();
+        fresh.name = "fresh".into();
+        fresh.options = "WITHOUT ROWID, STRICT".into();
+        assert!(apply(r, &scope, None, &fresh).await.is_ok());
+    });
+}
+
+#[test]
+fn live_table_options_and_dialect_attributes() {
+    if std::env::var_os("NAVIDOG_LIVE").is_none() {
+        return;
+    }
+    crate::runtime::runtime().block_on(async {
+        for (driver, port, db, user) in [
+            (
+                Arc::new(crate::mysql::MySqlDriver::mysql()) as Arc<dyn crate::Driver>,
+                13306,
+                "sakila",
+                "root",
+            ),
+            (
+                Arc::new(crate::mysql::MySqlDriver::mariadb()) as Arc<dyn crate::Driver>,
+                13307,
+                "sakila",
+                "root",
+            ),
+            (
+                Arc::new(crate::postgres::PostgresDriver::default()) as Arc<dyn crate::Driver>,
+                15432,
+                "pagila",
+                "postgres",
+            ),
+        ] {
+            let mut session = crate::connect(
+                driver,
+                crate::ConnectParams {
+                    host: "127.0.0.1".into(),
+                    port,
+                    database: Some(db.into()),
+                    user: user.into(),
+                    password: Some("navidog".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            let r = session.relational().unwrap();
+            let d = r.dialect();
+            let scope = Scope::new("test", db, Some("public".into()));
+            let name = format!("navidog_options_{}", std::process::id());
+            let table = d.qualified(&scope, &name);
+            let parent_name = format!("{name}_parent");
+            let parent = d.qualified(&scope, &parent_name);
+            let role = format!("navidog_options_role_{}", std::process::id());
+            r.execute(&format!("DROP TABLE IF EXISTS {table}"))
+                .await
+                .unwrap();
+            let mut draft = TableDesign::new();
+            draft.name = name;
+            if d == Dialect::MySql {
+                draft.columns[0].definition = "INTEGER NOT NULL AUTO_INCREMENT".into();
+                for (key, value) in [
+                    ("engine", "InnoDB"),
+                    ("charset", "utf8mb4"),
+                    ("collation", "utf8mb4_bin"),
+                    ("row_format", "DYNAMIC"),
+                    ("auto_increment", "20"),
+                    ("table_comment", "O'Brien"),
+                ] {
+                    draft.options = edit_table_option(&draft.options, key, value, d).unwrap();
+                }
+                draft.columns.push(DesignColumn::new(
+                    2,
+                    "stamp",
+                    "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
+                ));
+            } else {
+                r.execute(&format!(
+                    "DROP TABLE IF EXISTS {parent}; CREATE TABLE {parent}(id INTEGER)"
+                ))
+                .await
+                .unwrap();
+                draft.columns[0].definition =
+                    "INTEGER GENERATED ALWAYS AS IDENTITY NOT NULL".into();
+                r.execute(&format!("CREATE ROLE {}", d.quote_ident(&role)))
+                    .await
+                    .unwrap();
+                draft.unlogged = true;
+                draft.owner = user.into();
+                for (key, value) in [
+                    ("fillfactor", "70"),
+                    ("autovacuum_enabled", "false"),
+                    ("inherits", &*parent),
+                ] {
+                    draft.options = edit_table_option(&draft.options, key, value, d).unwrap();
+                }
+            }
+            apply(r, &scope, None, &draft).await.unwrap();
+            r.execute(&format!("INSERT INTO {table} DEFAULT VALUES").replace(
+                " DEFAULT VALUES",
+                if d == Dialect::MySql {
+                    " () VALUES ()"
+                } else {
+                    " DEFAULT VALUES"
+                },
+            ))
+            .await
+            .unwrap();
+            let old = load(r, &scope, &draft.name).await.unwrap();
+            let mut next = old.design.clone();
+            if d == Dialect::MySql {
+                assert_eq!(
+                    table_option(&next.options, "table_comment", d).unwrap(),
+                    "O'Brien"
+                );
+                next.options =
+                    edit_table_option(&next.options, "table_comment", "Changed", d).unwrap();
+                next.options =
+                    edit_table_option(&next.options, "stats_persistent", "0", d).unwrap();
+                next.columns[0].definition = edit_column(
+                    &next.columns[0].definition,
+                    ColumnProperty::Zerofill,
+                    "true",
+                    d,
+                )
+                .unwrap();
+                next.columns[1].definition =
+                    edit_column(&next.columns[1].definition, ColumnProperty::OnUpdate, "", d)
+                        .unwrap();
+            } else {
+                assert!(old.design.unlogged);
+                assert_eq!(old.design.owner, "postgres");
+                assert!(
+                    !table_option(&next.options, "inherits", d)
+                        .unwrap()
+                        .is_empty()
+                );
+                next.unlogged = false;
+                next.owner = role.clone();
+                next.options = edit_table_option(&next.options, "fillfactor", "90", d).unwrap();
+                next.columns[0].definition = edit_column(
+                    &next.columns[0].definition,
+                    ColumnProperty::Identity,
+                    "BY DEFAULT",
+                    d,
+                )
+                .unwrap();
+            }
+            let saved = apply(r, &scope, Some(&old), &next).await.unwrap();
+            assert_eq!(
+                r.execute(&format!("SELECT count(*) FROM {table}"))
+                    .await
+                    .unwrap()[0]
+                    .rows[0][0]
+                    .as_deref(),
+                Some("1")
+            );
+            if d == Dialect::Postgres {
+                assert!(!saved.design.unlogged);
+                assert_eq!(saved.design.owner, role);
+                assert_eq!(
+                    column_properties(&saved.design.columns[0].definition).identity,
+                    "BY DEFAULT"
+                );
+                assert_eq!(
+                    table_option(&saved.design.options, "fillfactor", d).unwrap(),
+                    "90"
+                );
+                let mut reset = saved.design.clone();
+                reset.options = edit_table_option(&reset.options, "fillfactor", "", d).unwrap();
+                reset.options = edit_table_option(&reset.options, "inherits", "", d).unwrap();
+                reset.options =
+                    edit_table_option(&reset.options, "tablespace", "pg_default", d).unwrap();
+                let reset = apply(r, &scope, Some(&saved), &reset).await.unwrap();
+                assert!(
+                    table_option(&reset.design.options, "fillfactor", d)
+                        .unwrap()
+                        .is_empty()
+                );
+                let mut bad = reset.design.clone();
+                bad.options = "WITH (fillfactor=1)".into();
+                assert!(apply(r, &scope, Some(&reset), &bad).await.is_err());
+                assert_eq!(load(r, &scope, &draft.name).await.unwrap(), reset);
+                r.execute(&format!("ALTER TABLE {table} SET (fillfactor=85)"))
+                    .await
+                    .unwrap();
+                assert!(
+                    apply(r, &scope, Some(&reset), &reset.design)
+                        .await
+                        .unwrap_err()
+                        .message
+                        .contains("outside")
+                );
+            } else {
+                assert_eq!(
+                    table_option(&saved.design.options, "table_comment", d).unwrap(),
+                    "Changed"
+                );
+            }
+            r.execute(&format!("DROP TABLE {table}")).await.unwrap();
+            if d == Dialect::Postgres {
+                r.execute(&format!(
+                    "DROP TABLE {parent}; DROP ROLE {}",
+                    d.quote_ident(&role)
+                ))
+                .await
+                .unwrap();
+            }
+            session.close().await.unwrap();
+        }
+    });
+}

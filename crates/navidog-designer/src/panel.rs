@@ -110,6 +110,7 @@ pub struct TableDesigner {
     table: Entity<TableState<DesignerGrid>>,
     properties: Vec<Entity<InputState>>,
     entry_inputs: Vec<Entity<InputState>>,
+    table_option_inputs: std::collections::BTreeMap<&'static str, Entity<InputState>>,
     entry_selected: Option<usize>,
     active_cell: Option<usize>,
     syncing: bool,
@@ -299,7 +300,7 @@ impl TableDesigner {
             let options = editor(saved.draft.options.clone(), window, cx);
             let sql = cx.new(|cx| EditorState::new(window, cx).language("sql"));
             sql.update(cx, |s, cx| s.set_readonly(true, cx));
-            let properties: Vec<_> = (0..9).map(|_| input(String::new(), window, cx)).collect();
+            let properties: Vec<_> = (0..11).map(|_| input(String::new(), window, cx)).collect();
             let entry_inputs: Vec<_> = (0..10).map(|_| input(String::new(), window, cx)).collect();
             let owner = cx.entity().downgrade();
             let table = cx.new(|cx| {
@@ -367,11 +368,40 @@ impl TableDesigner {
             let dialect = Sessions::global(cx)
                 .read(cx)
                 .dialect(&saved.scope.connection)
+                .or_else(|| {
+                    navidog_core::store::ConnectionStore::global(cx)
+                        .read(cx)
+                        .get(&saved.scope.connection)
+                        .and_then(|c| match c.driver.as_str() {
+                            "mysql" | "mariadb" => Some(Dialect::MySql),
+                            "postgres" => Some(Dialect::Postgres),
+                            "sqlite" => Some(Dialect::Sqlite),
+                            _ => None,
+                        })
+                })
                 .unwrap_or(Dialect::Sqlite);
+            let table_option_inputs: std::collections::BTreeMap<_, _> = options::keys(dialect)
+                .iter()
+                .enumerate()
+                .map(|(ix, key)| {
+                    let input = input(String::new(), window, cx);
+                    subscriptions.push(cx.subscribe_in(
+                        &input,
+                        window,
+                        move |this, _, event: &InputEvent, w, cx| {
+                            if matches!(event, InputEvent::Change) && !this.syncing {
+                                this.table_option_changed(ix, w, cx);
+                            }
+                        },
+                    ));
+                    (*key, input)
+                })
+                .collect();
             let mut this = Self {
                 table,
                 properties,
                 entry_inputs,
+                table_option_inputs,
                 entry_selected: None,
                 active_cell: None,
                 syncing: false,
@@ -405,6 +435,7 @@ impl TableDesigner {
                 _subscriptions: subscriptions,
             };
             this.sync_column(window, cx);
+            this.sync_table_options(window, cx);
             this.refresh_grid(cx);
             this
         })
@@ -487,6 +518,8 @@ impl TableDesigner {
             props.charset,
             props.generated_expression,
             props.generated_storage,
+            props.on_update,
+            props.identity,
         ]) {
             input.update(cx, |s, cx| s.set_value(value, window, cx));
         }
@@ -747,6 +780,7 @@ impl TableDesigner {
             s.set_value(self.draft.options.clone(), window, cx)
         });
         self.sync_column(window, cx);
+        self.sync_table_options(window, cx);
     }
     fn ask_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy {
@@ -791,6 +825,7 @@ impl TableDesigner {
     }
 }
 mod grid;
+mod options;
 mod references;
 mod structured;
 mod view;

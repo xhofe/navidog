@@ -11,6 +11,13 @@ pub fn plan(
     let Some(before) = before else {
         let mut out = vec![after.create_sql(d, scope, &after.name)?];
         out.extend(after.indexes.clone());
+        if d == Dialect::Postgres && !after.owner.is_empty() {
+            out.push(format!(
+                "ALTER TABLE {} OWNER TO {}",
+                d.qualified(scope, &after.name),
+                d.quote_ident(&after.owner)
+            ));
+        }
         return Ok(out);
     };
     let old = &before.design;
@@ -140,6 +147,25 @@ pub fn plan(
                         ));
                     }
                     if c.definition != previous.definition {
+                        if let (Some((a, b, mode, params)), Some((oa, ob, old_mode, old_params))) = (
+                            properties::identity(&c.definition),
+                            properties::identity(&previous.definition),
+                        ) {
+                            let stripped = format!("{}{}", &c.definition[..a], &c.definition[b..]);
+                            let old_stripped = format!(
+                                "{}{}",
+                                &previous.definition[..oa],
+                                &previous.definition[ob..]
+                            );
+                            if stripped == old_stripped && params == old_params && mode != old_mode
+                            {
+                                out.push(format!(
+                                    "ALTER TABLE {table} ALTER COLUMN {} SET GENERATED {mode}",
+                                    d.quote_ident(&c.name)
+                                ));
+                                continue;
+                            }
+                        }
                         let (ty, null, default) = pg_column(&c.definition)?;
                         let (old_ty, old_null, old_default) = pg_column(&previous.definition)?;
                         let target = format!(
@@ -176,13 +202,17 @@ pub fn plan(
     {
         out.push(format!("ALTER TABLE {table} ADD {c}"));
     }
-    if after.options != old.options {
-        if d != Dialect::MySql || after.options.trim().is_empty() {
-            return Err(DbError::msg(
-                "Changing these table options is not supported; the original options are preserved.",
-            ));
-        }
-        out.push(format!("ALTER TABLE {table} {}", after.options));
+    out.extend(options::option_alters(
+        d,
+        &table,
+        &old.options,
+        &after.options,
+    )?);
+    if d == Dialect::Postgres && old.unlogged != after.unlogged {
+        out.push(format!(
+            "ALTER TABLE {table} SET {}",
+            if after.unlogged { "UNLOGGED" } else { "LOGGED" }
+        ));
     }
     for s in old.indexes.iter().filter(|s| !after.indexes.contains(s)) {
         let name = index_name(s)?;
@@ -206,6 +236,15 @@ pub fn plan(
             .filter(|s| !old.indexes.contains(s))
             .cloned(),
     );
+    if d == Dialect::Postgres && old.owner != after.owner {
+        if after.owner.is_empty() {
+            return Err(DbError::msg("An existing PostgreSQL table needs an owner."));
+        }
+        out.push(format!(
+            "ALTER TABLE {table} OWNER TO {}",
+            d.quote_ident(&after.owner)
+        ));
+    }
     Ok(out)
 }
 
@@ -297,6 +336,13 @@ fn pg_column(definition: &str) -> DbResult<(String, bool, Option<String>)> {
 fn sqlite(scope: &Scope, before: &TableSnapshot, after: &TableDesign) -> DbResult<Vec<String>> {
     let d = Dialect::Sqlite;
     let old = &before.design;
+    if table_option(&old.options, "without_rowid", d)?
+        != table_option(&after.options, "without_rowid", d)?
+    {
+        return Err(DbError::msg(
+            "Changing WITHOUT ROWID on an existing table can lose row identity; create a new table instead.",
+        ));
+    }
     if old.columns.iter().chain(&after.columns).any(|c| {
         c.definition.to_uppercase().contains("GENERATED")
             || c.definition.to_uppercase().contains(" AS ")

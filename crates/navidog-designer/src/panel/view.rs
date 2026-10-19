@@ -153,11 +153,13 @@ impl TableDesigner {
                         .disabled(disabled)
                         .flex_1(),
                 )
-                .when(ix == 8, |row| {
+                .when(ix == 8 || ix == 10, |row| {
                     row.child(choices(
                         cx.entity().downgrade(),
-                        ix,
-                        if self.dialect == Dialect::Postgres {
+                        if ix == 10 { 90 } else { ix },
+                        if ix == 10 {
+                            vec!["".into(), "ALWAYS".into(), "BY DEFAULT".into()]
+                        } else if self.dialect == Dialect::Postgres {
                             vec!["STORED".into()]
                         } else {
                             vec!["VIRTUAL".into(), "STORED".into()]
@@ -191,7 +193,12 @@ impl TableDesigner {
             .overflow_y_scroll()
             .p_3()
             .gap_2()
-            .child(self.property_row(4, "default_value", disabled || p.generated, cx))
+            .child(self.property_row(
+                4,
+                "default_value",
+                disabled || p.generated || !p.identity.is_empty(),
+                cx,
+            ))
             .child(self.property_row(5, "collation", disabled, cx))
             .when(text && self.dialect == Dialect::MySql, |v| {
                 v.child(self.property_row(6, "charset", disabled, cx))
@@ -212,11 +219,32 @@ impl TableDesigner {
                     Checkbox::new("designer-unsigned")
                         .label(t!("designer.unsigned").to_string())
                         .checked(p.unsigned)
-                        .disabled(disabled)
+                        .disabled(disabled || p.zerofill)
                         .on_click(cx.listener(|this, value, w, cx| {
                             this.toggle_attribute(ColumnProperty::Unsigned, *value, w, cx)
                         })),
                 ))
+            })
+            .when(self.dialect == Dialect::MySql && numeric, |v| {
+                v.child(FormRow::bare(
+                    Checkbox::new("designer-zerofill")
+                        .label(t!("designer.zerofill").to_string())
+                        .checked(p.zerofill)
+                        .disabled(disabled)
+                        .on_click(cx.listener(|this, value, w, cx| {
+                            this.toggle_attribute(ColumnProperty::Zerofill, *value, w, cx)
+                        })),
+                ))
+            })
+            .when(
+                self.dialect == Dialect::MySql
+                    && ["TIMESTAMP", "DATETIME"]
+                        .iter()
+                        .any(|ty| p.data_type.to_ascii_uppercase().contains(ty)),
+                |v| v.child(self.property_row(9, "on_update_expression", disabled, cx)),
+            )
+            .when(self.dialect == Dialect::Postgres && numeric, |v| {
+                v.child(self.property_row(10, "identity_mode", disabled || p.generated, cx))
             })
             .when(p.generated, |v| {
                 v.child(self.property_row(7, "expression", disabled, cx))
@@ -543,25 +571,7 @@ impl Render for TableDesigner {
                             self.render_grid_page(window, cx).into_any_element()
                         }
                         Page::Preview => Editor::new(&self.sql).size_full().into_any_element(),
-                        Page::Options => v_flex()
-                            .size_full()
-                            .p_3()
-                            .gap_2()
-                            .child(
-                                gpui_kit::div()
-                                    .text_color(p.label_secondary)
-                                    .child(t!("designer.options_pending").to_string()),
-                            )
-                            .child(
-                                Button::new("designer-options-advanced")
-                                    .ghost()
-                                    .small()
-                                    .label(t!("designer.advanced").to_string())
-                                    .on_click(cx.listener(|this, _, w, cx| {
-                                        this.switch_page(Page::Advanced, w, cx)
-                                    })),
-                            )
-                            .into_any_element(),
+                        Page::Options => self.render_table_options(cx).into_any_element(),
                         Page::Advanced => v_flex()
                             .size_full()
                             .min_h_0()

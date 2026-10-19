@@ -219,3 +219,108 @@ designer:
   loading_references:
     en: Loading referenced objects…
     zh-CN: 正在加载被引用对象…
+  option_engine:
+    en: Engine
+    zh-CN: 引擎
+  option_charset:
+    en: Default character set
+    zh-CN: 默认字符集
+  option_collation:
+    en: Default collation
+    zh-CN: 默认排序规则
+  option_auto_increment:
+    en: Auto increment
+    zh-CN: 自动递增
+  option_row_format:
+    en: Row format
+    zh-CN: 行格式
+  option_avg_row_length:
+    en: Average row length
+    zh-CN: 平均行长度
+  option_max_rows:
+    en: Max rows
+    zh-CN: 最大行数
+  option_min_rows:
+    en: Min rows
+    zh-CN: 最小行数
+  option_key_block_size:
+    en: Key block size
+    zh-CN: 键块大小
+  option_stats_auto_recalc:
+    en: Stats auto recalc
+    zh-CN: 统计信息自动重算
+  option_stats_persistent:
+    en: Stats persistent
+    zh-CN: 持久化统计信息
+  option_stats_sample_pages:
+    en: Stats sample pages
+    zh-CN: 统计采样页数
+  option_checksum:
+    en: Checksum
+    zh-CN: 校验和
+  option_delay_key_write:
+    en: Delay key write
+    zh-CN: 延迟键写
+  option_pack_keys:
+    en: Pack keys
+    zh-CN: 打包键
+  option_insert_method:
+    en: Insert method
+    zh-CN: 插入方法
+  option_connection:
+    en: Connection
+    zh-CN: 连接
+  option_data_directory:
+    en: Data directory
+    zh-CN: 数据目录
+  option_index_directory:
+    en: Index directory
+    zh-CN: 索引目录
+  option_tablespace:
+    en: Tablespace
+    zh-CN: 表空间
+  option_compression:
+    en: Compression
+    zh-CN: 压缩
+  option_encryption:
+    en: Encryption
+    zh-CN: 加密
+  option_table_comment:
+    en: Comment
+    zh-CN: 注释
+  option_owner:
+    en: Owner
+    zh-CN: 拥有者
+  option_inherits:
+    en: Inherits from
+    zh-CN: 继承自
+  option_fillfactor:
+    en: Fill factor (%)
+    zh-CN: 填充因子 (%)
+  option_autovacuum_enabled:
+    en: Autovacuum enabled
+    zh-CN: 启用自动清理
+  option_unlogged:
+    en: Unlogged
+    zh-CN: 不记录日志
+  option_strict:
+    en: STRICT
+    zh-CN: STRICT
+  option_without_rowid:
+    en: WITHOUT ROWID
+    zh-CN: WITHOUT ROWID
+  table_options_help:
+    en: Options change only the draft. Review changes in SQL preview before saving. Other attributes can be edited in Advanced.
+    zh-CN: 选项只修改草稿，保存前可在 SQL 预览中检查变更。其他属性可在高级页编辑。
+  zerofill:
+    en: Zerofill
+    zh-CN: 零填充
+  on_update_expression:
+    en: On update
+    zh-CN: 更新时
+  identity_mode:
+    en: Identity mode
+    zh-CN: 标识模式
+  table_options_mysql_help:
+    en: Empty fields use database defaults for new tables. Existing options require explicit replacement values. Other attributes can be edited in Advanced.
+    zh-CN: 新表的空值使用数据库默认设置，已有选项需填写明确的替代值。其他属性可在高级页编辑。

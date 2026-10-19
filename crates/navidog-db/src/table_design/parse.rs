@@ -136,10 +136,11 @@ pub(super) fn create(ddl: &str, name: &str, d: Dialect) -> DbResult<TableDesign>
         .text
         .trim();
     let upper = sql.to_uppercase();
-    if !upper.starts_with("CREATE TABLE ") {
+    let unlogged = upper.starts_with("CREATE UNLOGGED TABLE ");
+    if !upper.starts_with("CREATE TABLE ") && !unlogged {
         return Err(DbError::msg("Unsupported table definition."));
     }
-    let rest = sql[13..].trim_start();
+    let rest = sql[if unlogged { 22 } else { 13 }..].trim_start();
     // Find the body while skipping quoted table/schema names.
     let (_, mut rest) = ident(rest)?;
     if rest.starts_with('.') {
@@ -159,6 +160,7 @@ pub(super) fn create(ddl: &str, name: &str, d: Dialect) -> DbResult<TableDesign>
     let body = &body_and_options[..end];
     let mut design = TableDesign {
         name: name.into(),
+        unlogged,
         options: body_and_options[end + 1..].trim().into(),
         ..Default::default()
     };

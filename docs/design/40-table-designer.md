@@ -46,7 +46,7 @@
 
 - 原首版的 SQL 输入主界面被撤回，改为字段网格及结构化索引、外键和检查表单；高级 SQL 仅供无法结构化表达的定义使用。
 - SQLite 主数据库支持完整常见表的事务重建，保留索引、触发器、入站外键、视图、隐藏 rowid 和 AUTOINCREMENT 序列高水位；纯索引变更直接执行。生成列表的重建、附加数据库明确拒绝。字段重命名单独保存，由 SQLite 原生重写依赖。删除字段先在保存点内用原生 DROP COLUMN 检查依赖，回滚预检后再迁移；有依赖时要求先移除依赖。
-- PostgreSQL 不支持现有列的物理重排，也不猜测生成列、identity、collation 等特殊属性的 ALTER。加载额外读取这些标志及列注释，保留属性并纳入外部变更指纹。现有表选项和注释修改未实现。
+- PostgreSQL 不支持现有列的物理重排，也不猜测生成列、identity、collation 等特殊属性的 ALTER。加载额外读取这些标志及列注释，保留属性并纳入外部变更指纹。常用表选项修改已由第 8 节补齐，现有注释修改未实现。
 - MySQL DDL 可能部分成功；失败必须重新加载。先检查结构再执行不能消除 MySQL DDL 的并发变更窗口，保存期间应避免在别的客户端同时改同一张表。
 - 本次不修改其他 M4 对象设计器的状态，不把 Navicat 并排视觉校准视为已完成。
 
@@ -80,6 +80,8 @@
 
 参考本地 TableDesignOptionsModule_mysql/pgsql/sqlite 导出，以及 PostgreSQL 16 ALTER TABLE、MySQL 8.4 CREATE TABLE 与 SQLite STRICT 官方语法。排除约束、分区和引擎私有选项仍在各自规格范围，不以本节宣称完整 M4 验收。
 
-- [ ] 三种方言选项解析/编辑/迁移及未知选项保留测试。
-- [ ] MySQL、MariaDB、PostgreSQL、SQLite 实库创建/修改、数据保留与失败回滚。
-- [ ] 真实键盘/复选框交互、预览守卫、浅深色截图并提交原图。
+- [x] 三种方言选项解析/编辑/迁移及未知选项保留测试。
+- [x] MySQL、MariaDB、PostgreSQL、SQLite 实库创建/修改、数据保留与失败回滚。
+- [x] 真实键盘/复选框交互、预览守卫、浅深色截图并提交原图。
+
+语法依据：[MySQL 8.4 CREATE TABLE](https://dev.mysql.com/doc/refman/8.4/en/create-table.html)、[PostgreSQL 16 ALTER TABLE](https://www.postgresql.org/docs/16/sql-altertable.html)、[SQLite STRICT](https://www.sqlite.org/stricttables.html)。表单尺寸沿用已有 token；Nib 私有资料不提交。

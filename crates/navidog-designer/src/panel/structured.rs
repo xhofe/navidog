@@ -1,6 +1,6 @@
 use super::*;
 
-const PROPERTIES: [ColumnProperty; 9] = [
+const PROPERTIES: [ColumnProperty; 11] = [
     ColumnProperty::Type,
     ColumnProperty::Length,
     ColumnProperty::Scale,
@@ -10,8 +10,10 @@ const PROPERTIES: [ColumnProperty; 9] = [
     ColumnProperty::Charset,
     ColumnProperty::GeneratedExpression,
     ColumnProperty::GeneratedStorage,
+    ColumnProperty::OnUpdate,
+    ColumnProperty::Identity,
 ];
-pub(super) const PROPERTY_IDS: [&str; 9] = [
+pub(super) const PROPERTY_IDS: [&str; 11] = [
     "designer-field-type",
     "designer-field-length",
     "designer-field-scale",
@@ -21,6 +23,8 @@ pub(super) const PROPERTY_IDS: [&str; 9] = [
     "designer-field-charset",
     "designer-field-expression",
     "designer-field-storage",
+    "designer-field-on-update",
+    "designer-field-identity",
 ];
 pub(super) const ENTRY_KEYS: [&str; 10] = [
     "name",
@@ -73,6 +77,9 @@ impl TableDesigner {
         }
         self.flush(cx);
         self.page = page;
+        if page == Page::Options {
+            self.sync_table_options(window, cx);
+        }
         if page == Page::Fields {
             self.sync_column(window, cx);
         }
@@ -707,8 +714,24 @@ impl TableDesigner {
         if self.busy || !self.loaded {
             return;
         }
-        if action.target < 10 {
-            let ix = action.target;
+        if action.target >= 100 {
+            let ix = action.target - 100;
+            let Some(key) = super::options::keys(self.dialect).get(ix) else {
+                return;
+            };
+            let Some(input) = self.table_option_inputs.get(key).cloned() else {
+                return;
+            };
+            self.syncing = true;
+            input.update(cx, |s, cx| s.set_value(action.value.clone(), window, cx));
+            self.syncing = false;
+            self.table_option_changed(ix, window, cx);
+        } else if action.target < 10 || action.target == 90 {
+            let ix = if action.target == 90 {
+                10
+            } else {
+                action.target
+            };
             let Some(input) = self.properties.get(ix).cloned() else {
                 return;
             };

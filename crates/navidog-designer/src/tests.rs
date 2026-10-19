@@ -341,6 +341,16 @@ fn saves_only_after_preview_and_keeps_failed_draft(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| w.click("designer-page-options", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| w.click("designer-option-strict", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(panel.read(cx).draft.options, "STRICT"));
+    cx.update_window(handle, |_, w, cx| w.click("designer-page-fields", cx))
+        .unwrap();
+    cx.run_until_parked();
     cx.update_window(handle, |_, w, cx| w.click("designer-auto-increment", cx))
         .unwrap();
     cx.run_until_parked();
@@ -605,4 +615,97 @@ fn cascades_real_reference_metadata_and_preserves_drafts(cx: &mut TestAppContext
         assert_eq!(p.reference_values(6, cx), vec!["id", "field_2"]);
         assert_eq!(p.entry_inputs[6].read(cx).value(), "");
     });
+}
+
+#[gpui_kit::test]
+fn option_forms_use_saved_dialect_and_guard_invalid_previews(cx: &mut TestAppContext) {
+    use navidog_core::{connection::Connection, crypto::Key, store::ConnectionStore};
+    let (_guard, _home) = isolate_home("option-forms");
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_core::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_ui::tabs::init(cx);
+        navidog_db::init(cx);
+        crate::init(cx);
+        ConnectionStore::global(cx).update(cx, |store, _| store.set_key(Key::random()));
+    });
+    for (driver, key, value) in [
+        ("mysql", "engine", "InnoDB"),
+        ("postgres", "fillfactor", "80"),
+    ] {
+        let id = cx.update(|cx| {
+            ConnectionStore::global(cx).update(cx, |store, cx| {
+                let c = Connection::new(driver);
+                let id = c.id.clone();
+                store.upsert(c, &[], cx).unwrap();
+                id
+            })
+        });
+        // No live session: restored drafts must still use the saved connection's dialect.
+        let (handle, panel) = cx.update(|cx| {
+            let mut panel = None;
+            let handle = gpui_kit::open_window(WindowOptions::default(), cx, |w, cx| {
+                let p = TableDesigner::new(Scope::new(id, "test", Some("public".into())), w, cx);
+                panel = Some(p.clone());
+                cx.new(|_| Host(p))
+            })
+            .unwrap();
+            (handle.0, panel.unwrap())
+        });
+        cx.update_window(handle, |_, w, cx| {
+            w.render_frame(cx);
+            w.click("designer-table-name", cx);
+            w.input("option_test", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, w, cx| w.click("designer-page-options", cx))
+            .unwrap();
+        cx.run_until_parked();
+        let input = gpui_kit::SharedString::from(format!("designer-option-{key}"));
+        cx.update_window(handle, |_, w, cx| {
+            w.click(input.clone(), cx);
+            w.input(if driver == "postgres" { "101" } else { value }, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        if driver == "postgres" {
+            cx.update_window(handle, |_, w, cx| w.click("designer-save", cx))
+                .unwrap();
+            cx.run_until_parked();
+            cx.update(|cx| {
+                assert!(panel.read(cx).preview.is_none());
+                assert!(!panel.read(cx).invalid_inputs.is_empty());
+            });
+            cx.update_window(handle, |_, w, cx| {
+                w.click(input.clone(), cx);
+                w.press("secondary-a", cx);
+                w.input(value, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, w, cx| w.click("designer-option-unlogged", cx))
+                .unwrap();
+            cx.run_until_parked();
+        }
+        cx.update_window(handle, |_, w, cx| w.click("designer-save", cx))
+            .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let p = panel.read(cx);
+            assert!(p.invalid_inputs.is_empty());
+            let sql = &p.preview.as_ref().unwrap()[0];
+            assert!(sql.contains(if driver == "mysql" {
+                "ENGINE=InnoDB"
+            } else {
+                "CREATE UNLOGGED TABLE"
+            }));
+            if driver == "postgres" {
+                assert!(sql.contains("fillfactor=80"));
+            }
+        });
+        cx.update_window(handle, |_, w, _| w.remove_window())
+            .unwrap();
+    }
 }

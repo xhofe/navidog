@@ -1,8 +1,10 @@
 //! Lossless table drafts and guarded, dialect-specific schema changes.
 mod entries;
+mod options;
 mod parse;
 mod properties;
 pub use entries::{DesignEntry, EntryKind, parse_entry, split_field_list};
+pub use options::{MYSQL_OPTIONS, POSTGRES_OPTIONS, edit_table_option, table_option};
 pub use properties::{ColumnProperties, ColumnProperty, column_properties, edit_column};
 mod plan;
 #[cfg(test)]
@@ -40,6 +42,10 @@ pub struct TableDesign {
     pub constraints: Vec<String>,
     pub indexes: Vec<String>,
     pub options: String,
+    #[serde(default)]
+    pub owner: String,
+    #[serde(default)]
+    pub unlogged: bool,
 }
 impl TableDesign {
     pub fn new() -> Self {
@@ -58,7 +64,12 @@ impl TableDesign {
             .collect();
         parts.extend(self.constraints.iter().map(|c| format!("  {}", c.trim())));
         Ok(format!(
-            "CREATE TABLE {} (\n{}\n){}",
+            "CREATE {}TABLE {} (\n{}\n){}",
+            if dialect == Dialect::Postgres && self.unlogged {
+                "UNLOGGED "
+            } else {
+                ""
+            },
             dialect.qualified(scope, name),
             parts.join(",\n"),
             if self.options.trim().is_empty() {
@@ -140,6 +151,32 @@ pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult
         // The general DDL view omits identity/generated flags and nondefault collations.
         // Include them in both the editable draft and the concurrency fingerprint.
         let table = dialect.qualified(scope, name);
+        let option_query = format!(
+            "SELECT pg_get_userbyid(c.relowner), c.relpersistence, array_to_string(c.reloptions, ', '), t.spcname, (SELECT string_agg(quote_ident(n.nspname)||'.'||quote_ident(p.relname), ', ' ORDER BY i.inhseqno) FROM pg_inherits i JOIN pg_class p ON p.oid=i.inhparent JOIN pg_namespace n ON n.oid=p.relnamespace WHERE i.inhrelid=c.oid) FROM pg_class c LEFT JOIN pg_tablespace t ON t.oid=c.reltablespace WHERE c.oid={}::regclass",
+            dialect.string_literal(&table)
+        );
+        let option_sets = r.execute(&option_query).await?;
+        if let Some(row) = option_sets.iter().flat_map(|s| &s.rows).next() {
+            let cell = |i: usize| row.get(i).and_then(|v| v.as_deref()).unwrap_or("");
+            design.owner = cell(0).into();
+            design.unlogged = cell(1) == "u";
+            let mut options = Vec::new();
+            if !cell(4).is_empty() {
+                options.push(format!("INHERITS ({})", cell(4)));
+            }
+            if !cell(2).is_empty() {
+                options.push(format!("WITH ({})", cell(2)));
+            }
+            if !cell(3).is_empty() {
+                options.push(format!("TABLESPACE {}", dialect.quote_ident(cell(3))));
+            }
+            design.options = options.join(" ");
+        }
+        ddl.push_str(&format!(
+            "\n-- Table options: {}",
+            serde_json::to_string(&option_sets.iter().flat_map(|s| &s.rows).collect::<Vec<_>>())
+                .unwrap_or_default()
+        ));
         let query = format!(
             "SELECT a.attname, format_type(a.atttypid,a.atttypmod), a.attnotnull, pg_get_expr(ad.adbin,ad.adrelid), a.attidentity, a.attgenerated, CASE WHEN a.attcollation <> ty.typcollation THEN nc.nspname END, CASE WHEN a.attcollation <> ty.typcollation THEN co.collname END, col_description(a.attrelid,a.attnum) FROM pg_attribute a JOIN pg_type ty ON ty.oid=a.atttypid LEFT JOIN pg_attrdef ad ON ad.adrelid=a.attrelid AND ad.adnum=a.attnum LEFT JOIN pg_collation co ON co.oid=a.attcollation LEFT JOIN pg_namespace nc ON nc.oid=co.collnamespace WHERE a.attrelid={}::regclass AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum",
             dialect.string_literal(&table)
