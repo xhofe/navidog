@@ -16,7 +16,7 @@
 | M1 应用外壳和连接管理 | 完成 | `m1-shell-connection` | 10-shell、11-connection | 部分 token 仍是暂定值，待 AX 实测（见第 3 节） |
 | M2 对象树、对象选项卡、表查看器 | 进行中 | `m2-specs`、`m2-objects-grid` | 20-objects、21-table-viewer | 任务都已完成，剩两份规格验收清单里的并排目测 |
 | M3 查询编辑器 | 进行中 | `feat/m3`、`codex/m3-completion` | 30-query-editor、31-query-results | 运行/选择/当前语句/停止、存储过程、结果上限和命令列交互验收已补齐；剩配色、解释视图和消息措辞的目测项。见 [本机验收记录](acceptance-m3.md)。查询创建工具（F-QRY-013）移到 M7 |
-| M4 表设计器及其他对象设计器 | 进行中 | `codex/m4-table-designer` | 40-table-designer | 表设计器首版已实现；逐属性网格、结构化约束表单与其余对象设计器未完成，见 [验收记录](acceptance-m4.md) |
+| M4 表设计器及其他对象设计器 | 进行中 | `codex/m4-table-designer` | 40-table-designer | 表设计器首版已实现；10-19 修正 Linux/Windows UI 测试全选快捷键，远程复验中；逐属性网格、结构化约束表单与其余对象设计器未完成，见 [验收记录](acceptance-m4.md) |
 | M5 插件体系 | 未开始 | | 03-plugin-api | |
 | M6 导入导出 | 未开始 | | | |
 | M7 模型和 ER 图 | 未开始 | | | 含查询创建工具，与 ER 图共用画布 |

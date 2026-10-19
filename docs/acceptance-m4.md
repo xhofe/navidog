@@ -39,3 +39,9 @@
 SQLite 生成列表重建和附加数据库、PostgreSQL 物理列重排及现有特殊属性/选项/注释修改等明确拒绝。MySQL DDL 无法事务回滚，失败后必须重新加载，执行前结构检查也不能消除并发 DDL 窗口。
 
 本次参考本地 Navicat 帮助 `reference/help-text/mysql_table.txt`、`postgresql_table.txt`、`sqlite_table.txt`、`hot_keys.txt`，复用项目已有尺寸 token；未完成 Navicat 并排视觉校准，不把自动截图当作该项验收。详细边界见 `docs/design/40-table-designer.md` 第 5 节。
+
+## 2026-10-19 CI 修正
+
+PR #3 的 Linux/Windows 界面测试失败于字段名称断言：测试使用 `cmd-a`，没有触发这两个平台的 Input 全选，导致输入追加到默认名称。三个全选操作改为组件支持的 `secondary-a`（macOS Command，其他平台 Control），保留真实键盘输入和草稿断言，并为失败回滚用例增加字段定义精确断言，避免无效 SQL 误代替预期的非空约束失败。
+
+本机设计器两项测试通过；远程跨平台 CI 在推送修正后重新验证。

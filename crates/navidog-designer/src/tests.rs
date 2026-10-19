@@ -61,10 +61,11 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.click("designer-field-name", cx);
-        window.press("cmd-a", cx);
+        // Input uses Command on macOS and Control on Linux/Windows.
+        window.press("secondary-a", cx);
         window.input("display_name", cx);
         window.click("designer-field-definition", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("TEXT NOT NULL DEFAULT 'guest'", cx);
     })
     .unwrap();
@@ -250,11 +251,25 @@ fn saves_only_after_preview_and_keeps_failed_draft(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.click("designer-field-definition", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("TEXT NOT NULL", cx);
     })
     .unwrap();
     cx.run_until_parked();
+    cx.update(|cx| {
+        let panel = panel.read(cx);
+        let selected = panel.selected.unwrap();
+        assert_eq!(
+            panel
+                .draft
+                .columns
+                .iter()
+                .find(|c| c.id == selected)
+                .unwrap()
+                .definition,
+            "TEXT NOT NULL"
+        );
+    });
     cx.update_window(handle, |_, window, cx| {
         window.click("designer-save", cx);
     })
