@@ -152,9 +152,18 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
             .unwrap();
         cx.run_until_parked();
         if page == "indexes" {
+            cx.update_window(handle, |_, w, cx| w.click("designer-entry-name", cx))
+                .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, w, cx| w.click("designer-choices-12", cx))
+                .unwrap();
+            cx.run_until_parked();
             cx.update_window(handle, |_, w, cx| {
-                w.render_frame(cx);
-                assert_eq!(w.find("designer-choices-12").disabled(), Some(true));
+                let input = panel.read(cx).entry_inputs[0].read(cx);
+                assert!(
+                    gpui_kit::Focusable::focus_handle(input, cx).is_focused(w),
+                    "disabled method picker must not open its menu or steal input focus"
+                );
             })
             .unwrap();
         }
