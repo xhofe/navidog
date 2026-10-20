@@ -37,14 +37,14 @@ impl TableDesigner {
         let value = self.table_option_inputs[key].read(cx).value().to_string();
         let result = if key == "table_comment" && self.dialect == Dialect::Postgres {
             if value.contains('\0') {
-                Err(DbError::msg("Comments cannot contain NUL characters."))
+                Err(DbError::msg(t!("designer.invalid_comment").to_string()))
             } else {
                 self.draft.comment = value;
                 Ok(self.draft.options.clone())
             }
         } else if key == "owner" {
             if value.contains('\0') {
-                Err(DbError::msg("Invalid owner name."))
+                Err(DbError::msg(t!("designer.invalid_owner").to_string()))
             } else {
                 self.draft.owner = value;
                 Ok(self.draft.options.clone())

@@ -288,7 +288,7 @@ mod macos {
         dispatch(
             &mut cx,
             Box::new(navidog_core::actions::DesignTable {
-                object: actor_ref.clone(),
+                object: Some(actor_ref.clone()),
             }),
         );
         wait(&mut cx, |_| false);

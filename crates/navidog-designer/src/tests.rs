@@ -742,6 +742,7 @@ fn postgres_comments_edit_in_the_grid_preview_and_restore(cx: &mut TestAppContex
             ];
             let p = TableDesigner::restore(
                 super::Saved {
+                    object: None,
                     scope: Scope::new(id, "test", Some("public".into())),
                     draft,
                     baseline: None,
@@ -839,4 +840,100 @@ fn postgres_comments_edit_in_the_grid_preview_and_restore(cx: &mut TestAppContex
         assert_eq!(p.draft.columns[1].comment, "字段 O'Brien \\ path");
         assert!(p.draft.columns[1].original.is_none());
     });
+}
+
+#[gpui_kit::test]
+fn reload_rebuilds_entry_forms_and_clears_validation(cx: &mut TestAppContext) {
+    use super::{ChooseValue, Page};
+    use gpui_kit::component::dock::BasePanel as _;
+    use navidog_db::table_design::TableSnapshot;
+    let (_guard, _) = isolate_home("review-reload");
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_core::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_ui::tabs::init(cx);
+        navidog_db::init(cx);
+        crate::init(cx);
+    });
+    let (handle, panel) = cx.update(|cx| {
+        let mut panel = None;
+        let window = gpui_kit::open_window(WindowOptions::default(), cx, |w, cx| {
+            let p = TableDesigner::new(Scope::new("test", "main", None), w, cx);
+            assert!(!p.read(cx).dirty(), "a pristine new table has no edits");
+            assert!(p.read(cx).closable(cx));
+            panel = Some(p.clone());
+            cx.new(|_| Host(p))
+        })
+        .unwrap();
+        (window.0, panel.unwrap())
+    });
+    cx.update_window(handle, |_, w, cx| {
+        panel.update(cx, |p, cx| {
+            p.draft.name = "t".into();
+            p.draft.constraints = vec![
+                "CONSTRAINT z CHECK(id > 0)".into(),
+                "CONSTRAINT a CHECK(id < 100)".into(),
+            ];
+            p.sync_all(w, cx);
+            p.switch_page(Page::Checks, w, cx);
+            p.entry_selected = Some(1);
+            p.active_cell = Some(0);
+            p.invalid_inputs.insert(100, "stale error".into());
+            let mut design = p.draft.clone();
+            design.constraints.reverse();
+            p.accept_snapshot(
+                serde_json::from_value::<TableSnapshot>(
+                    serde_json::json!({"design": design, "ddl": "", "triggers": []}),
+                )
+                .unwrap(),
+                w,
+                cx,
+            );
+            assert!(!p.dirty());
+            assert!(p.active_cell.is_none());
+            assert_eq!(p.entry_selected, Some(0));
+            assert_eq!(p.entry_inputs[0].read(cx).value(), "a");
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        w.render_frame(cx);
+        w.click("designer-entry-name", cx);
+        w.press("secondary-a", cx);
+        w.input("renamed_a", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, w, cx| {
+        panel.update(cx, |p, cx| {
+            assert!(p.draft.constraints[0].contains("renamed_a"));
+            assert!(p.draft.constraints[0].contains("id < 100"));
+            assert!(p.draft.constraints[1].contains("id > 0"));
+            p.switch_page(Page::Indexes, w, cx);
+            p.draft.constraints = vec!["PRIMARY KEY (id)".into()];
+            p.sync_all(w, cx);
+            // Existing unquoted identifiers and picker-produced identifiers denote the same field.
+            p.choose_value(
+                &ChooseValue {
+                    target: 11,
+                    value: "id".into(),
+                },
+                w,
+                cx,
+            );
+            assert_eq!(p.entry_inputs[1].read(cx).value(), "");
+            p.choose_value(
+                &ChooseValue {
+                    target: 11,
+                    value: "id".into(),
+                },
+                w,
+                cx,
+            );
+            assert_eq!(p.entry_inputs[1].read(cx).value(), "\"id\"");
+        })
+    })
+    .unwrap();
 }

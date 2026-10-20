@@ -1,6 +1,8 @@
 # M4 表设计器截图
 
-2026-10-19 至 2026-10-20 截图测试生成的 Navidog 界面。外键浅深色截图为元数据级联选择版；表选项与方言字段属性截图已更新为本次实现，其他场景归档自实现提交 `72e8d74`。使用本地测试数据；表单与 SQL 预览展示草稿，不代表截图中的变更已经执行。
+当前归档 **33 张**设计器原图，已用 2026-10-20 review 修复版重新生成。使用本地测试数据；表单与 SQL 预览展示草稿，不代表截图中的变更已经执行。
+
+普通截图命令 `cargo test -p navidog --test snapshot --locked` 生成 44 张全应用截图，其中设计器 17 张。要重现本目录全部 33 张，需先运行 `docker compose up -d --wait`，再运行 `NAVIDOG_LIVE=1 cargo test -p navidog --test snapshot --locked`；完整命令生成 60 张，额外 16 张是 MySQL/PostgreSQL 选项、字段属性与已有 PG 注释场景。结束后运行 `docker compose down`。仅归档设计器原图，未提交本地 reference 资料。
 
 | 场景 | 浅色 | 深色 |
 | --- | --- | --- |

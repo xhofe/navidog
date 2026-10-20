@@ -178,6 +178,34 @@ fn live_table_design_create_alter_rename_and_constraints() {
             r.execute(&format!("INSERT INTO {table} (id) VALUES(1)"))
                 .await
                 .unwrap();
+            if d == Dialect::MySql {
+                let name = format!("ix_standalone_{}", std::process::id());
+                r.execute(&format!(
+                    "CREATE INDEX {} ON {table} (value)",
+                    d.quote_ident(&name)
+                ))
+                .await
+                .unwrap();
+                let mut before = load(r, &scope, &draft.name).await.unwrap();
+                // MySQL's loader canonicalizes indexes inline; exercise the supported Advanced representation.
+                before.design.constraints.retain(|s| !s.contains(&name));
+                before.design.indexes.push(format!(
+                    "CREATE INDEX {} ON {table} (value)",
+                    d.quote_ident(&name)
+                ));
+                let mut after = before.design.clone();
+                after.indexes.clear();
+                for sql in plan(d, &scope, Some(&before), &after).unwrap() {
+                    r.execute(&sql).await.unwrap();
+                }
+                assert!(
+                    !load(r, &scope, &draft.name)
+                        .await
+                        .unwrap()
+                        .ddl
+                        .contains(&name)
+                );
+            }
             let mut changed = saved.design.clone();
             changed.columns[1].name = "renamed".into();
             changed.columns[1].definition = edit_column(
@@ -633,4 +661,24 @@ fn live_postgres_comments_round_trip_rename_rollback_and_concurrency() {
         r.execute(&format!("DROP TABLE {table}")).await.unwrap();
         session.close().await.unwrap();
     });
+}
+
+#[test]
+fn mysql_standalone_index_removal_names_its_table() {
+    let mut design = TableDesign::new();
+    design.name = "t".into();
+    design.columns[0].original = Some("id".into());
+    design
+        .indexes
+        .push("CREATE INDEX `ix` ON `main`.`t` (`id`)".into());
+    let old = TableSnapshot {
+        design: design.clone(),
+        ddl: String::new(),
+        triggers: vec![],
+    };
+    design.indexes.clear();
+    assert_eq!(
+        plan(Dialect::MySql, &scope(), Some(&old), &design).unwrap(),
+        vec!["ALTER TABLE `main`.`t` DROP INDEX `ix`"]
+    );
 }

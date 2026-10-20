@@ -26,6 +26,9 @@ pub(super) const PROPERTY_IDS: [&str; 11] = [
     "designer-field-on-update",
     "designer-field-identity",
 ];
+pub(super) const REFERENCE_SCHEMA: usize = 4;
+pub(super) const REFERENCE_TABLE: usize = 5;
+pub(super) const REFERENCE_FIELDS: usize = 6;
 pub(super) const ENTRY_KEYS: [&str; 10] = [
     "name",
     "fields",
@@ -286,7 +289,7 @@ impl TableDesigner {
         if ix == 3 && self.dialect == Dialect::Postgres {
             if value.contains('\0') {
                 self.invalid_inputs
-                    .insert(ix, "Comments cannot contain NUL characters.".into());
+                    .insert(ix, t!("designer.invalid_comment").to_string());
             } else {
                 c.comment = value;
                 self.invalid_inputs.remove(&ix);
@@ -553,7 +556,7 @@ impl TableDesigner {
         });
         self.syncing = false;
     }
-    fn sync_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn sync_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let e = self
             .entry_selected
             .and_then(|ix| self.entries().get(ix).and_then(|e| e.3.clone()))
@@ -579,9 +582,9 @@ impl TableDesigner {
         }
     }
     pub(super) fn entry_changed(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.page == Page::ForeignKeys && [4, 5].contains(&ix) {
+        if self.page == Page::ForeignKeys && [REFERENCE_SCHEMA, REFERENCE_TABLE].contains(&ix) {
             self.syncing = true;
-            for dependent in (ix + 1)..=6 {
+            for dependent in (ix + 1)..=REFERENCE_FIELDS {
                 self.entry_inputs[dependent].update(cx, |s, cx| s.set_value("", window, cx));
             }
             self.syncing = false;
@@ -613,9 +616,9 @@ impl TableDesigner {
         e.fields = v[1].clone();
         e.method = v[2].clone();
         e.comment = v[3].clone();
-        e.reference_schema = v[4].clone();
-        e.reference_table = v[5].clone();
-        e.reference_fields = v[6].clone();
+        e.reference_schema = v[REFERENCE_SCHEMA].clone();
+        e.reference_table = v[REFERENCE_TABLE].clone();
+        e.reference_fields = v[REFERENCE_FIELDS].clone();
         e.on_delete = v[7].clone();
         e.on_update = v[8].clone();
         e.expression = v[9].clone();
@@ -762,14 +765,17 @@ impl TableDesigner {
             let Some(input) = self.entry_inputs.get(ix).cloned() else {
                 return;
             };
-            let value = if ix == 1 || ix == 6 {
+            let value = if ix == 1 || ix == REFERENCE_FIELDS {
                 let field = self.dialect.quote_ident(&action.value);
                 let old = input.read(cx).value().to_string();
                 let fields = split_field_list(&old).unwrap_or_default();
-                if fields.iter().any(|s| s.trim() == field) {
+                if fields
+                    .iter()
+                    .any(|s| s.trim().trim_matches(['`', '"', '[', ']']) == action.value)
+                {
                     fields
                         .iter()
-                        .filter(|s| s.trim() != field)
+                        .filter(|s| s.trim().trim_matches(['`', '"', '[', ']']) != action.value)
                         .cloned()
                         .collect::<Vec<_>>()
                         .join(", ")

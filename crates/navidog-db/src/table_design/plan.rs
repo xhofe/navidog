@@ -229,6 +229,13 @@ pub fn plan(
     }
     for s in old.indexes.iter().filter(|s| !after.indexes.contains(s)) {
         let name = index_name(s)?;
+        if d == Dialect::MySql {
+            out.push(format!(
+                "ALTER TABLE {table} DROP INDEX {}",
+                d.quote_ident(&name)
+            ));
+            continue;
+        }
         out.push(format!(
             "DROP INDEX {}{}",
             if d == Dialect::Postgres {

@@ -179,7 +179,8 @@ gpui_kit::actions!(designer, [NewTable]);
 #[derive(Clone, PartialEq, Debug, Action)]
 #[action(namespace = designer, no_json)]
 pub struct DesignTable {
-    pub object: ObjectRef,
+    /// None resolves the current table viewer; Some names a table from the navigator.
+    pub object: Option<ObjectRef>,
 }
 
 /// A table was saved; the shell refreshes catalog and completion caches.

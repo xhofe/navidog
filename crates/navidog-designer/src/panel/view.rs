@@ -10,7 +10,8 @@ impl TableDesigner {
         let selected = if fields {
             self.selected.is_some()
         } else {
-            self.entry_selected.is_some()
+            matches!(self.page, Page::Indexes | Page::ForeignKeys | Page::Checks)
+                && self.entry_selected.is_some()
         };
         h_flex()
             .min_h(tokens::object_toolbar::HEIGHT.rems())
@@ -179,14 +180,10 @@ impl TableDesigner {
             .map(|c| column_properties(&c.definition))
             .unwrap_or_default();
         let disabled = self.busy || !self.loaded || c.is_none();
-        let numeric = [
-            "INT", "DECIMAL", "NUMERIC", "FLOAT", "DOUBLE", "REAL", "SERIAL",
-        ]
-        .iter()
-        .any(|s| p.data_type.to_ascii_uppercase().contains(s));
-        let text = ["CHAR", "TEXT", "ENUM", "SET"]
-            .iter()
-            .any(|s| p.data_type.to_ascii_uppercase().contains(s));
+        let numeric = navidog_util::sql_type::type_kind(&p.data_type)
+            == navidog_util::sql_type::TypeKind::Number;
+        let text = navidog_util::sql_type::type_kind(&p.data_type)
+            == navidog_util::sql_type::TypeKind::Text;
         v_flex()
             .id("designer-properties")
             .size_full()

@@ -477,7 +477,12 @@ impl ObjectsPanel {
                     .on_click(cx.listener(|_, _, window, cx| {
                         if let Some(object) = Self::selected_object(cx) {
                             if object.kind == ObjectKind::Table {
-                                window.dispatch_action(Box::new(DesignTable { object }), cx);
+                                window.dispatch_action(
+                                    Box::new(DesignTable {
+                                        object: Some(object),
+                                    }),
+                                    cx,
+                                );
                             } else {
                                 window.dispatch_action(Box::new(OpenObject { object }), cx);
                             }

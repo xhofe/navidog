@@ -274,7 +274,9 @@ impl NavigatorPanel {
             .menu_with_disabled(
                 t!("obj.design_kind", kind = kind).to_string(),
                 o.kind != ObjectKind::Table,
-                Box::new(DesignTable { object: o.clone() }),
+                Box::new(DesignTable {
+                    object: Some(o.clone()),
+                }),
             )
             .menu_with_disabled(
                 t!("obj.new_object", kind = kind).to_string(),

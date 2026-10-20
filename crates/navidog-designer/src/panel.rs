@@ -79,6 +79,7 @@ pub(crate) fn init(cx: &mut App) {
             _ => None,
         };
         let saved = saved.unwrap_or_else(|| Saved {
+            object: None,
             scope: Scope::new("", "", None),
             draft: TableDesign::new(),
             baseline: None,
@@ -89,6 +90,8 @@ pub(crate) fn init(cx: &mut App) {
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Saved {
+    #[serde(default)]
+    object: Option<ObjectRef>,
     scope: Scope,
     draft: TableDesign,
     baseline: Option<TableSnapshot>,
@@ -117,6 +120,7 @@ pub struct TableDesigner {
     invalid_inputs: std::collections::BTreeMap<usize, String>,
     property_height: Option<gpui_kit::Pixels>,
     focus: FocusHandle,
+    object: Option<ObjectRef>,
     scope: Scope,
     draft: TableDesign,
     baseline: Option<TableSnapshot>,
@@ -154,6 +158,7 @@ impl BasePanel for TableDesigner {
     }
     fn dump(&self, cx: &App) -> PanelState {
         let mut saved = Saved {
+            object: self.object.clone(),
             scope: self.scope.clone(),
             draft: self.draft.clone(),
             baseline: self.baseline.clone(),
@@ -234,6 +239,7 @@ impl TableDesigner {
     pub fn new(scope: Scope, window: &mut Window, cx: &mut App) -> Entity<Self> {
         Self::restore(
             Saved {
+                object: None,
                 scope,
                 draft: TableDesign::new(),
                 baseline: None,
@@ -244,9 +250,10 @@ impl TableDesigner {
         )
     }
     pub fn open(object: ObjectRef, window: &mut Window, cx: &mut App) -> Entity<Self> {
-        let entity = Self::new(object.scope, window, cx);
+        let entity = Self::new(object.scope.clone(), window, cx);
         entity.update(cx, |this, cx| {
-            this.draft.name = object.name;
+            this.draft.name = object.name.clone();
+            this.object = Some(object);
             this.loaded = false;
             this.load(window, cx);
         });
@@ -330,8 +337,12 @@ impl TableDesigner {
             let options = editor(saved.draft.options.clone(), window, cx);
             let sql = cx.new(|cx| EditorState::new(window, cx).language("sql"));
             sql.update(cx, |s, cx| s.set_readonly(true, cx));
-            let properties: Vec<_> = (0..11).map(|_| input(String::new(), window, cx)).collect();
-            let entry_inputs: Vec<_> = (0..10).map(|_| input(String::new(), window, cx)).collect();
+            let properties: Vec<_> = (0..structured::PROPERTY_IDS.len())
+                .map(|_| input(String::new(), window, cx))
+                .collect();
+            let entry_inputs: Vec<_> = (0..structured::ENTRY_KEYS.len())
+                .map(|_| input(String::new(), window, cx))
+                .collect();
             let owner = cx.entity().downgrade();
             let table = cx.new(|cx| {
                 TableState::new(DesignerGrid::new(owner, window), window, cx)
@@ -424,6 +435,13 @@ impl TableDesigner {
                 // raw-px: the user-controlled splitter position restored from layout state
                 property_height: saved.property_height.map(gpui_kit::px),
                 focus: cx.focus_handle().tab_stop(true),
+                object: saved.object.or_else(|| {
+                    saved.baseline.as_ref().map(|old| ObjectRef {
+                        scope: saved.scope.clone(),
+                        kind: navidog_core::object::ObjectKind::Table,
+                        name: old.design.name.clone(),
+                    })
+                }),
                 scope: saved.scope,
                 selected: saved.draft.columns.first().map(|c| c.id),
                 next_id: saved.draft.columns.iter().map(|c| c.id).max().unwrap_or(0) + 1,
@@ -457,10 +475,10 @@ impl TableDesigner {
     }
     fn dirty(&self) -> bool {
         !self.invalid_inputs.is_empty()
-            || self
-                .baseline
-                .as_ref()
-                .is_none_or(|old| old.design != self.draft)
+            || self.baseline.as_ref().map_or_else(
+                || self.loaded && self.draft != TableDesign::new(),
+                |old| old.design != self.draft,
+            )
     }
     fn flush(&mut self, cx: &mut Context<Self>) {
         let previous = self.draft.clone();
@@ -726,9 +744,9 @@ impl TableDesigner {
                 let mut session = job.await.map_err(|e| DbError::msg(e.to_string()))??;
                 let job = navidog_db::runtime::spawn(async move {
                     let result = async {
-                        let r = session
-                            .relational()
-                            .ok_or_else(|| DbError::msg("Not a relational connection."))?;
+                        let r = session.relational().ok_or_else(|| {
+                            DbError::msg(t!("designer.not_relational").to_string())
+                        })?;
                         if r.dialect() == Dialect::MySql {
                             r.execute(&format!(
                                 "USE {}",
@@ -753,15 +771,7 @@ impl TableDesigner {
                 this.busy = false;
                 match result {
                     Ok(snapshot) => {
-                        this.draft = snapshot.design.clone();
-                        this.baseline = Some(snapshot);
-                        this.loaded = true;
-                        this.needs_reload = false;
-                        this.preview = None;
-                        this.selected = this.draft.columns.first().map(|c| c.id);
-                        this.next_id =
-                            this.draft.columns.iter().map(|c| c.id).max().unwrap_or(0) + 1;
-                        this.sync_all(window, cx);
+                        this.accept_snapshot(snapshot, window, cx);
                         if save {
                             window.push_notification(t!("designer.saved").to_string(), cx);
                             window.dispatch_action(
@@ -784,6 +794,29 @@ impl TableDesigner {
             });
         }));
         cx.notify();
+    }
+    fn accept_snapshot(
+        &mut self,
+        snapshot: TableSnapshot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invalid_inputs.clear();
+        self.entry_selected = None;
+        self.active_cell = None;
+        self.object = Some(ObjectRef {
+            scope: self.scope.clone(),
+            kind: navidog_core::object::ObjectKind::Table,
+            name: snapshot.design.name.clone(),
+        });
+        self.draft = snapshot.design.clone();
+        self.baseline = Some(snapshot);
+        self.loaded = true;
+        self.needs_reload = false;
+        self.preview = None;
+        self.selected = self.draft.columns.first().map(|c| c.id);
+        self.next_id = self.draft.columns.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+        self.sync_all(window, cx);
     }
     fn sync_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.table_name
@@ -808,6 +841,8 @@ impl TableDesigner {
         });
         self.sync_column(window, cx);
         self.sync_table_options(window, cx);
+        self.entry_selected = (!self.entries().is_empty()).then_some(0);
+        self.sync_entry(window, cx);
     }
     fn ask_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy {

@@ -9,6 +9,7 @@ description = "Table structure designer for navidog."
 
 [dependencies]
 navidog-ui.workspace = true
+navidog-util.workspace = true
 navidog-core.workspace = true
 navidog-db.workspace = true
 gpui-kit = { workspace = true, features = ["tree-sitter-sql"] }

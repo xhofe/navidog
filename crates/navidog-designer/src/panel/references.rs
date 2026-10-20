@@ -1,3 +1,4 @@
+use super::structured::{REFERENCE_FIELDS, REFERENCE_SCHEMA, REFERENCE_TABLE};
 use super::*;
 use navidog_core::object::ObjectKind;
 
@@ -35,8 +36,8 @@ impl ReferenceChoices {
 impl TableDesigner {
     pub(super) fn reference_values(&self, ix: usize, cx: &App) -> Vec<String> {
         match ix {
-            4 => self.references.scopes.clone(),
-            5 => {
+            REFERENCE_SCHEMA => self.references.scopes.clone(),
+            REFERENCE_TABLE => {
                 let mut tables = self.references.tables.clone();
                 if self.reference_is_self(cx)
                     && !self.draft.name.is_empty()
@@ -46,18 +47,19 @@ impl TableDesigner {
                 }
                 tables
             }
-            6 if self.reference_is_self(cx)
-                && self.entry_inputs[5].read(cx).value() == self.draft.name =>
+            REFERENCE_FIELDS
+                if self.reference_is_self(cx)
+                    && self.entry_inputs[REFERENCE_TABLE].read(cx).value() == self.draft.name =>
             {
                 self.draft.columns.iter().map(|c| c.name.clone()).collect()
             }
-            6 => self.references.fields.clone(),
+            REFERENCE_FIELDS => self.references.fields.clone(),
             _ => Vec::new(),
         }
     }
 
     fn reference_is_self(&self, cx: &App) -> bool {
-        let scope = self.entry_inputs[4].read(cx).value();
+        let scope = self.entry_inputs[REFERENCE_SCHEMA].read(cx).value();
         scope.is_empty()
             || scope
                 == match self.dialect {
@@ -76,8 +78,14 @@ impl TableDesigner {
         self.references.error = None;
         self.references.loading = false;
         let mut scope = self.scope.clone();
-        let selected_scope = self.entry_inputs[4].read(cx).value().to_string();
-        let table = self.entry_inputs[5].read(cx).value().to_string();
+        let selected_scope = self.entry_inputs[REFERENCE_SCHEMA]
+            .read(cx)
+            .value()
+            .to_string();
+        let table = self.entry_inputs[REFERENCE_TABLE]
+            .read(cx)
+            .value()
+            .to_string();
         if !selected_scope.is_empty() {
             match self.dialect {
                 Dialect::MySql => scope.database = selected_scope,

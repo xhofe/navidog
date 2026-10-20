@@ -151,35 +151,90 @@ fn close_tabs(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert_eq!(tab_count(cx), 1);
-    // Designer drafts also use the shared close guard, including a failed initial load.
-    cx.update(|cx| cx.set_reduce_motion(true));
+    // Designers reuse their own tab and remain distinct from a data viewer.
+    let object = ObjectRef {
+        scope: Scope::new("c", "main", None),
+        kind: ObjectKind::Table,
+        name: "draft".into(),
+    };
     dispatch(
         cx,
         Box::new(navidog_core::actions::DesignTable {
-            object: ObjectRef {
-                scope: Scope::new("c", "main", None),
-                kind: ObjectKind::Table,
-                name: "draft".into(),
-            },
+            object: Some(object.clone()),
         }),
     );
     assert_eq!(tab_count(cx), 2);
+    dispatch(
+        cx,
+        Box::new(navidog_core::actions::DesignTable {
+            object: Some(object.clone()),
+        }),
+    );
+    assert_eq!(tab_count(cx), 2, "designing twice reuses the draft");
+    dispatch(
+        cx,
+        Box::new(OpenObject {
+            object: object.clone(),
+        }),
+    );
+    assert_eq!(tab_count(cx), 3, "data and design are separate editors");
+    dispatch(
+        cx,
+        Box::new(navidog_core::actions::DesignTable {
+            object: Some(object.clone()),
+        }),
+    );
+    let active = cx.update(|cx| tabs::active(cx).unwrap());
+    dispatch(cx, Box::new(AddToStartup { panel: active }));
+    cx.update(|cx| {
+        assert!(Settings::global(cx).startup_tabs.iter().any(|v| {
+            serde_json::from_value::<ObjectRef>(v.clone()).ok().as_ref() == Some(&object)
+        }));
+    });
     dispatch(cx, Box::new(CloseTab));
+    assert_eq!(
+        tab_count(cx),
+        2,
+        "failed initial load closes without discard prompt"
+    );
+    // The viewer resolves the shared menu/shortcut command to its current table.
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.try_find("designer-close-cancel").is_some());
-        window.click("designer-close-cancel", cx);
+        let active = tabs::active(cx).unwrap();
+        let group = tabs::group_of(active, cx).unwrap();
+        let focus = group
+            .read(cx)
+            .panels()
+            .iter()
+            .find(|p| p.panel_id(cx) == active)
+            .unwrap()
+            .focus_handle(cx);
+        window.focus(&focus, cx);
+        window.press("secondary-d", cx);
     })
     .unwrap();
     cx.run_until_parked();
-    assert_eq!(tab_count(cx), 2, "cancel preserves the designer");
-    dispatch(cx, Box::new(CloseTab));
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("designer-close-discard", cx);
-    })
-    .unwrap();
+    assert_eq!(tab_count(cx), 3, "viewer shortcut opens the designer");
+    let active = cx.update(|cx| tabs::active(cx).unwrap());
+    let windows = cx.update(|cx| cx.windows().len());
+    dispatch(cx, Box::new(PopOutTab { panel: active }));
+    assert_eq!(tab_count(cx), 2);
+    dispatch(
+        cx,
+        Box::new(navidog_core::actions::DesignTable {
+            object: Some(object),
+        }),
+    );
+    assert_eq!(tab_count(cx), 2, "popped designer is reused");
+    assert_eq!(cx.update(|cx| cx.windows().len()), windows + 1);
+    cx.update(|cx| {
+        navidog_db::sessions::Sessions::global(cx).update(cx, |s, cx| s.close("c", cx));
+    });
     cx.run_until_parked();
-    assert_eq!(tab_count(cx), 1, "explicit discard closes the designer");
+    assert_eq!(
+        tab_count(cx),
+        1,
+        "disconnect closes both design and data tabs"
+    );
     let _ = std::fs::remove_dir_all(home);
 }

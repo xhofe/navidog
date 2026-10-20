@@ -651,7 +651,7 @@ impl NavigatorPanel {
             Node::TableItem(object, _, _) => {
                 window.dispatch_action(
                     Box::new(DesignTable {
-                        object: object.clone(),
+                        object: Some(object.clone()),
                     }),
                     cx,
                 );
