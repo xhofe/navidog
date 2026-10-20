@@ -29,3 +29,5 @@
 - deny 四项通过，audit 通过，保留 9 条项目已允许警告。
 - `NAVIDOG_LIVE=1 cargo test -p navidog --test snapshot --locked`：生成 60 张，逐张检查；33 张设计器原图同步归档，其中 16 张内容更新。
 - 性能和验收边界见 [M4 验收记录](../acceptance-m4.md)。Navicat 运行态并排验收仍未完成。
+
+跨平台补充：查看器设计命令使用 `secondary-d`（macOS 为 ⌘D，其他平台为 Ctrl+D），与 headless 快捷键测试一致。首次远程 Integration 在启动数据库阶段遇到 Docker Hub `toomanyrequests`，尚未执行代码测试；最终提交的运行结果单独查看。

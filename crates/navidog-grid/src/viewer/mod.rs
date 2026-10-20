@@ -128,7 +128,7 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("ctrl-r", ApplyFilterSort, Some(CONTEXT)),
         KeyBinding::new("shift-cmd-y", QueryTable, Some(CONTEXT)),
         KeyBinding::new(
-            "cmd-d",
+            "secondary-d",
             navidog_core::actions::DesignTable { object: None },
             Some(CONTEXT),
         ),
