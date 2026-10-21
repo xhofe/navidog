@@ -61,10 +61,14 @@ impl GridModel {
     }
 
     /// Repartitions the accepted data without retaining another copy of its rows.
-    /// The caller must commit or discard pending edits before changing the projection.
-    pub fn set_hidden(&mut self, hidden: &HashSet<String>) {
-        if self.has_changes() {
-            return;
+    /// Returns false if pending writes need to be committed or discarded first. Completely
+    /// unfilled insert drafts contain no values to move, so they keep their default state.
+    pub fn set_hidden(&mut self, hidden: &HashSet<String>) -> bool {
+        if !self.edits.is_empty()
+            || !self.deleted.is_empty()
+            || self.new_rows.iter().any(|row| row.iter().any(Option::is_some))
+        {
+            return false;
         }
         let head_name = self.columns.get(self.head.1).map(|c| c.name.clone());
         let mut columns = std::mem::take(&mut self.columns);
@@ -78,10 +82,14 @@ impl GridModel {
         self.hidden_rows.clear();
         (self.columns, self.rows) = Self::project(&columns, &rows, hidden);
         self.set_hidden_columns(&columns, &rows, hidden);
+        for row in &mut self.new_rows {
+            *row = vec![None; self.columns.len()];
+        }
         self.head.1 = head_name
             .and_then(|name| self.columns.iter().position(|c| c.name == name))
             .unwrap_or_else(|| self.head.1.min(self.columns.len().saturating_sub(1)));
         self.anchor = self.head;
+        true
     }
 
     /// Sorts the accepted rows and their hidden key values together. Pending edits stay put.
@@ -1023,6 +1031,26 @@ mod tests {
         assert_eq!(text(&m, 0, 0), Some("2".into()));
         assert_eq!(text(&m, 0, 1), Some("b".into()));
         assert_eq!(text(&m, 1, 1), Some("c".into()));
+    }
+
+    #[test]
+    fn visibility_preserves_blank_insert_drafts_without_projecting_pending_writes() {
+        let mut m = model(true);
+        let row = m.insert_row();
+        m.set_hidden(&["id".into()].into());
+        assert_eq!(m.columns.len(), 1);
+        assert_eq!(m.columns[0].name, "name");
+        assert_eq!(m.row_state(row), RowState::Inserted);
+        assert_eq!(m.value(row, 0), None);
+        assert!(m.change_set().inserts.is_empty());
+        m.set_hidden(&HashSet::new());
+        assert_eq!(m.columns.len(), 2);
+        assert_eq!(m.row_count(), 3);
+        assert!(m.new_rows[row - m.rows.len()].iter().all(Option::is_none));
+        m.set_value(row, 0, Some("draft".into()));
+        m.set_hidden(&["name".into()].into());
+        assert_eq!(m.columns.len(), 2);
+        assert_eq!(m.value(row, 0), Some(&Some("draft".into())));
     }
 
     #[test]

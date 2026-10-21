@@ -2092,6 +2092,21 @@ mod ownership_tests {
                 assert_eq!(model.value(0, 1), Some(&Some("z".into())));
                 assert_eq!(model.value(1, 0), Some(&Some("3".into())));
                 assert_eq!(model.value(1, 1), Some(&Some("c".into())));
+
+                v.insert_row(cx);
+                v.toggle_column("id".into(), window, cx);
+                assert!(v.hidden.contains("id"));
+                let model = v.grid.read(cx).model(cx);
+                assert_eq!(model.columns.len(), 1);
+                assert_eq!(model.columns[0].name, "name");
+                assert_eq!(model.row_count(), 3);
+                assert_eq!(model.row_state(2), crate::model::RowState::Inserted);
+                assert!(model.change_set().inserts.is_empty());
+                v.toggle_column("id".into(), window, cx);
+                let model = v.grid.read(cx).model(cx);
+                assert_eq!(model.columns.len(), 2);
+                assert_eq!(model.value(2, 0), None);
+                assert_eq!(model.value(2, 1), None);
             })
         })
         .unwrap();

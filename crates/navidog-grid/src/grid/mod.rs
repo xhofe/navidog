@@ -364,16 +364,15 @@ impl ResultGrid {
     pub fn set_hidden_columns(&mut self, hidden: &HashSet<String>, cx: &mut Context<Self>) {
         self.table.update(cx, |t, cx| {
             let d = t.delegate_mut();
-            if d.model.has_changes() {
-                return;
-            }
             // Resolving an editable target can clear the layout after data was loaded.
             // Remember the current order before hiding moves columns into the hidden partition.
             d.layout.sync(&d.names());
             let sort = d
                 .sort
                 .and_then(|(ix, asc)| d.model.columns.get(ix).map(|c| (c.name.clone(), asc)));
-            d.model.set_hidden(hidden);
+            if !d.model.set_hidden(hidden) {
+                return;
+            }
             let names = d.names();
             let order: Vec<_> = d
                 .layout
