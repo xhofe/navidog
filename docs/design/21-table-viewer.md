@@ -170,7 +170,7 @@ pub struct ChangeSet {
 ## 9. 验收清单
 
 - [x] 技术验证结论写回第 1 节。
-- [ ] 批量删除后的多行 SQL、长文本在浅色和深色的底部栏中保持单行，记录数及分页控件不被挤出，悬停可查看完整原文。
+- [x] 批量删除后的多行 SQL、长文本在浅色和深色的底部栏中保持单行，记录数及分页控件不被挤出，悬停可查看完整原文。（`batch_sql_stays_on_one_line_beside_footer_controls`、真实 SQLite 批量删除的浅深色及悬停截图，见 [验收记录](../acceptance-status-overflow.md)。）
 - [ ] 打开 sakila.actor、pagila.public.actor、SQLite 测试表，分页、总行数、筛选、排序都正确。
 - [ ] 编辑、新增、删除后提交，数据库中的数据正确；提交失败时显示原始错误，修改保留。
 - [ ] 开启事务后，提交和回滚都正确；关闭选项卡时提示未结束的事务。
