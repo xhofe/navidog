@@ -25,6 +25,14 @@
 
 截图和复现说明见 [截图集](screenshots/architecture/README.md)。本机渲染不代替 Navicat 运行态并排验收。
 
+## CI 稳定性补验
+
+PR #14 的原始提交 `be309f0` 在 Intel macOS 的[一次 CI 运行](https://github.com/xhofe/navidog/actions/runs/39535956784/job/119012529027)中于 `info_tests::query_pages_follow_the_editor` 保存代码段失败，同一提交的另一次 Intel 运行通过。测试未关闭对话框入场动画，`window.click` 在两帧之间取坐标并命中时可能落到移动后的其他位置；打开与输入也挤在同一个窗口更新内。这与 AGENTS 记录的动画和通知时序问题一致。
+
+修复仅调整测试：初始化启用 reduced motion，打开对话框后先完成一轮调度，再执行真实点击和输入；保存前断言名称为 `films` 且名称框拥有焦点，保留原有保存结果和数据库类型断言。未增加重试点击、等待保存或跳过测试。该用例本机连续 20 次独立运行通过；其余复验和远端平台检查见 [PR #14](https://github.com/xhofe/navidog/pull/14/checks)。
+
+修复后本机重跑全工作区实库模式仍为 215 项、33 个套件全部通过；fmt、裸值检查、clippy、deny、在线 audit、29 张截图及三项 release 性能检查均通过。归档的浅深色失败截图与本次生成结果逐字节一致。实库容器已关闭，记录保存在 `target/architecture-checks/ci-fix-*.log`。
+
 ## 保留边界
 
 - 任意普通 SQL 执行过后，会话不自动重连；传输失败必须明确重新打开，避免丢失事务、锁、临时对象或未知会话设置。
