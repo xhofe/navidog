@@ -1,7 +1,7 @@
 //! Result grid: wraps `DataTable` with rectangular selection, in-place editing, change markers, and
 //! copy/paste (21-table-viewer.md §1, §7).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
@@ -358,6 +358,43 @@ impl ResultGrid {
 
     pub fn model<'a>(&self, cx: &'a App) -> &'a GridModel {
         &self.table.read(cx).delegate().model
+    }
+
+    /// Changes which columns are shown using the model's current accepted rows.
+    pub fn set_hidden_columns(&mut self, hidden: &HashSet<String>, cx: &mut Context<Self>) {
+        self.table.update(cx, |t, cx| {
+            let d = t.delegate_mut();
+            if d.model.has_changes() {
+                return;
+            }
+            // Resolving an editable target can clear the layout after data was loaded.
+            // Remember the current order before hiding moves columns into the hidden partition.
+            d.layout.sync(&d.names());
+            let sort = d
+                .sort
+                .and_then(|(ix, asc)| d.model.columns.get(ix).map(|c| (c.name.clone(), asc)));
+            d.model.set_hidden(hidden);
+            let names = d.names();
+            let order: Vec<_> = d
+                .layout
+                .display_names(&names)
+                .iter()
+                .filter_map(|name| names.iter().position(|n| n == name))
+                .collect();
+            d.model.reorder(&order);
+            d.sort = sort.and_then(|(name, asc)| {
+                d.model
+                    .columns
+                    .iter()
+                    .position(|c| c.name == name)
+                    .map(|ix| (ix, asc))
+            });
+            d.editing = None;
+            d.settled = Some(d.model.head().0);
+            refit_auto(d, cx);
+            t.refresh(cx);
+        });
+        cx.notify();
     }
 
     pub fn update_model(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut GridModel)) {

@@ -246,6 +246,15 @@ impl Results {
 
     /// Writes a statement to the messages and summary pages.
     pub fn note(&mut self, outcome: Outcome, window: &mut Window, cx: &mut Context<QueryEditor>) {
+        self.note_outcome(&outcome, window, cx);
+    }
+
+    fn note_outcome(
+        &mut self,
+        outcome: &Outcome,
+        window: &mut Window,
+        cx: &mut Context<QueryEditor>,
+    ) {
         let Outcome {
             planned,
             result,
@@ -253,12 +262,12 @@ impl Results {
             ..
         } = outcome;
         self.messages_text
-            .push_str(&message_block(&planned.shown, &result, elapsed));
+            .push_str(&message_block(&planned.shown, result, *elapsed));
         self.sync_messages(window, cx);
         self.rows.push(SummaryRow {
             sql: planned.shown.clone(),
-            message: summary_message(&result),
-            elapsed,
+            message: summary_message(result),
+            elapsed: *elapsed,
             error: result.is_err(),
             range: planned.range.clone(),
         });
@@ -272,10 +281,11 @@ impl Results {
         window: &mut Window,
         cx: &mut Context<QueryEditor>,
     ) {
-        let sets = outcome.result.as_ref().ok().cloned();
-        let planned = outcome.planned.clone();
-        self.note(outcome, window, cx);
-        let Some(sets) = sets else { return };
+        self.note_outcome(&outcome, window, cx);
+        let Outcome {
+            planned, result, ..
+        } = outcome;
+        let Ok(sets) = result else { return };
         for set in sets.into_iter().filter(|s| !s.columns.is_empty()) {
             if self.results_this_run >= MAX_RESULTS {
                 break;
@@ -527,23 +537,6 @@ pub(crate) fn rename_changes(changes: ChangeSet, names: &BTreeMap<String, String
     }
 }
 
-/// Sorts rows by one column: NULL first, numbers by value, the rest as text.
-pub(crate) fn sort_rows(rows: &mut [Vec<Option<String>>], col: usize, asc: bool) {
-    rows.sort_by(|a, b| {
-        let (x, y) = (a.get(col).cloned().flatten(), b.get(col).cloned().flatten());
-        let ord = match (x, y) {
-            (None, None) => std::cmp::Ordering::Equal,
-            (None, Some(_)) => std::cmp::Ordering::Less,
-            (Some(_), None) => std::cmp::Ordering::Greater,
-            (Some(x), Some(y)) => match (x.parse::<f64>(), y.parse::<f64>()) {
-                (Ok(a), Ok(b)) => a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal),
-                _ => x.cmp(&y),
-            },
-        };
-        if asc { ord } else { ord.reverse() }
-    });
-}
-
 /// Where an editable result writes.
 struct Editing {
     dialect: Dialect,
@@ -568,7 +561,6 @@ pub(crate) struct ResultView {
     pub grid: Entity<ResultGrid>,
     pub sql: String,
     columns: Vec<Column>,
-    pub(crate) rows: Vec<Vec<Option<String>>>,
     edit: Option<Editing>,
     info: RunInfo,
     editor: WeakEntity<QueryEditor>,
@@ -598,6 +590,21 @@ impl ResultView {
         let grid = cx.new(|cx| {
             let mut grid = ResultGrid::new(window, cx);
             grid.set_quick_filter(false);
+            let columns = set
+                .columns
+                .iter()
+                .map(|c| GridColumn {
+                    name: c.name.clone().into(),
+                    type_name: c.type_name.clone().into(),
+                    ..GridColumn::default()
+                })
+                .collect();
+            let rows = set
+                .rows
+                .into_iter()
+                .map(|r| r.into_iter().map(|v| v.map(Into::into)).collect())
+                .collect();
+            grid.set_data(columns, rows, cx);
             grid
         });
         let cell_input = cx.new(|cx| TextareaState::new(window, cx));
@@ -615,7 +622,6 @@ impl ResultView {
                 grid,
                 sql,
                 columns: set.columns,
-                rows: set.rows,
                 edit: None,
                 info,
                 editor,
@@ -628,7 +634,6 @@ impl ResultView {
                 form: false,
                 _subscriptions: subs,
             };
-            this.show_rows(cx);
             this.grid.update(cx, |g, cx| g.set_locked(true, cx));
             this.find_table(cx);
             this
@@ -766,19 +771,21 @@ impl ResultView {
         self.commit(window, cx);
     }
 
-    fn show_rows(&mut self, cx: &mut Context<Self>) {
-        let set = ResultSet {
-            columns: self.columns.clone(),
-            rows: self.rows.clone(),
-            ..ResultSet::default()
-        };
-        let (mut columns, rows) = grid_data(&set);
-        if let Some(e) = &self.edit {
-            for c in &mut columns {
-                c.primary_key = e.is_pk(&c.name);
-            }
-        }
-        self.grid.update(cx, |g, cx| g.set_data(columns, rows, cx));
+    #[cfg(test)]
+    pub(crate) fn is_busy(&self) -> bool {
+        self.busy
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rows(&self, cx: &App) -> Vec<Vec<Option<String>>> {
+        let model = self.grid.read(cx).model(cx);
+        (0..model.row_count())
+            .map(|r| {
+                (0..model.columns.len())
+                    .map(|c| model.value(r, c).cloned().flatten().map(|v| v.to_string()))
+                    .collect()
+            })
+            .collect()
     }
 
     /// Looks up the primary key of the result's table; with all of it in the result, the result
@@ -826,7 +833,6 @@ impl ResultView {
                     names,
                     pk: pk.iter().map(|k| k.to_string()).collect(),
                 });
-                this.show_rows(cx);
                 this.grid.update(cx, |g, cx| {
                     g.set_target(
                         Some(GridTarget {
@@ -836,6 +842,11 @@ impl ResultView {
                         }),
                         cx,
                     );
+                    g.update_model(cx, |model| {
+                        for c in &mut model.columns {
+                            c.primary_key = this.edit.as_ref().is_some_and(|e| e.is_pk(&c.name));
+                        }
+                    });
                     g.set_locked(false, cx);
                 });
                 cx.notify();
@@ -857,10 +868,16 @@ impl ResultView {
                     return;
                 }
                 if let Some((name, asc)) = sort
-                    && let Some(col) = self.columns.iter().position(|c| c.name == name.as_ref())
+                    && let Some(col) = self
+                        .grid
+                        .read(cx)
+                        .model(cx)
+                        .columns
+                        .iter()
+                        .position(|c| c.name == *name)
                 {
-                    sort_rows(&mut self.rows, col, *asc);
-                    self.show_rows(cx);
+                    self.grid
+                        .update(cx, |g, cx| g.update_model(cx, |m| m.sort_rows(col, *asc)));
                 }
             }
             GridEvent::CommitRequested => self.commit(window, cx),
@@ -932,29 +949,101 @@ impl ResultView {
         .detach();
     }
 
-    /// Runs the SELECT again on the editor's session and shows the fresh rows.
+    /// Refreshes the result's original source, reusing the editor session only while it matches.
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(session) = self
-            .editor
-            .upgrade()
-            .and_then(|e| e.read(cx).live.as_ref().map(|l| l.session.clone()))
-        else {
+        if self.busy {
             return;
-        };
-        let sql = self.sql.clone();
-        let job = run_on(session, move |rel| {
-            Box::pin(async move { rel.execute_statement(&sql).await })
+        }
+        let session = self.editor.upgrade().and_then(|e| {
+            e.read(cx)
+                .live
+                .as_ref()
+                .filter(|live| {
+                    live.connection == self.info.connection_id
+                        && live.database == self.info.database
+                        && match self.info.dialect {
+                            Some(Dialect::MySql) => live.used == self.info.database,
+                            Some(Dialect::Postgres) => live.used == self.info.schema,
+                            _ => true,
+                        }
+                })
+                .map(|live| live.session.clone())
         });
+        let open = if session.is_none() {
+            Sessions::global(cx)
+                .read(cx)
+                .new_session(&self.info.connection_id, self.info.database.as_deref())
+        } else {
+            None
+        };
+        if session.is_none() && open.is_none() {
+            self.status = t!("query.no_connection").to_string().into();
+            cx.notify();
+            return;
+        }
+        let sql = self.sql.clone();
+        let info = self.info.clone();
         self.set_busy(true, cx);
         cx.spawn(async move |this, cx| {
-            let result = job.await;
+            let result = async {
+                let owned = session.is_none();
+                let session = match session {
+                    Some(session) => session,
+                    None => {
+                        let session = open
+                            .expect("a source session is opening")
+                            .await
+                            .map_err(|e| navidog_db::DbError::msg(e.to_string()))??;
+                        std::sync::Arc::new(tokio::sync::Mutex::new(Some(session)))
+                    }
+                };
+                let result = run_on(session.clone(), move |rel| {
+                    Box::pin(async move {
+                        if owned {
+                            match info.dialect {
+                                Some(Dialect::MySql) => {
+                                    if let Some(database) = info.database {
+                                        rel.execute(&format!(
+                                            "USE {}",
+                                            Dialect::MySql.quote_ident(&database)
+                                        ))
+                                        .await?;
+                                    }
+                                }
+                                Some(Dialect::Postgres) => {
+                                    if let Some(schema) = info.schema {
+                                        rel.execute(&crate::run::search_path(&schema)).await?;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        rel.execute_statement(&sql).await
+                    })
+                })
+                .await;
+                if owned {
+                    navidog_grid::commit::close_session(session);
+                }
+                result.map_err(|e| navidog_db::DbError::msg(e.to_string()))?
+            }
+            .await;
             let _ = this.update(cx, |this, cx| {
                 this.set_busy(false, cx);
-                if let Ok(Ok(sets)) = result
-                    && let Some(set) = sets.into_iter().find(|s| !s.columns.is_empty())
-                {
-                    this.rows = set.rows;
-                    this.show_rows(cx);
+                match result {
+                    Ok(sets) => {
+                        if let Some(set) = sets.into_iter().find(|s| !s.columns.is_empty()) {
+                            let (mut columns, rows) = grid_data(&set);
+                            if let Some(edit) = &this.edit {
+                                for column in &mut columns {
+                                    column.primary_key = edit.is_pk(&column.name);
+                                }
+                            }
+                            this.columns = set.columns;
+                            this.grid.update(cx, |g, cx| g.set_data(columns, rows, cx));
+                        }
+                    }
+                    Err(error) => this.status = error.to_string().into(),
                 }
                 cx.notify();
             });
@@ -1636,22 +1725,6 @@ mod tests {
             message_block("SELECT", &err, Duration::ZERO)
                 .contains("> 1146 - Table 'x' doesn't exist\n")
         );
-    }
-
-    #[test]
-    fn local_sort_puts_null_first_and_numbers_by_value() {
-        let mut rows = vec![
-            vec![Some("10".to_string())],
-            vec![None],
-            vec![Some("9".to_string())],
-        ];
-        sort_rows(&mut rows, 0, true);
-        assert_eq!(
-            rows,
-            vec![vec![None], vec![Some("9".into())], vec![Some("10".into())]]
-        );
-        sort_rows(&mut rows, 0, false);
-        assert_eq!(rows[0], vec![Some("10".to_string())]);
     }
 
     #[test]

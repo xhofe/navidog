@@ -109,6 +109,231 @@ fn set_text(
 }
 
 #[gpui_kit::test]
+fn accepted_results_keep_their_rows_and_original_source(cx: &mut TestAppContext) {
+    let (_home, home) = isolate_home("result-source");
+    let first_file = home.join("first.db");
+    let second_file = home.join("second.db");
+    sql(
+        &first_file,
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT); INSERT INTO t VALUES (1, 'a'), (2, 'b')",
+    );
+    sql(
+        &second_file,
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT); INSERT INTO t VALUES (1, 'other database')",
+    );
+    cx.executor().allow_parking();
+    let ids = cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_core::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_db::init(cx);
+        navidog_grid::init(cx);
+        crate::init(cx);
+        Settings::update(cx, |s| s.sync_record = false);
+        ConnectionStore::global(cx).update(cx, |s, cx| {
+            s.set_key(Key::random());
+            [&first_file, &second_file]
+                .into_iter()
+                .enumerate()
+                .map(|(ix, file)| {
+                    let mut connection = Connection::new("sqlite");
+                    connection.name = format!("source-{ix}");
+                    connection.general.file = Some(file.to_string_lossy().into_owned());
+                    connection.general.database = Some("main".into());
+                    let id = connection.id.clone();
+                    s.upsert(connection, &[], cx).unwrap();
+                    id
+                })
+                .collect::<Vec<_>>()
+        })
+    });
+    cx.update(|cx| {
+        Sessions::global(cx).update(cx, |s, cx| {
+            for id in &ids {
+                s.open(id.clone(), Secrets::default(), cx);
+            }
+        })
+    });
+    wait(cx, "both source connections", |cx| {
+        cx.update(|cx| {
+            ids.iter()
+                .all(|id| Sessions::global(cx).read(cx).state(id).is_open())
+        })
+    });
+    let (handle, editor) = cx.update(|cx| {
+        let mut editor = None;
+        let handle = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+            let view = QueryEditor::new(
+                QuerySource::Untitled(1),
+                Target {
+                    connection: Some(ids[0].clone()),
+                    database: Some("main".into()),
+                    schema: None,
+                },
+                "SELECT id, name FROM t ORDER BY id".into(),
+                window,
+                cx,
+            );
+            editor = Some(view.clone());
+            cx.new(|_| Host { editor: view })
+        })
+        .unwrap();
+        (handle.0, editor.unwrap())
+    });
+    run(cx, handle, &editor, RunKind::All);
+    idle(cx, &editor);
+    let view = cx.update(|cx| {
+        editor.update(cx, |e, cx| {
+            let tab = e.results.tabs[0].id;
+            e.results.toggle_pin(tab, cx);
+            let Body::Grid(view) = &e.results.tabs[0].body else {
+                panic!("grid result")
+            };
+            view.clone()
+        })
+    });
+    wait(cx, "editable original result", |cx| {
+        cx.update(|cx| view.read(cx).editable())
+    });
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |v, cx| {
+            v.grid.update(cx, |g, cx| {
+                g.update_model(cx, |m| {
+                    m.set_value(0, 1, Some("z".into()));
+                    m.select((1, 0), false);
+                    m.delete_selected_rows();
+                    let row = m.insert_row();
+                    m.set_value(row, 0, Some("3".into()));
+                    m.set_value(row, 1, Some("c".into()));
+                })
+            });
+            v.commit_now(window, cx);
+        })
+    })
+    .unwrap();
+    wait(cx, "accepted update, insert and delete", |cx| {
+        cx.update(|cx| !view.read(cx).is_busy())
+    });
+    assert_eq!(
+        sql(&first_file, "SELECT id, name FROM t ORDER BY id"),
+        [
+            vec![Some("1".into()), Some("z".into())],
+            vec![Some("3".into()), Some("c".into())]
+        ]
+    );
+    cx.update(|cx| {
+        view.read(cx)
+            .grid
+            .clone()
+            .update(cx, |g, cx| g.request_sort(Some(1), true, cx))
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let grid = view.read(cx).grid.clone();
+        grid.update(cx, |g, cx| {
+            g.set_hidden_columns(&["id".into()].into(), cx);
+            g.set_hidden_columns(&Default::default(), cx);
+        });
+        assert_eq!(
+            view.read(cx).rows(cx),
+            [
+                vec![Some("3".into()), Some("c".into())],
+                vec![Some("1".into()), Some("z".into())]
+            ]
+        );
+    });
+
+    // The fixed result keeps its source after the editor opens a different connection.
+    cx.update_window(handle, |_, window, cx| {
+        editor.update(cx, |e, cx| e.pick_connection(ids[1].clone(), window, cx))
+    })
+    .unwrap();
+    run(cx, handle, &editor, RunKind::All);
+    idle(cx, &editor);
+    cx.update(|cx| {
+        assert!(editor.read(cx).results.tabs.iter().any(|tab| tab.pinned));
+        Settings::update(cx, |s| s.sync_record = true);
+    });
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |v, cx| {
+            v.grid.update(cx, |g, cx| {
+                g.update_model(cx, |m| m.set_value(0, 1, Some("source A".into())))
+            });
+            v.commit_now(window, cx);
+        })
+    })
+    .unwrap();
+    wait(cx, "refreshing the original source", |cx| {
+        cx.update(|cx| !view.read(cx).is_busy())
+    });
+    cx.update(|cx| {
+        assert_eq!(
+            view.read(cx).rows(cx),
+            [
+                vec![Some("1".into()), Some("z".into())],
+                vec![Some("3".into()), Some("source A".into())]
+            ]
+        )
+    });
+    assert_eq!(
+        sql(&second_file, "SELECT name FROM t"),
+        [vec![Some("other database".into())]]
+    );
+
+    // A matching editor session keeps its temporary objects available during refresh.
+    cx.update_window(handle, |_, window, cx| {
+        editor.update(cx, |e, cx| e.pick_connection(ids[0].clone(), window, cx))
+    })
+    .unwrap();
+    set_text(
+        cx,
+        handle,
+        &editor,
+        "CREATE TEMP VIEW session_view AS SELECT id,name FROM t; SELECT id,name FROM session_view ORDER BY id",
+    );
+    run(cx, handle, &editor, RunKind::All);
+    idle(cx, &editor);
+    let temporary = cx.update(|cx| {
+        let Body::Grid(view) = &editor.read(cx).results.tabs.last().unwrap().body else {
+            panic!("temporary view result")
+        };
+        view.clone()
+    });
+    wait(cx, "editable temporary view result", |cx| {
+        cx.update(|cx| temporary.read(cx).editable())
+    });
+    cx.update_window(handle, |_, window, cx| {
+        temporary.update(cx, |v, cx| {
+            v.grid.update(cx, |g, cx| {
+                g.update_model(cx, |m| m.set_value(0, 1, Some("temporary context".into())))
+            });
+            v.commit_now(window, cx);
+        })
+    })
+    .unwrap();
+    wait(cx, "refreshing within the matching session", |cx| {
+        cx.update(|cx| !temporary.read(cx).is_busy())
+    });
+    cx.update(|cx| {
+        assert_eq!(
+            temporary.read(cx).rows(cx)[0][1],
+            Some("temporary context".into())
+        )
+    });
+
+    // Changing the selected target while a statement runs cannot relabel that run's source.
+    set_text(cx, handle, &editor, "SELECT id,name FROM t");
+    run(cx, handle, &editor, RunKind::All);
+    cx.update(|cx| editor.update(cx, |e, cx| e.pick_database("changed-selection".into(), cx)));
+    idle(cx, &editor);
+    cx.update(|cx| {
+        let source = &editor.read(cx).results.tabs.last().unwrap().info;
+        assert_eq!(source.connection_id, ids[0]);
+        assert_eq!(source.database.as_deref(), Some("main"));
+    });
+}
+
+#[gpui_kit::test]
 fn runs_scripts_into_messages_summary_and_editable_results(cx: &mut TestAppContext) {
     let (_home, home) = isolate_home("scripts");
     let file = home.join("q.db");
@@ -251,7 +476,7 @@ fn runs_scripts_into_messages_summary_and_editable_results(cx: &mut TestAppConte
         let Body::Grid(view) = &e.results.tabs[0].body else {
             panic!("grid result")
         };
-        assert_eq!(view.read(cx).rows, [vec![Some("22".into())]]);
+        assert_eq!(view.read(cx).rows(cx), [vec![Some("22".into())]]);
     });
     cx.update(|cx| {
         editor.read(cx).editor.clone().update(cx, |s, cx| {
@@ -266,7 +491,7 @@ fn runs_scripts_into_messages_summary_and_editable_results(cx: &mut TestAppConte
         let Body::Grid(view) = &e.results.tabs[0].body else {
             panic!("grid result")
         };
-        assert_eq!(view.read(cx).rows, [vec![Some("33".into())]]);
+        assert_eq!(view.read(cx).rows(cx), [vec![Some("33".into())]]);
     });
 
     // The result limit must not truncate execution or its summary.
@@ -337,7 +562,7 @@ fn runs_scripts_into_messages_summary_and_editable_results(cx: &mut TestAppConte
         },
     );
     cx.update(|cx| {
-        let rows = view.read(cx).rows.clone();
+        let rows = view.read(cx).rows(cx);
         assert_eq!(
             rows,
             [vec![Some("it's".to_string()), Some("3".to_string())]]
@@ -1055,7 +1280,11 @@ fn live_editor_runs_selection_current_errors_and_stop(cx: &mut TestAppContext) {
                 let Body::Grid(view) = &e.results.tabs[0].body else {
                     panic!("grid")
                 };
-                assert_eq!(view.read(cx).rows, [vec![Some(value.into())]], "{driver}");
+                assert_eq!(
+                    view.read(cx).rows(cx),
+                    [vec![Some(value.into())]],
+                    "{driver}"
+                );
             });
         }
         if driver != "postgres" {
@@ -1074,7 +1303,7 @@ fn live_editor_runs_selection_current_errors_and_stop(cx: &mut TestAppContext) {
                 let Body::Grid(view) = &e.results.tabs[0].body else {
                     panic!("grid")
                 };
-                assert_eq!(view.read(cx).rows, [vec![Some("7".into())]]);
+                assert_eq!(view.read(cx).rows(cx), [vec![Some("7".into())]]);
             });
         }
         for (continue_on_error, count) in [(false, 2), (true, 3)] {

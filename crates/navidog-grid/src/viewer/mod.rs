@@ -45,7 +45,7 @@ use crate::commit::{Commit, apply, close_session};
 use crate::editor::{self, Kind};
 use crate::filter::{self, Filter, Rule, Sort};
 use crate::grid::{GridEvent, GridTarget, HideColumn, ResultGrid, ToggleRawData, ToggleRowId};
-use crate::model::{Cell, GridColumn, GridModel};
+use crate::model::{Cell, GridColumn};
 
 mod cell_editor;
 mod filter_pane;
@@ -186,9 +186,6 @@ pub struct TableViewer {
     dialect: Option<Dialect>,
     columns: Vec<ColumnInfo>,
     foreign_keys: Vec<navidog_db::ForeignKey>,
-    /// The loaded page before hidden columns are removed, so toggling them needs no refetch
-    raw_columns: Vec<GridColumn>,
-    raw_rows: Vec<Vec<Cell>>,
     hidden: HashSet<String>,
     /// Restored when a commit started by hiding a column fails, so the grid and the set still match
     hidden_revert: Option<HashSet<String>>,
@@ -675,8 +672,6 @@ impl TableViewer {
                 dialect: None,
                 columns: Vec::new(),
                 foreign_keys: Vec::new(),
-                raw_columns: Vec::new(),
-                raw_rows: Vec::new(),
                 hidden: HashSet::new(),
                 hidden_revert: None,
                 add_after_commit: false,
@@ -962,8 +957,7 @@ impl TableViewer {
                     .into_iter()
                     .map(|r| r.into_iter().map(|v| v.map(Into::into)).collect())
                     .collect();
-                self.raw_columns = columns;
-                self.raw_rows = rows;
+                self.grid.update(cx, |g, cx| g.set_data(columns, rows, cx));
                 self.reproject(cx);
                 if std::mem::take(&mut self.add_after_commit) {
                     self.insert_row(cx);
@@ -1271,11 +1265,8 @@ impl TableViewer {
     }
 
     fn reproject(&mut self, cx: &mut Context<Self>) {
-        let (raw_columns, raw_rows, hidden) = (&self.raw_columns, &self.raw_rows, &self.hidden);
-        let (columns, rows) = GridModel::project(raw_columns, raw_rows, hidden);
         self.grid.update(cx, |g, cx| {
-            g.set_data(columns, rows, cx);
-            g.update_model(cx, |m| m.set_hidden_columns(raw_columns, raw_rows, hidden));
+            g.set_hidden_columns(&self.hidden, cx);
         });
         self.form_for = None;
         // The focused cell may keep its coordinates on new rows; the next `render` reloads the
@@ -1295,8 +1286,10 @@ impl TableViewer {
 
     fn toggle_column(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
         let visible = self
-            .raw_columns
-            .iter()
+            .grid
+            .read(cx)
+            .model(cx)
+            .all_columns()
             .filter(|c| !self.hidden.contains(c.name.as_ref()))
             .count();
         let mut next = self.hidden.clone();
@@ -1320,14 +1313,12 @@ impl TableViewer {
         }
     }
 
-    fn columns_menu(&self) -> NativeMenu {
-        let names: Vec<String> = if self.raw_columns.is_empty() {
+    fn columns_menu(&self, cx: &App) -> NativeMenu {
+        let model = self.grid.read(cx).model(cx);
+        let names: Vec<String> = if model.all_columns().next().is_none() {
             self.columns.iter().map(|c| c.name.clone()).collect()
         } else {
-            self.raw_columns
-                .iter()
-                .map(|c| c.name.to_string())
-                .collect()
+            model.all_columns().map(|c| c.name.to_string()).collect()
         };
         names.into_iter().fold(NativeMenu::new(), |menu, name| {
             let shown = !self.hidden.contains(&name);
@@ -1484,7 +1475,7 @@ impl TableViewer {
                     .tooltip(t!("viewer.columns").to_string())
                     .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
                         this.focus_for_menu(window, cx);
-                        this.columns_menu().show(event.position(), window, cx);
+                        this.columns_menu(cx).show(event.position(), window, cx);
                     })),
             )
             .child(
@@ -1955,5 +1946,161 @@ mod spin_tests {
             start + Duration::from_millis(400)
         ));
         assert!(!refresh_spinning(false, None, start));
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+    use gpui_kit::{TestAppContext, WindowOptions};
+    use navidog_core::{connection::Connection, crypto::Key, store::ConnectionStore};
+    use navidog_db::{ConnectParams, Secrets, connect, sqlite::SqliteDriver};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    struct Host(Entity<TableViewer>);
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(self.0.clone())
+        }
+    }
+
+    fn sql(file: &std::path::Path, sql: &str) -> Vec<Vec<Option<String>>> {
+        navidog_db::runtime::runtime().block_on(async {
+            let mut session = connect(
+                Arc::new(SqliteDriver::default()),
+                ConnectParams {
+                    file: Some(file.into()),
+                    create_new: !file.exists(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            let rows = session
+                .relational()
+                .unwrap()
+                .execute(sql)
+                .await
+                .unwrap()
+                .pop()
+                .unwrap()
+                .rows;
+            session.close().await.unwrap();
+            rows
+        })
+    }
+
+    fn wait(cx: &mut TestAppContext, done: impl Fn(&mut TestAppContext) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done(cx) {
+            assert!(Instant::now() < deadline, "the viewer operation timed out");
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[gpui_kit::test]
+    fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext) {
+        let home =
+            std::env::temp_dir().join(format!("navidog-viewer-ownership-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let file = home.join("rows.db");
+        sql(
+            &file,
+            "CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT); INSERT INTO t VALUES(1, 'a'), (2, 'b')",
+        );
+        // SAFETY: this is the only test in this process that changes the configuration directory.
+        unsafe {
+            std::env::set_var("NAVIDOG_HOME", &home);
+        }
+        cx.executor().allow_parking();
+        let id = cx.update(|cx| {
+            gpui_kit::init(cx);
+            navidog_core::init(cx);
+            navidog_ui::theme::init(cx);
+            navidog_db::init(cx);
+            crate::init(cx);
+            Settings::update(cx, |s| {
+                s.sync_record = false;
+                s.auto_begin_transaction = false;
+            });
+            ConnectionStore::global(cx).update(cx, |s, cx| {
+                s.set_key(Key::random());
+                let mut connection = Connection::new("sqlite");
+                connection.name = "ownership".into();
+                connection.general.file = Some(file.to_string_lossy().into_owned());
+                let id = connection.id.clone();
+                s.upsert(connection, &[], cx).unwrap();
+                id
+            })
+        });
+        cx.update(|cx| {
+            Sessions::global(cx).update(cx, |s, cx| s.open(id.clone(), Secrets::default(), cx))
+        });
+        wait(cx, |cx| {
+            cx.update(|cx| Sessions::global(cx).read(cx).state(&id).is_open())
+        });
+        let (handle, viewer) = cx.update(|cx| {
+            let mut viewer = None;
+            let handle = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                let entity = TableViewer::new(
+                    ObjectRef {
+                        scope: Scope::new(id.clone(), "main", None),
+                        kind: ObjectKind::Table,
+                        name: "t".into(),
+                    },
+                    window,
+                    cx,
+                );
+                viewer = Some(entity.clone());
+                cx.new(|_| Host(entity))
+            })
+            .unwrap();
+            (handle.0, viewer.unwrap())
+        });
+        wait(cx, |cx| {
+            cx.update(|cx| {
+                !viewer.read(cx).busy && viewer.read(cx).grid.read(cx).model(cx).row_count() == 2
+            })
+        });
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                v.grid.update(cx, |g, cx| {
+                    g.update_model(cx, |m| {
+                        m.set_value(0, 1, Some("z".into()));
+                        m.select((1, 0), false);
+                        m.delete_selected_rows();
+                        let row = m.insert_row();
+                        m.set_value(row, 0, Some("3".into()));
+                        m.set_value(row, 1, Some("c".into()));
+                    })
+                });
+                v.apply_changes(false, window, cx);
+            })
+        })
+        .unwrap();
+        wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                v.toggle_column("id".into(), window, cx);
+                v.toggle_column("id".into(), window, cx);
+                let model = v.grid.read(cx).model(cx);
+                assert_eq!(model.row_count(), 2);
+                assert_eq!(model.value(0, 0), Some(&Some("1".into())));
+                assert_eq!(model.value(0, 1), Some(&Some("z".into())));
+                assert_eq!(model.value(1, 0), Some(&Some("3".into())));
+                assert_eq!(model.value(1, 1), Some(&Some("c".into())));
+            })
+        })
+        .unwrap();
+        assert_eq!(
+            sql(&file, "SELECT id,name FROM t ORDER BY id"),
+            [
+                vec![Some("1".into()), Some("z".into())],
+                vec![Some("3".into()), Some("c".into())]
+            ]
+        );
     }
 }

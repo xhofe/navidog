@@ -206,6 +206,15 @@ impl QueryEditor {
             && dialect == Dialect::MySql
             && Settings::global(cx).show_profile;
         let mariadb = self.server_version(cx).contains("MariaDB");
+        let source = crate::results::RunInfo {
+            at: chrono::Local::now(),
+            query_time: Duration::ZERO,
+            connection: self.connection_name(cx),
+            connection_id: self.target.connection.clone().unwrap_or_default(),
+            database: self.target.database.clone(),
+            schema: self.target.schema.clone(),
+            dialect: Some(dialect),
+        };
         cx.notify();
         self.task = Some(cx.spawn_in(window, async move |this, cx| {
             let session = match session.await {
@@ -219,7 +228,7 @@ impl QueryEditor {
                 }
             };
             if kind == RunKind::Explain {
-                explain_all(this.clone(), session, dialect, mariadb, planned, stop, cx).await;
+                explain_all(this.clone(), session, source, mariadb, planned, stop, cx).await;
                 let _ = this.update_in(cx, |this, window, cx| this.finish(kind, window, cx));
                 return;
             }
@@ -248,7 +257,9 @@ impl QueryEditor {
                     started,
                     elapsed: clock.elapsed(),
                 };
-                let _ = this.update_in(cx, |this, window, cx| this.record(outcome, window, cx));
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.record(outcome, source.clone(), window, cx)
+                });
                 if failed && !continue_on_error {
                     break;
                 }
@@ -357,20 +368,19 @@ impl QueryEditor {
         }
     }
 
-    fn record(&mut self, outcome: Outcome, window: &mut Window, cx: &mut Context<Self>) {
+    fn record(
+        &mut self,
+        outcome: Outcome,
+        mut info: crate::results::RunInfo,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Err(e) = &outcome.result {
             self.mark_error(outcome.planned.range.clone(), &e.to_string(), cx);
         }
         let editor = cx.entity().downgrade();
-        let info = crate::results::RunInfo {
-            at: outcome.started,
-            query_time: outcome.elapsed,
-            connection: self.connection_name(cx),
-            connection_id: self.target.connection.clone().unwrap_or_default(),
-            database: self.target.database.clone(),
-            schema: self.target.schema.clone(),
-            dialect: self.dialect(cx),
-        };
+        info.at = outcome.started;
+        info.query_time = outcome.elapsed;
         self.results.record(outcome, info, editor, window, cx);
         cx.notify();
     }
@@ -541,12 +551,13 @@ pub(crate) fn status_changes(
 pub(crate) async fn explain_all(
     this: WeakEntity<QueryEditor>,
     session: SharedSession,
-    dialect: Dialect,
+    source: crate::results::RunInfo,
     mariadb: bool,
     planned: Vec<Planned>,
     stop: Arc<AtomicBool>,
     cx: &mut AsyncWindowContext,
 ) {
+    let dialect = source.dialect.expect("a run has a dialect");
     for p in planned {
         if stop.load(Ordering::Acquire) {
             break;
@@ -562,7 +573,10 @@ pub(crate) async fn explain_all(
         .and_then(|r| r);
         let elapsed = clock.elapsed();
         let _ = this.update_in(cx, |this, window, cx| {
-            this.record_plan(p, result, started, elapsed, window, cx)
+            let mut info = source.clone();
+            info.at = started;
+            info.query_time = elapsed;
+            this.record_plan(p, result, info, window, cx)
         });
     }
 }
