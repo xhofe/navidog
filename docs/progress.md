@@ -51,6 +51,18 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 历史日志、QueryExec.log | 完成 | 31 第 6 节 |
 | 命令列界面 | 完成 | 31 第 7 节 |
 
+### 架构基础优化（独立分支）
+
+从 `upstream/main` 的 `4c403de` 创建 `codex/architecture-foundations`，规格见 [05-architecture-foundations.md](design/05-architecture-foundations.md)。M4 独立 PR 不包含在此基线中。
+
+| 任务 | 状态 | 验证与说明 |
+| --- | --- | --- |
+| 数据库执行与会话安全 | 完成 | DB 实库 14 项：普通 SQL 不重放、元数据恢复、事务丢失守卫、重连后取消 |
+| 配置保存事务 | 完成 | core 失败注入与 connection UI：候选先落盘，失败不改变内存/密钥或重连 |
+| 查询结果的数据与来源 | 完成 | query/model/viewer 回归：网格唯一拥有当前行，固定结果绑定原来源 |
+
+本机 213 项测试与 29 张截图已验证，详细结果及两项基线证书依赖审计遗留见 [验收记录](acceptance-architecture-foundations.md)。
+
 ## 3. 功能状态
 
 只列出已经开始的里程碑涉及的功能；其余功能都处于“未开始”状态。
