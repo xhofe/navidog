@@ -60,6 +60,36 @@ fn sql(file: &std::path::Path, statements: &str) -> Vec<Vec<Option<String>>> {
     })
 }
 
+fn live_sql(driver: &str, port: u16, database: &str, statements: &str) {
+    runtime::runtime().block_on(async {
+        let driver: Arc<dyn navidog_db::Driver> = match driver {
+            "postgres" => Arc::new(navidog_db::postgres::PostgresDriver::default()),
+            "mariadb" => Arc::new(navidog_db::mysql::MySqlDriver::mariadb()),
+            _ => Arc::new(navidog_db::mysql::MySqlDriver::mysql()),
+        };
+        let mut session = connect(
+            driver,
+            ConnectParams {
+                host: "127.0.0.1".into(),
+                port,
+                user: if port == 15432 { "postgres" } else { "root" }.into(),
+                password: Some("navidog".into()),
+                database: Some(database.into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        session
+            .relational()
+            .unwrap()
+            .execute(statements)
+            .await
+            .unwrap();
+        session.close().await.unwrap();
+    });
+}
+
 fn run(
     cx: &mut TestAppContext,
     handle: AnyWindowHandle,
@@ -1323,6 +1353,132 @@ fn live_editor_runs_selection_current_errors_and_stop(cx: &mut TestAppContext) {
                 assert_eq!(e.editor.read(cx).diagnostics().unwrap().len(), 1);
             });
         }
+
+        // SQL-driven context is independent of the toolbar, and a pinned refresh restores it.
+        let suffix = std::process::id();
+        let first = format!("navidog_source_a_{suffix}");
+        let second = format!("navidog_source_b_{suffix}");
+        let table = format!("navidog_source_rows_{suffix}");
+        let setup = if driver == "postgres" {
+            format!(
+                "DROP SCHEMA IF EXISTS {first} CASCADE; DROP SCHEMA IF EXISTS {second} CASCADE; \
+                 CREATE SCHEMA {first}; CREATE SCHEMA {second}; \
+                 CREATE TABLE {first}.{table}(id INTEGER PRIMARY KEY, name TEXT); \
+                 INSERT INTO {first}.{table} VALUES(1, 'original source')"
+            )
+        } else {
+            format!(
+                "DROP DATABASE IF EXISTS {second}; CREATE DATABASE {second}; \
+                 CREATE TABLE {second}.{table}(id INTEGER PRIMARY KEY, name VARCHAR(100)); \
+                 INSERT INTO {second}.{table} VALUES(1, 'original source')"
+            )
+        };
+        live_sql(driver, port, database, &setup);
+        let change = if driver == "postgres" {
+            format!("SET search_path TO {second}, {first}")
+        } else {
+            format!("USE {second}")
+        };
+        set_text(
+            cx,
+            handle,
+            &editor,
+            &format!("{change}; SELECT id,name FROM {table}"),
+        );
+        run(cx, handle, &editor, RunKind::All);
+        idle(cx, &editor);
+        let original = cx.update(|cx| {
+            editor.update(cx, |e, cx| {
+                assert!(e.results.rows.iter().all(|row| !row.error), "{driver}");
+                let tab = e.results.tabs.last().unwrap();
+                assert_eq!(
+                    tab.info.database.as_deref(),
+                    Some(if driver == "postgres" {
+                        database
+                    } else {
+                        &second
+                    })
+                );
+                if driver == "postgres" {
+                    assert_eq!(tab.info.schema.as_deref(), Some(second.as_str()));
+                    assert!(tab.info.search_path.as_ref().unwrap().contains(&first));
+                }
+                assert_eq!(e.target.database.as_deref(), Some(database));
+                let id = tab.id;
+                let Body::Grid(view) = &tab.body else {
+                    panic!("source result")
+                };
+                let view = view.clone();
+                e.results.toggle_pin(id, cx);
+                view
+            })
+        });
+        wait(cx, "the SQL-context result to become editable", |cx| {
+            cx.update(|cx| original.read(cx).editable())
+        });
+
+        // An unchanged toolbar keeps the SQL context across runs.
+        set_text(cx, handle, &editor, &format!("SELECT id,name FROM {table}"));
+        run(cx, handle, &editor, RunKind::All);
+        idle(cx, &editor);
+        cx.update(|cx| {
+            let tab = editor.read(cx).results.tabs.last().unwrap();
+            assert_eq!(
+                tab.info.database.as_deref(),
+                Some(if driver == "postgres" {
+                    database
+                } else {
+                    &second
+                })
+            );
+            assert!(editor.read(cx).results.rows.iter().all(|row| !row.error));
+        });
+
+        // Change the live session so committing the old result must open an independent source.
+        cx.update(|cx| {
+            editor.update(cx, |e, cx| {
+                if driver == "postgres" {
+                    e.pick_schema(first.clone(), cx);
+                } else {
+                    e.pick_database("mysql".into(), cx);
+                }
+                Settings::update(cx, |s| s.sync_record = true);
+            })
+        });
+        set_text(cx, handle, &editor, "SELECT 1");
+        run(cx, handle, &editor, RunKind::All);
+        idle(cx, &editor);
+        cx.update_window(handle, |_, window, cx| {
+            original.update(cx, |view, cx| {
+                view.grid.update(cx, |grid, cx| {
+                    grid.update_model(cx, |model| {
+                        model.set_value(0, 1, Some("refreshed original".into()))
+                    })
+                });
+                view.commit_now(window, cx);
+            });
+        })
+        .unwrap();
+        wait(cx, "the original SQL context to refresh", |cx| {
+            cx.update(|cx| !original.read(cx).is_busy())
+        });
+        cx.update(|cx| {
+            assert!(
+                !original.read(cx).grid.read(cx).model(cx).has_changes(),
+                "{driver}: the refreshed values must come from the server, not the edit overlay"
+            );
+            assert_eq!(
+                original.read(cx).rows(cx),
+                [vec![Some("1".into()), Some("refreshed original".into())]],
+                "{driver}"
+            );
+        });
+        let cleanup = if driver == "postgres" {
+            format!("DROP SCHEMA {second} CASCADE; DROP SCHEMA {first} CASCADE")
+        } else {
+            format!("DROP DATABASE {second}")
+        };
+        live_sql(driver, port, database, &cleanup);
         set_text(cx, handle, &editor, &format!("{slow}; SELECT 99;"));
         run(cx, handle, &editor, RunKind::All);
         wait(cx, "the cancellable live session", |cx| {

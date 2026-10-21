@@ -47,6 +47,10 @@ pub(crate) struct RunInfo {
     pub connection_id: String,
     pub database: Option<String>,
     pub schema: Option<String>,
+    /// Exact PostgreSQL path after a SQL context command, including fallback schemas.
+    pub search_path: Option<String>,
+    pub context_id: Option<u64>,
+    pub context_known: bool,
     pub dialect: Option<Dialect>,
 }
 
@@ -958,18 +962,15 @@ impl ResultView {
             e.read(cx)
                 .live
                 .as_ref()
-                .filter(|live| {
-                    live.connection == self.info.connection_id
-                        && live.database == self.info.database
-                        && match self.info.dialect {
-                            Some(Dialect::MySql) => live.used == self.info.database,
-                            Some(Dialect::Postgres) => live.used == self.info.schema,
-                            _ => true,
-                        }
-                })
+                .filter(|live| live.matches_source(&self.info))
                 .map(|live| live.session.clone())
         });
         let open = if session.is_none() {
+            if !self.info.context_known {
+                self.status = t!("query.source_context_unknown").to_string().into();
+                cx.notify();
+                return;
+            }
             Sessions::global(cx)
                 .read(cx)
                 .new_session(&self.info.connection_id, self.info.database.as_deref())
@@ -1011,7 +1012,13 @@ impl ResultView {
                                     }
                                 }
                                 Some(Dialect::Postgres) => {
-                                    if let Some(schema) = info.schema {
+                                    if let Some(path) = info.search_path {
+                                        rel.execute(&format!(
+                                            "SELECT pg_catalog.set_config('search_path', {}, false)",
+                                            Dialect::Postgres.string_literal(&path)
+                                        ))
+                                        .await?;
+                                    } else if let Some(schema) = info.schema {
                                         rel.execute(&crate::run::search_path(&schema)).await?;
                                     }
                                 }
@@ -1736,6 +1743,9 @@ mod tests {
             connection_id: "c1".into(),
             database: Some("sakila".into()),
             schema: None,
+            search_path: None,
+            context_id: None,
+            context_known: true,
             dialect: Some(Dialect::MySql),
         };
         let lines = info.lines("SELECT 1");

@@ -66,7 +66,10 @@ impl GridModel {
     pub fn set_hidden(&mut self, hidden: &HashSet<String>) -> bool {
         if !self.edits.is_empty()
             || !self.deleted.is_empty()
-            || self.new_rows.iter().any(|row| row.iter().any(Option::is_some))
+            || self
+                .new_rows
+                .iter()
+                .any(|row| row.iter().any(Option::is_some))
         {
             return false;
         }
