@@ -165,13 +165,15 @@ pub enum StoreError {
     Locked,
     #[error(transparent)]
     Crypto(#[from] CryptoError),
+    #[error("cannot save connection settings: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 pub enum StoreEvent {
     Changed,
 }
 
-/// The connection store entity. Every change is saved at once and emits `StoreEvent::Changed`.
+/// The connection store entity. A successful save publishes one `StoreEvent::Changed`.
 pub struct ConnectionStore {
     path: PathBuf,
     file: ConnectionsFile,
@@ -189,7 +191,7 @@ impl ConnectionStore {
         let file = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|err| {
                 // Never overwrite a file that fails to parse: back it up and start empty
-                tracing::error!("connections.json 无法解析，已备份: {err}");
+                tracing::error!("connections.json cannot be parsed, backed up: {err}");
                 let _ = std::fs::copy(&path, path.with_extension("json.bak"));
                 ConnectionsFile::default()
             }),
@@ -236,12 +238,18 @@ impl ConnectionStore {
         if let Some(key) = &self.key {
             return Ok(key.clone());
         }
+        let key = self.current_key()?;
+        self.key = Some(key.clone());
+        Ok(key)
+    }
+
+    /// Prepares a write without changing the cached key before the candidate is saved.
+    fn current_key(&self) -> Result<Key, StoreError> {
+        if let Some(key) = &self.key {
+            return Ok(key.clone());
+        }
         match self.file.crypto {
-            CryptoMode::Machine => {
-                let key = crypto::machine_key()?;
-                self.key = Some(key.clone());
-                Ok(key)
-            }
+            CryptoMode::Machine => Ok(crypto::machine_key()?),
             CryptoMode::Master { .. } => Err(StoreError::Locked),
         }
     }
@@ -283,7 +291,11 @@ impl ConnectionStore {
     ) -> Result<(), StoreError> {
         let existing = self.file.get(&conn.id).cloned();
         let needs_key = secrets.iter().any(|(_, v)| v.is_some());
-        let key = if needs_key { Some(self.key()?) } else { None };
+        let key = if needs_key {
+            Some(self.current_key()?)
+        } else {
+            None
+        };
         for field in SecretField::ALL {
             match secrets
                 .iter()
@@ -311,17 +323,18 @@ impl ConnectionStore {
         if !conn.ssh.save_passphrase {
             conn.ssh.passphrase = None;
         }
-        match self.file.connections.iter_mut().find(|c| c.id == conn.id) {
+        let mut candidate = self.file.clone();
+        match candidate.connections.iter_mut().find(|c| c.id == conn.id) {
             Some(slot) => *slot = conn,
-            None => self.file.connections.push(conn),
+            None => candidate.connections.push(conn),
         }
-        self.commit(cx);
-        Ok(())
+        self.commit(candidate, key, cx)
     }
 
-    pub fn remove(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.file.connections.retain(|c| c.id != id);
-        self.commit(cx);
+    pub fn remove(&mut self, id: &str, cx: &mut Context<Self>) -> Result<(), StoreError> {
+        let mut candidate = self.file.clone();
+        candidate.connections.retain(|c| c.id != id);
+        self.commit(candidate, None, cx)
     }
 
     pub fn duplicate(
@@ -330,17 +343,46 @@ impl ConnectionStore {
         suffix: &str,
         cx: &mut Context<Self>,
     ) -> Result<Option<ConnectionId>, StoreError> {
-        let key = self.key()?;
-        let new_id = self.file.duplicate(id, suffix, &key);
-        self.commit(cx);
+        let key = self.current_key()?;
+        let mut candidate = self.file.clone();
+        let new_id = candidate.duplicate(id, suffix, &key);
+        self.commit(candidate, Some(key), cx)?;
         Ok(new_id)
     }
 
-    pub fn update(&mut self, id: &str, f: impl FnOnce(&mut Connection), cx: &mut Context<Self>) {
-        if let Some(conn) = self.file.connections.iter_mut().find(|c| c.id == id) {
+    pub fn update(
+        &mut self,
+        id: &str,
+        f: impl FnOnce(&mut Connection),
+        cx: &mut Context<Self>,
+    ) -> Result<(), StoreError> {
+        let mut candidate = self.file.clone();
+        if let Some(conn) = candidate.connections.iter_mut().find(|c| c.id == id) {
             f(conn);
-            self.commit(cx);
+            self.commit(candidate, None, cx)?;
         }
+        Ok(())
+    }
+
+    /// Saves a multi-selection operation as a single candidate, with no partial changes on failure.
+    pub fn update_many(
+        &mut self,
+        ids: &[ConnectionId],
+        mut f: impl FnMut(&mut Connection),
+        cx: &mut Context<Self>,
+    ) -> Result<(), StoreError> {
+        let mut candidate = self.file.clone();
+        let mut changed = false;
+        for conn in &mut candidate.connections {
+            if ids.contains(&conn.id) {
+                f(conn);
+                changed = true;
+            }
+        }
+        if changed {
+            self.commit(candidate, None, cx)?;
+        }
+        Ok(())
     }
 
     pub fn add_group(
@@ -348,32 +390,46 @@ impl ConnectionStore {
         name: String,
         parent: Option<GroupId>,
         cx: &mut Context<Self>,
-    ) -> GroupId {
+    ) -> Result<GroupId, StoreError> {
         let id = new_group_id();
-        self.file.groups.push(Group {
+        let mut candidate = self.file.clone();
+        candidate.groups.push(Group {
             id: id.clone(),
             name,
             parent,
             extra: Map::new(),
         });
-        self.commit(cx);
-        id
+        self.commit(candidate, None, cx)?;
+        Ok(id)
     }
 
-    pub fn rename_group(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
-        if let Some(g) = self.file.groups.iter_mut().find(|g| g.id == id) {
+    pub fn rename_group(
+        &mut self,
+        id: &str,
+        name: String,
+        cx: &mut Context<Self>,
+    ) -> Result<(), StoreError> {
+        let mut candidate = self.file.clone();
+        if let Some(g) = candidate.groups.iter_mut().find(|g| g.id == id) {
             g.name = name;
-            self.commit(cx);
+            self.commit(candidate, None, cx)?;
         }
+        Ok(())
     }
 
-    pub fn remove_group(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.file.remove_group(id);
-        self.commit(cx);
+    pub fn remove_group(&mut self, id: &str, cx: &mut Context<Self>) -> Result<(), StoreError> {
+        let mut candidate = self.file.clone();
+        candidate.remove_group(id);
+        self.commit(candidate, None, cx)
     }
 
-    pub fn move_to_group(&mut self, conn_id: &str, group: Option<GroupId>, cx: &mut Context<Self>) {
-        self.update(conn_id, |c| c.group = group, cx);
+    pub fn move_to_group(
+        &mut self,
+        conn_id: &str,
+        group: Option<GroupId>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), StoreError> {
+        self.update(conn_id, |c| c.group = group, cx)
     }
 
     /// Sets, changes or clears (`None`) the master password and re-encrypts every secret with the new key.
@@ -383,25 +439,33 @@ impl ConnectionStore {
         password: Option<&str>,
         cx: &mut Context<Self>,
     ) -> Result<Vec<String>, StoreError> {
-        let old = self.key()?;
+        let old = self.current_key()?;
         let (mode, new) = match password {
             Some(p) => crypto::new_master(p)?,
             None => (CryptoMode::Machine, crypto::machine_key()?),
         };
-        let cleared = self.file.rekey(&old, &new);
-        self.file.crypto = mode;
-        self.key = Some(new);
-        self.commit(cx);
+        let mut candidate = self.file.clone();
+        let cleared = candidate.rekey(&old, &new);
+        candidate.crypto = mode;
+        self.commit(candidate, Some(new), cx)?;
         Ok(cleared)
     }
 
-    fn commit(&mut self, cx: &mut Context<Self>) {
-        let bytes = serde_json::to_vec_pretty(&self.file).expect("connections.json serializes");
-        if let Err(err) = paths::write_atomic(&self.path, &bytes) {
-            tracing::error!("保存 connections.json 失败: {err}");
+    fn commit(
+        &mut self,
+        candidate: ConnectionsFile,
+        key: Option<Key>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), StoreError> {
+        let bytes = serde_json::to_vec_pretty(&candidate).expect("connections.json serializes");
+        paths::write_atomic(&self.path, &bytes)?;
+        self.file = candidate;
+        if let Some(key) = key {
+            self.key = Some(key);
         }
         cx.emit(StoreEvent::Changed);
         cx.notify();
+        Ok(())
     }
 }
 
@@ -420,6 +484,256 @@ mod tests {
             connections: vec![conn],
             ..Default::default()
         }
+    }
+
+    struct StoreFixture {
+        path: PathBuf,
+    }
+
+    impl StoreFixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("navidog-store-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            Self {
+                path: root.join("connections.json"),
+            }
+        }
+
+        fn block_write(&self) {
+            std::fs::create_dir(self.path.with_extension("tmp")).unwrap();
+        }
+
+        fn unblock_write(&self) {
+            std::fs::remove_dir(self.path.with_extension("tmp")).unwrap();
+        }
+    }
+
+    impl Drop for StoreFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(self.path.parent().unwrap());
+        }
+    }
+
+    fn profiled_connection(key: &Key) -> Connection {
+        let mut conn = Connection::new("mysql");
+        conn.general.save_password = true;
+        conn.ssh.save_password = true;
+        conn.ssh.save_passphrase = true;
+        for profile in ["", "other"] {
+            if !profile.is_empty() {
+                conn.add_profile(profile.into());
+            }
+            for field in SecretField::ALL {
+                let value = format!("fixture-{profile}-{}", field.key());
+                ConnectionsFile::set_secret(&mut conn, field, Some(&value), key);
+            }
+        }
+        conn.switch_profile("");
+        conn
+    }
+
+    fn assert_profile_secrets(conn: &Connection, key: &Key) {
+        let mut conn = conn.clone();
+        for profile in ["", "other"] {
+            conn.switch_profile(profile);
+            for field in SecretField::ALL {
+                let expected = format!("fixture-{profile}-{}", field.key());
+                let revealed = ConnectionsFile::reveal(&conn, field, key).unwrap();
+                assert!(
+                    revealed.as_deref() == Some(expected.as_str()),
+                    "profile secret preserved"
+                );
+            }
+        }
+    }
+
+    #[gpui_kit::test]
+    fn failed_writes_keep_configuration_and_publish_no_changes(cx: &mut gpui_kit::TestAppContext) {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let fixture = StoreFixture::new();
+        let key = Key::random();
+        let first = profiled_connection(&key);
+        let second = profiled_connection(&key);
+        let ids = [first.id.clone(), second.id.clone()];
+        let store = cx.new(|_| ConnectionStore::load(fixture.path.clone()));
+        let group = store.update(cx, |store, cx| {
+            store.set_key(key.clone());
+            let secrets =
+                SecretField::ALL.map(|field| (field, Some(format!("fixture--{}", field.key()))));
+            store.upsert(first, &secrets, cx).unwrap();
+            store.upsert(second, &secrets, cx).unwrap();
+            store.add_group("original".into(), None, cx).unwrap()
+        });
+        let original = cx.update(|cx| store.read(cx).file.clone());
+        let disk = std::fs::read(&fixture.path).unwrap();
+        let changes = Rc::new(Cell::new(0));
+        let seen = changes.clone();
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&store, move |_, _: &StoreEvent, _| {
+                seen.set(seen.get() + 1);
+            })
+        });
+        fixture.block_write();
+        store.update(cx, |store, cx| {
+            let mut edited = store.get(&ids[0]).unwrap().clone();
+            edited.name = "changed".into();
+            assert!(matches!(
+                store.upsert(edited, &[], cx),
+                Err(StoreError::Io(_))
+            ));
+            assert!(matches!(
+                store.duplicate(&ids[0], "copy", cx),
+                Err(StoreError::Io(_))
+            ));
+            assert!(matches!(
+                store.update(&ids[0], |c| c.hidden = true, cx),
+                Err(StoreError::Io(_))
+            ));
+            assert!(matches!(
+                store.update_many(&ids, |c| c.starred = true, cx),
+                Err(StoreError::Io(_))
+            ));
+            assert!(matches!(store.remove(&ids[0], cx), Err(StoreError::Io(_))));
+            assert!(matches!(
+                store.add_group("new".into(), None, cx),
+                Err(StoreError::Io(_))
+            ));
+            assert!(matches!(
+                store.rename_group(&group, "changed".into(), cx),
+                Err(StoreError::Io(_))
+            ));
+            assert!(matches!(
+                store.remove_group(&group, cx),
+                Err(StoreError::Io(_))
+            ));
+            assert!(
+                store.file == original,
+                "failed candidates do not replace configuration"
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(changes.get(), 0);
+        assert!(
+            std::fs::read(&fixture.path).unwrap() == disk,
+            "original file preserved"
+        );
+        fixture.unblock_write();
+        store
+            .update(cx, |store, cx| {
+                store.update_many(&ids, |c| c.starred = true, cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            changes.get(),
+            1,
+            "one event for the whole multi-selection save"
+        );
+        let saved: ConnectionsFile =
+            serde_json::from_slice(&std::fs::read(&fixture.path).unwrap()).unwrap();
+        assert!(
+            cx.update(|cx| saved == store.read(cx).file),
+            "published state is already on disk"
+        );
+        assert!(saved.connections.iter().all(|c| c.starred && !c.hidden));
+        for conn in &saved.connections {
+            assert_profile_secrets(conn, &key);
+        }
+    }
+
+    #[gpui_kit::test]
+    fn failed_rekey_preserves_current_key_and_every_profile(cx: &mut gpui_kit::TestAppContext) {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let fixture = StoreFixture::new();
+        let key = Key::random();
+        let conn = profiled_connection(&key);
+        let id = conn.id.clone();
+        let store = cx.new(|_| ConnectionStore::load(fixture.path.clone()));
+        store.update(cx, |store, cx| {
+            store.set_key(key.clone());
+            let secrets =
+                SecretField::ALL.map(|field| (field, Some(format!("fixture--{}", field.key()))));
+            store.upsert(conn, &secrets, cx).unwrap();
+        });
+        let original = cx.update(|cx| store.read(cx).file.clone());
+        let disk = std::fs::read(&fixture.path).unwrap();
+        let changes = Rc::new(Cell::new(0));
+        let seen = changes.clone();
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&store, move |_, _: &StoreEvent, _| {
+                seen.set(seen.get() + 1);
+            })
+        });
+        fixture.block_write();
+        store.update(cx, |store, cx| {
+            assert!(matches!(
+                store.set_master_password(Some("fixture-master"), cx),
+                Err(StoreError::Io(_))
+            ));
+            assert!(
+                store.file == original,
+                "failed rekey preserves the crypto mode and ciphertext"
+            );
+            let retained = store.key().unwrap();
+            assert_profile_secrets(store.get(&id).unwrap(), &retained);
+        });
+        cx.run_until_parked();
+        assert_eq!(changes.get(), 0);
+        assert!(
+            std::fs::read(&fixture.path).unwrap() == disk,
+            "original encrypted file preserved"
+        );
+        let old_disk: ConnectionsFile = serde_json::from_slice(&disk).unwrap();
+        assert_profile_secrets(old_disk.get(&id).unwrap(), &key);
+        fixture.unblock_write();
+        store.update(cx, |store, cx| {
+            assert!(
+                store
+                    .set_master_password(Some("fixture-master"), cx)
+                    .unwrap()
+                    .is_empty()
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(changes.get(), 1);
+        let saved: ConnectionsFile =
+            serde_json::from_slice(&std::fs::read(&fixture.path).unwrap()).unwrap();
+        let new_key = crypto::unlock_master(&saved.crypto, "fixture-master").unwrap();
+        assert_profile_secrets(saved.get(&id).unwrap(), &new_key);
+        assert!(
+            ConnectionsFile::reveal(saved.get(&id).unwrap(), SecretField::Password, &key).is_err()
+        );
+        store.update(cx, |store, _| {
+            assert!(store.file == saved, "memory matches the saved candidate");
+            let retained = store.key().unwrap();
+            assert_profile_secrets(store.get(&id).unwrap(), &retained);
+        });
+        // A failed password change must preserve the already active master key as well.
+        fixture.block_write();
+        let committed = std::fs::read(&fixture.path).unwrap();
+        store.update(cx, |store, cx| {
+            assert!(matches!(
+                store.set_master_password(Some("fixture-replacement"), cx),
+                Err(StoreError::Io(_))
+            ));
+            assert!(
+                store.file == saved,
+                "failed replacement retains the active master configuration"
+            );
+            let retained = store.key().unwrap();
+            assert_profile_secrets(store.get(&id).unwrap(), &retained);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            changes.get(),
+            1,
+            "failed replacement publishes no new event"
+        );
+        assert!(std::fs::read(&fixture.path).unwrap() == committed);
     }
 
     #[test]

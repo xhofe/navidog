@@ -333,6 +333,9 @@ conn:
   duplicate_failed:
     en: Failed to duplicate connection
     zh-CN: 无法复制连接
+  save_failed:
+    en: "Connection settings could not be saved: %{detail}"
+    zh-CN: "无法保存连接设置：%{detail}"
   store_locked:
     en: Navidog is locked. Open a connection with a saved password and enter the master password first.
     zh-CN: 需要先解锁：打开一个保存了密码的连接，输入主密码。

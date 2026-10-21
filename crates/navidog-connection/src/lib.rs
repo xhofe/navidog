@@ -91,15 +91,19 @@ pub fn bind_actions<E: InteractiveElement>(el: E) -> E {
             }
         })
         .on_action(|_: &DeleteGroup, window, cx| confirm_delete_group(window, cx))
-        .on_action(|a: &SetColor, _, cx| {
+        .on_action(|a: &SetColor, window, cx| {
             let Some(id) = selected_connection(cx) else {
                 return;
             };
             let color = a.color.as_ref().map(|c| c.to_string());
-            ConnectionStore::global(cx).update(cx, |s, cx| s.update(&id, |c| c.color = color, cx));
+            let result = ConnectionStore::global(cx)
+                .update(cx, |s, cx| s.update(&id, |c| c.color = color, cx));
+            if let Err(error) = result {
+                window.push_notification(store_error_message(&error), cx);
+            }
         })
-        .on_action(|_: &ToggleStar, _, cx| toggle_star(cx))
-        .on_action(|_: &ToggleHidden, _, cx| toggle_hidden(cx))
+        .on_action(|_: &ToggleStar, window, cx| toggle_star(window, cx))
+        .on_action(|_: &ToggleHidden, window, cx| toggle_hidden(window, cx))
         .on_action(|_: &ManageConnections, _, cx| manage::open(cx))
         .on_action(|a: &SwitchProfile, window, cx| {
             if let Some(id) = selected_connection(cx) {
@@ -121,14 +125,15 @@ pub fn bind_actions<E: InteractiveElement>(el: E) -> E {
                 reload::open(id, window, cx);
             }
         })
-        .on_action(|a: &MoveToGroup, _, cx| {
+        .on_action(|a: &MoveToGroup, window, cx| {
             let ids = selected_connections(cx);
             let group = a.group.as_ref().map(|g| g.to_string());
-            ConnectionStore::global(cx).update(cx, |s, cx| {
-                for id in &ids {
-                    s.move_to_group(id, group.clone(), cx);
-                }
+            let result = ConnectionStore::global(cx).update(cx, |s, cx| {
+                s.update_many(&ids, |c| c.group = group.clone(), cx)
             });
+            if let Err(error) = result {
+                window.push_notification(store_error_message(&error), cx);
+            }
         })
 }
 
@@ -141,31 +146,29 @@ pub(crate) fn edit_selected(window: &mut Window, cx: &mut App) {
     }
 }
 
-pub(crate) fn toggle_star(cx: &mut App) {
+pub(crate) fn toggle_star(window: &mut Window, cx: &mut App) {
     let ids = selected_connections(cx);
     let store = ConnectionStore::global(cx);
     // Star them all unless every selected connection is starred already.
     let star = ids
         .iter()
         .any(|id| store.read(cx).get(id).is_some_and(|c| !c.starred));
-    store.update(cx, |s, cx| {
-        for id in &ids {
-            s.update(id, |c| c.starred = star, cx);
-        }
-    });
+    let result = store.update(cx, |s, cx| s.update_many(&ids, |c| c.starred = star, cx));
+    if let Err(error) = result {
+        window.push_notification(store_error_message(&error), cx);
+    }
 }
 
-pub(crate) fn toggle_hidden(cx: &mut App) {
+pub(crate) fn toggle_hidden(window: &mut Window, cx: &mut App) {
     let ids = selected_connections(cx);
     let store = ConnectionStore::global(cx);
     let hide = ids
         .iter()
         .any(|id| store.read(cx).get(id).is_some_and(|c| !c.hidden));
-    store.update(cx, |s, cx| {
-        for id in &ids {
-            s.update(id, |c| c.hidden = hide, cx);
-        }
-    });
+    let result = store.update(cx, |s, cx| s.update_many(&ids, |c| c.hidden = hide, cx));
+    if let Err(error) = result {
+        window.push_notification(store_error_message(&error), cx);
+    }
 }
 
 pub(crate) fn delete_selected(window: &mut Window, cx: &mut App) {
@@ -228,11 +231,15 @@ fn confirm_delete_connection(window: &mut Window, cx: &mut App) {
             .show_cancel(true)
             .ok_text(t!("conn.delete").to_string())
             .cancel_text(t!("conn.cancel").to_string())
-            .on_ok(move |_, _, cx| {
+            .on_ok(move |_, window, cx| {
+                let result = ConnectionStore::global(cx).update(cx, |s, cx| s.remove(&id, cx));
+                if let Err(error) = result {
+                    window.push_notification(store_error_message(&error), cx);
+                    return false;
+                }
                 Sessions::global(cx).update(cx, |s, cx| s.close(&id, cx));
                 navidog_core::vgroups::VirtualGroups::drop_connection(&id, cx);
                 navidog_db::outline::OutlineCache::drop_connection(&id, cx);
-                ConnectionStore::global(cx).update(cx, |s, cx| s.remove(&id, cx));
                 let _ = std::fs::remove_dir_all(navidog_core::paths::profile_dir(&id));
                 Workspace::global(cx).update(cx, |w, cx| w.select(Selection::None, cx));
                 true
@@ -263,8 +270,13 @@ fn confirm_delete_group(window: &mut Window, cx: &mut App) {
             .show_cancel(true)
             .ok_text(t!("conn.delete").to_string())
             .cancel_text(t!("conn.cancel").to_string())
-            .on_ok(move |_, _, cx| {
-                ConnectionStore::global(cx).update(cx, |s, cx| s.remove_group(&id, cx));
+            .on_ok(move |_, window, cx| {
+                let result =
+                    ConnectionStore::global(cx).update(cx, |s, cx| s.remove_group(&id, cx));
+                if let Err(error) = result {
+                    window.push_notification(store_error_message(&error), cx);
+                    return false;
+                }
                 Workspace::global(cx).update(cx, |w, cx| w.select(Selection::None, cx));
                 true
             })
@@ -275,6 +287,7 @@ fn confirm_delete_group(window: &mut Window, cx: &mut App) {
 pub fn store_error_message(e: &StoreError) -> String {
     match e {
         StoreError::Locked => t!("conn.store_locked").to_string(),
+        StoreError::Io(detail) => t!("conn.save_failed", detail = detail).to_string(),
         StoreError::Crypto(CryptoError::Decrypt | CryptoError::Format) => {
             t!("conn.secret_unreadable").to_string()
         }
