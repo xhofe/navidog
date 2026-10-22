@@ -937,3 +937,60 @@ fn reload_rebuilds_entry_forms_and_clears_validation(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn reload_while_previewing_replaces_stale_sql(cx: &mut TestAppContext) {
+    use super::Page;
+    use navidog_db::table_design::{DesignColumn, TableDesign, TableSnapshot};
+    let (_guard, _) = isolate_home("preview-reload");
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_core::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_ui::tabs::init(cx);
+        navidog_db::init(cx);
+        crate::init(cx);
+    });
+    let (handle, panel) = cx.update(|cx| {
+        let mut panel = None;
+        let window = gpui_kit::open_window(WindowOptions::default(), cx, |w, cx| {
+            let p = TableDesigner::new(Scope::new("test", "main", None), w, cx);
+            panel = Some(p.clone());
+            cx.new(|_| Host(p))
+        })
+        .unwrap();
+        (window.0, panel.unwrap())
+    });
+    cx.update_window(handle, |_, w, cx| {
+        panel.update(cx, |p, cx| {
+            let mut design = TableDesign::new();
+            design.name = "people".into();
+            let saved = serde_json::from_value::<TableSnapshot>(serde_json::json!({
+                "design": design,
+                "ddl": "",
+                "triggers": []
+            }))
+            .unwrap();
+            p.draft = design;
+            p.baseline = Some(saved.clone());
+            p.sync_all(w, cx);
+            p.draft.columns.push(DesignColumn::new(9, "extra", "TEXT"));
+            p.show_preview(w, cx);
+            let sql = p.sql.read(cx).value().to_string();
+            assert!(
+                sql.contains("extra"),
+                "preview should show the pending change, got {sql}"
+            );
+            assert!(p.page == Page::Preview);
+            p.accept_snapshot(saved, w, cx);
+            assert!(p.page == Page::Preview);
+            let sql = p.sql.read(cx).value().to_string();
+            assert_eq!(
+                sql,
+                format!("-- {}", rust_i18n::t!("designer.no_changes")),
+                "discarding changes on the preview page must refresh the editor in place"
+            );
+        })
+    })
+    .unwrap();
+}

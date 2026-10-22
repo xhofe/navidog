@@ -817,6 +817,12 @@ impl TableDesigner {
         self.selected = self.draft.columns.first().map(|c| c.id);
         self.next_id = self.draft.columns.iter().map(|c| c.id).max().unwrap_or(0) + 1;
         self.sync_all(window, cx);
+        // The preview editor stays mounted on this page, so discarding the
+        // draft has to rewrite its text. Leaving and returning does that via
+        // show_preview; staying here used to keep the previous statements.
+        if self.page == Page::Preview {
+            self.show_preview(window, cx);
+        }
     }
     fn sync_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.table_name
