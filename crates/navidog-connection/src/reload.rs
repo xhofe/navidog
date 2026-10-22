@@ -7,7 +7,7 @@ use gpui_kit::component::v_flex;
 use gpui_kit::{
     App, AppContext as _, Context, IntoElement, ParentElement as _, Render, Styled as _, Window,
 };
-use navidog_db::sessions::Sessions;
+use navidog_db::{DbError, sessions::Sessions};
 use navidog_ui::skin::{FormRow, confirm_with, heading};
 use navidog_ui::tokens;
 use rust_i18n::t;
@@ -53,21 +53,23 @@ impl Reload {
             return;
         }
         window.close_dialog(cx);
-        let job = Sessions::global(cx).read(cx).run_once(&self.id, None, |r| {
-            Box::pin(async move {
-                for sql in &stmts {
-                    r.execute(sql).await?;
-                }
-                Ok(())
-            })
-        });
+        let job = Sessions::global(cx)
+            .read(cx)
+            .run_operation_rel(&self.id, None, |r| {
+                Box::pin(async move {
+                    for sql in &stmts {
+                        r.execute(sql).await?;
+                    }
+                    Ok(())
+                })
+            });
         let Some(job) = job else { return };
         window
             .spawn(cx, async move |cx| {
                 let result = job
                     .await
                     .map_err(|e| e.to_string())
-                    .and_then(|r| r.map_err(|e| crate::db_text(&e)));
+                    .and_then(|r| r.map_err(|e| error_message(&e)));
                 cx.update(|window, cx| match result {
                     Ok(()) => window.push_notification(t!("conn.reload_done").to_string(), cx),
                     Err(e) => {
@@ -76,6 +78,35 @@ impl Reload {
                 })
             })
             .detach();
+    }
+}
+
+fn error_message(error: &DbError) -> String {
+    recovery_message(
+        &error.to_string(),
+        error.is_session_lost(),
+        error.is_outcome_unknown(),
+        &rust_i18n::locale(),
+    )
+}
+
+fn recovery_message(
+    detail: &str,
+    session_lost: bool,
+    outcome_unknown: bool,
+    locale: &str,
+) -> String {
+    if outcome_unknown {
+        t!(
+            "conn.reload_outcome_unknown",
+            locale = locale,
+            detail = detail
+        )
+        .to_string()
+    } else if session_lost {
+        t!("conn.reload_session_lost", locale = locale, detail = detail).to_string()
+    } else {
+        detail.to_string()
     }
 }
 
@@ -104,7 +135,7 @@ impl Render for Reload {
 
 #[cfg(test)]
 mod tests {
-    use super::statements;
+    use super::{recovery_message, statements};
 
     #[test]
     fn one_flush_per_checked_option() {
@@ -113,5 +144,33 @@ mod tests {
             ["FLUSH PRIVILEGES", "FLUSH TABLES"]
         );
         assert!(statements(&[false; 5]).is_empty());
+    }
+
+    #[test]
+    fn flush_recovery_guidance_keeps_diagnostics_and_uses_the_interface_language() {
+        let detail = "08006 - original FLUSH diagnostic";
+        for locale in ["en", "zh-CN"] {
+            assert_eq!(recovery_message(detail, false, false, locale), detail);
+            for unknown in [false, true] {
+                let message = recovery_message(detail, true, unknown, locale);
+                assert!(message.starts_with(detail));
+                assert!(!message.contains('\n'));
+                if locale == "en" {
+                    assert!(message.to_ascii_lowercase().contains("reopen"));
+                } else {
+                    assert!(message.contains("重新打开"));
+                }
+                if unknown {
+                    assert!(message.contains(if locale == "en" {
+                        "outcome may be unknown"
+                    } else {
+                        "执行结果可能未知"
+                    }));
+                }
+                if locale == "zh-CN" {
+                    assert!(!message.contains("Reopen"));
+                }
+            }
+        }
     }
 }

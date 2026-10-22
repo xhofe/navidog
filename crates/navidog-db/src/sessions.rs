@@ -246,8 +246,9 @@ impl Sessions {
         self.tasks.insert(id.to_string(), task);
     }
 
-    /// Runs on the connection's metadata session. `database` picks the PostgreSQL database to reach,
-    /// opening another session when needed; other dialects ignore it (one session reaches them all).
+    /// Runs safe metadata reads on the connection's shared metadata session. `database` picks the
+    /// PostgreSQL database to reach, opening another session when needed; other dialects ignore it.
+    /// Generated writes and DDL belong in `run_operation_rel`, never on this long-lived session.
     pub fn run_rel<T: Send + 'static>(
         &self,
         id: &str,
@@ -283,24 +284,37 @@ impl Sessions {
         }))
     }
 
-    /// Runs on a new session and closes it before returning. The shared metadata session
-    /// is not used, so an application write cannot pin it against idle recovery.
+    /// Runs one generated write/DDL operation on a separate session and closes it afterwards.
+    /// The operation is invoked once and never replayed; its outcome is preserved even if closing
+    /// fails. Shared metadata sessions stay eligible for safe read recovery after completed writes.
+    pub fn run_operation_rel<T: Send + 'static>(
+        &self,
+        id: &str,
+        database: Option<&str>,
+        f: impl for<'a> FnOnce(&'a mut dyn Relational) -> BoxFuture<'a, DbResult<T>> + Send + 'static,
+    ) -> Option<JoinHandle<DbResult<T>>> {
+        let (driver, params) = self.session_target(id, database)?;
+        Some(runtime::spawn(async move {
+            let mut session = crate::connect(driver, params).await?;
+            let result = match session.relational() {
+                Some(rel) => f(rel).await,
+                None => Err(DbError::msg("该连接不是关系型数据库")),
+            };
+            if let Err(error) = session.close().await {
+                tracing::warn!("Closing an operation session failed: {error}");
+            }
+            result
+        }))
+    }
+
+    /// Runs one application operation without borrowing the shared metadata session.
     pub fn run_once<T: Send + 'static>(
         &self,
         id: &str,
         database: Option<&str>,
         f: impl for<'a> FnOnce(&'a mut dyn Relational) -> BoxFuture<'a, DbResult<T>> + Send + 'static,
     ) -> Option<JoinHandle<DbResult<T>>> {
-        let open = self.new_session(id, database)?;
-        Some(runtime::spawn(async move {
-            let session = open.await.map_err(|e| DbError::msg(e.to_string()))??;
-            let shared = Arc::new(Mutex::new(Some(session)));
-            let result = with_rel(&shared, f).await;
-            if let Some(session) = shared.lock().await.take() {
-                let _ = session.close().await;
-            }
-            result
-        }))
+        self.run_operation_rel(id, database, f)
     }
 
     /// Opens a separate session (table viewer, query editor); the caller holds and closes it.
@@ -309,6 +323,15 @@ impl Sessions {
         id: &str,
         database: Option<&str>,
     ) -> Option<JoinHandle<DbResult<Box<dyn Session>>>> {
+        let (driver, params) = self.session_target(id, database)?;
+        Some(runtime::spawn(crate::connect(driver, params)))
+    }
+
+    fn session_target(
+        &self,
+        id: &str,
+        database: Option<&str>,
+    ) -> Option<(Arc<dyn Driver>, ConnectParams)> {
         let live = self.live.get(id)?;
         let mut params = live.params.clone();
         if live.primary_db.is_some()
@@ -316,8 +339,7 @@ impl Sessions {
         {
             params.database = Some(db.to_string());
         }
-        let driver = live.driver.clone();
-        Some(runtime::spawn(crate::connect(driver, params)))
+        Some((live.driver.clone(), params))
     }
 }
 
@@ -374,3 +396,6 @@ pub(crate) fn init(cx: &mut App) {
     let sessions = cx.new(|_| Sessions::default());
     cx.set_global(GlobalSessions(sessions));
 }
+
+#[cfg(test)]
+mod tests;

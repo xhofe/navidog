@@ -8,7 +8,7 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, InteractiveElement, Window};
 use navidog_core::actions::{
     DeleteObjects, DuplicateQuery, DuplicateTable, EmptyTables, OpenQueryExternally, QueryRenamed,
-    RevealQuery, TruncateTables,
+    ReopenConnectionId, RevealQuery, TruncateTables,
 };
 use navidog_core::object::{ObjectKind, ObjectRef};
 use navidog_core::queries;
@@ -197,9 +197,8 @@ fn confirm(message: String, stmts: Vec<(ObjectRef, String)>, window: &mut Window
     });
 }
 
-/// Runs the statements in order, each on a session opened for that statement, then reloads the
-/// affected object lists and selects `then` on success. The first error is shown as the database
-/// reported it. The shared metadata session is left untouched.
+/// Runs each generated statement once on its own operation session, then reloads the affected
+/// object lists and selects `then` on success. Metadata sessions remain eligible for recovery.
 pub(crate) fn run(
     stmts: Vec<(ObjectRef, String)>,
     then: Option<Selection>,
@@ -218,7 +217,7 @@ pub(crate) fn run(
                     .flatten();
                 let job = cx
                     .update(|_, cx| {
-                        Sessions::global(cx).read(cx).run_once(
+                        Sessions::global(cx).read(cx).run_operation_rel(
                             &obj.scope.connection,
                             Some(&obj.scope.database),
                             move |r| {
@@ -233,20 +232,26 @@ pub(crate) fn run(
                     })
                     .ok()
                     .flatten();
-                let Some(job) = job else { continue };
-                if let Err(e) = job
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(|r| r.map_err(|e| crate::db_text(&e)))
-                {
-                    error = Some(e);
+                let Some(job) = job else {
+                    error = Some((
+                        obj.scope.connection.clone(),
+                        DbError::msg(t!("obj.connection_closed").to_string()),
+                    ));
+                    break;
+                };
+                let result = match job.await {
+                    Ok(result) => result,
+                    Err(error) => Err(DbError::msg(error.to_string())),
+                };
+                if let Err(e) = result {
+                    error = Some((obj.scope.connection.clone(), e));
                     break;
                 }
             }
             let _ = cx.update(|window, cx| {
                 refresh(stmts.iter().map(|(o, _)| o), cx);
                 match error {
-                    Some(e) => show_error(e, window, cx),
+                    Some((connection, error)) => show_database_error(error, connection, window, cx),
                     None => {
                         if let Some(sel) = then {
                             Workspace::global(cx).update(cx, |w, cx| w.select(sel, cx));
@@ -276,6 +281,38 @@ fn show_error(message: String, window: &mut Window, cx: &mut App) {
     });
 }
 
+fn show_database_error(error: DbError, connection: String, window: &mut Window, cx: &mut App) {
+    let message = crate::errors::database_message(&error);
+    if !error.is_session_lost() {
+        show_error(message, window, cx);
+        return;
+    }
+    let focus = window.focused(cx);
+    window.open_alert_dialog(cx, move |alert, _, _| {
+        let connection = connection.clone();
+        let focus = focus.clone();
+        alert
+            .icon(lucide("circle-x"))
+            .title(t!("obj.failed").to_string())
+            .description(message.clone())
+            .show_cancel(true)
+            .cancel_text(t!("obj.close").to_string())
+            .ok_text(t!("nav.reopen_connection").to_string())
+            .on_ok(move |_, window, cx| {
+                let id = connection.clone();
+                let focus = focus.clone();
+                // Let the error dialog close before showing the connection-loss confirmation.
+                window.defer(cx, move |window, cx| {
+                    if let Some(focus) = focus {
+                        window.focus(&focus, cx);
+                    }
+                    window.dispatch_action(Box::new(ReopenConnectionId::new(id)), cx);
+                });
+                true
+            })
+    });
+}
+
 /// Copies the selected table to `<name>_copyN`, the first free name, and selects the copy.
 fn duplicate(with_data: bool, window: &mut Window, cx: &mut App) {
     let Some(o) = selected_objects(cx)
@@ -301,7 +338,7 @@ fn duplicate(with_data: bool, window: &mut Window, cx: &mut App) {
         ..o.clone()
     };
     let (src, target) = (o.clone(), new);
-    let Some(job) = Sessions::global(cx).read(cx).run_once(
+    let Some(job) = Sessions::global(cx).read(cx).run_operation_rel(
         &o.scope.connection,
         Some(&o.scope.database),
         move |r| {
@@ -313,7 +350,7 @@ fn duplicate(with_data: bool, window: &mut Window, cx: &mut App) {
                 };
                 let stmts = d
                     .duplicate_table(&src.scope, &src.name, &target, with_data, ddl.as_deref())
-                    .ok_or_else(|| DbError::msg("cannot read the table definition"))?;
+                    .ok_or_else(|| DbError::msg(t!("obj.definition_unavailable").to_string()))?;
                 for sql in stmts {
                     r.execute(&sql).await?;
                 }
@@ -325,18 +362,106 @@ fn duplicate(with_data: bool, window: &mut Window, cx: &mut App) {
     };
     window
         .spawn(cx, async move |cx| {
-            let result = job
-                .await
-                .map_err(|e| e.to_string())
-                .and_then(|r| r.map_err(|e| crate::db_text(&e)));
+            let result = match job.await {
+                Ok(result) => result,
+                Err(error) => Err(DbError::msg(error.to_string())),
+            };
             let _ = cx.update(|window, cx| {
                 refresh(std::iter::once(&copy), cx);
                 match result {
                     Ok(()) => Workspace::global(cx)
                         .update(cx, |w, cx| w.select(Selection::Object(copy.clone()), cx)),
-                    Err(e) => show_error(e, window, cx),
+                    Err(error) => {
+                        show_database_error(error, copy.scope.connection.clone(), window, cx)
+                    }
                 }
             });
         })
         .detach();
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        AppContext as _, Bounds, Context, FocusHandle, IntoElement, Render, Styled as _,
+        TestAppContext, WindowBounds, WindowOptions, div, px, size,
+    };
+
+    use super::*;
+
+    struct Host {
+        focus: FocusHandle,
+        reopened: Vec<String>,
+    }
+
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .track_focus(&self.focus)
+                .on_action(cx.listener(|this, action: &ReopenConnectionId, _, _| {
+                    this.reopened.push(action.id.to_string());
+                }))
+        }
+    }
+
+    #[gpui_kit::test]
+    fn session_loss_error_offers_reopen_for_the_original_connection_after_dismissal(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            navidog_ui::theme::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (handle, host) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Default::default(),
+                        // raw-px: space for the localized error and recovery buttons.
+                        size(px(900.), px(600.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |_, cx| {
+                    cx.new(|cx| Host {
+                        focus: cx.focus_handle(),
+                        reopened: Vec::new(),
+                    })
+                },
+            )
+            .unwrap()
+        });
+        for (button, expected) in [("cancel", 0), ("ok", 1)] {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.focus(&host.read(cx).focus.clone(), cx);
+                let mut error = DbError::coded("08006", "original diagnostic");
+                error.disconnected = true;
+                show_database_error(error, "original-connection".into(), window, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(window.has_active_dialog(cx));
+                window.click(button, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(!window.has_active_dialog(cx));
+                let received = &host.read(cx).reopened;
+                assert_eq!(received.len(), expected);
+                if expected == 1 {
+                    assert_eq!(received, &["original-connection"]);
+                }
+            })
+            .unwrap();
+        }
+    }
 }

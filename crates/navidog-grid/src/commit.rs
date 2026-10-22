@@ -71,6 +71,19 @@ pub(crate) fn matched_a_row(sql: &str, sets: &[ResultSet], dialect: Dialect) -> 
     Ok(())
 }
 
+/// Formats driver details and localized recovery guidance at the grid/query UI boundary.
+/// The database layer retains the original code and message for diagnostics.
+pub fn error_message(error: &navidog_db::DbError) -> String {
+    let detail = error.to_string();
+    if error.is_outcome_unknown() {
+        t!("viewer.outcome_unknown", detail = detail).to_string()
+    } else if error.is_session_lost() {
+        t!("viewer.session_lost", detail = detail).to_string()
+    } else {
+        detail
+    }
+}
+
 /// Closes a session the caller held, in the background.
 pub fn close_session(session: SharedSession) {
     navidog_db::runtime::spawn(async move {

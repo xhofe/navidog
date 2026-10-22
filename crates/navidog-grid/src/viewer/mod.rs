@@ -41,7 +41,7 @@ use navidog_util::format::{decode_hex, encode_hex, pretty_json};
 use navidog_util::sql_type::{Choices, choices};
 use rust_i18n::t;
 
-use crate::commit::{Commit, apply, close_session};
+use crate::commit::{Commit, apply, close_session, error_message};
 use crate::editor::{self, Kind};
 use crate::filter::{self, Filter, Rule, Sort};
 use crate::grid::{GridEvent, GridTarget, HideColumn, ResultGrid, ToggleRawData, ToggleRowId};
@@ -187,8 +187,8 @@ pub struct TableViewer {
     columns: Vec<ColumnInfo>,
     foreign_keys: Vec<navidog_db::ForeignKey>,
     hidden: HashSet<String>,
-    /// Restored when a commit started by hiding a column fails, so the grid and the set still match
-    hidden_revert: Option<HashSet<String>>,
+    /// Published only after the commit and grid projection both accept the candidate set.
+    hidden_after_commit: Option<HashSet<String>>,
     /// Insert a row once the commit that made room for it succeeds
     add_after_commit: bool,
     /// Load the page once the commit started by paging, sorting or filtering succeeds
@@ -326,7 +326,7 @@ impl BasePanel for TableViewer {
                             let result = job
                                 .await
                                 .map_err(|e| e.to_string())
-                                .and_then(|r| r.map_err(|e| crate::db_text(&e)));
+                                .and_then(|r| r.map_err(|e| error_message(&e)));
                             close_session(session);
                             let Err(e) = result else { return };
                             tracing::warn!("commit on tab close failed: {e}");
@@ -673,7 +673,7 @@ impl TableViewer {
                 columns: Vec::new(),
                 foreign_keys: Vec::new(),
                 hidden: HashSet::new(),
-                hidden_revert: None,
+                hidden_after_commit: None,
                 add_after_commit: false,
                 reload_after_commit: false,
                 close_approved: false,
@@ -718,7 +718,7 @@ impl TableViewer {
                 Ok(Ok(s)) => s,
                 Ok(Err(e)) => {
                     return this
-                        .update(cx, |t, cx| t.fail(crate::db_text(&e), cx))
+                        .update(cx, |t, cx| t.fail(error_message(&e), cx))
                         .unwrap_or(());
                 }
                 Err(e) => {
@@ -771,7 +771,7 @@ impl TableViewer {
                     )
                 });
             }
-            Ok(Err(e)) => self.status = crate::db_text(&e).into(),
+            Ok(Err(e)) => self.status = error_message(&e).into(),
             Err(e) => self.status = e.to_string().into(),
         }
         self.session = Some(shared);
@@ -895,7 +895,7 @@ impl TableViewer {
             let result = page
                 .await
                 .map_err(|e| e.to_string())
-                .and_then(|r| r.map_err(|e| crate::db_text(&e)));
+                .and_then(|r| r.map_err(|e| error_message(&e)));
             let pending_close = this
                 .update(cx, |this, cx| this.apply_page(result, cx))
                 .unwrap_or(false);
@@ -1027,12 +1027,10 @@ impl TableViewer {
             // unless the page is being left.
             self.add_after_commit = false;
             if std::mem::take(&mut self.reload_after_commit) {
-                self.hidden_revert = None;
+                self.hidden_after_commit = None;
                 self.reload(true, cx);
-            } else if let Some(old) = self.hidden_revert.take()
-                && !self.reproject(cx)
-            {
-                self.hidden = old;
+            } else if let Some(next) = self.hidden_after_commit.take() {
+                self.publish_hidden(next, cx);
             }
             return;
         }
@@ -1046,7 +1044,7 @@ impl TableViewer {
             let result = job
                 .await
                 .map_err(|e| e.to_string())
-                .and_then(|r| r.map_err(|e| crate::db_text(&e)));
+                .and_then(|r| r.map_err(|e| error_message(&e)));
             let _ = this.update_in(cx, |this, window, cx| {
                 this.set_busy(false, cx);
                 match result {
@@ -1062,18 +1060,22 @@ impl TableViewer {
                             this.close_now(window, cx);
                             return;
                         }
-                        // Hiding a column while dirty still reloads so the projection matches.
-                        let reproject = this.hidden_revert.take().is_some();
+                        let hidden = this.hidden_after_commit.take();
+                        let reproject = hidden.is_some();
                         let leaving = std::mem::take(&mut this.reload_after_commit);
                         let sync = !cx.has_global::<Settings>() || Settings::global(cx).sync_record;
-                        // Without sync, rows whose stored values only the server knows still reload
+                        // Accept the completed write before any projection or reload. A failed
+                        // SELECT must not leave this batch available for a second Apply.
                         let unknown = this.grid.read(cx).model(cx).commit_needs_reload();
+                        this.grid.update(cx, |g, cx| {
+                            g.update_model(cx, |m| m.accept_committed());
+                        });
+                        if let Some(next) = hidden {
+                            this.publish_hidden(next, cx);
+                        }
                         if sync || reproject || leaving || unknown {
                             this.reload(true, cx);
                         } else {
-                            this.grid.update(cx, |g, cx| {
-                                g.update_model(cx, |m| m.accept_committed());
-                            });
                             this.form_for = None;
                             if std::mem::take(&mut this.add_after_commit) {
                                 this.insert_row(cx);
@@ -1084,9 +1086,7 @@ impl TableViewer {
                         this.add_after_commit = false;
                         this.reload_after_commit = false;
                         this.close_after_commit = false;
-                        if let Some(old) = this.hidden_revert.take() {
-                            this.hidden = old;
-                        }
+                        this.hidden_after_commit = None;
                         this.status = e.clone().into();
                         window.open_alert_dialog(cx, move |alert, _, _| {
                             alert
@@ -1119,7 +1119,7 @@ impl TableViewer {
             let result = job
                 .await
                 .map_err(|e| e.to_string())
-                .and_then(|r| r.map_err(|e| crate::db_text(&e)));
+                .and_then(|r| r.map_err(|e| error_message(&e)));
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(_) => after(this, cx),
@@ -1266,19 +1266,30 @@ impl TableViewer {
         }
     }
 
-    fn reproject(&mut self, cx: &mut Context<Self>) -> bool {
-        let hidden = self.hidden.clone();
-        let ok = self
+    fn reproject(&mut self, cx: &mut Context<Self>) {
+        if !self
             .grid
-            .update(cx, |g, cx| g.set_hidden_columns(&hidden, cx));
-        if !ok {
-            return false;
+            .update(cx, |g, cx| g.set_hidden_columns(&self.hidden, cx))
+        {
+            return;
         }
         self.form_for = None;
         // The focused cell may keep its coordinates on new rows; the next `render` reloads the
         // cell editor through `sync_editor`
         self.editor_cell = None;
-        true
+    }
+
+    /// The menu and display change together only after the grid accepts the projection.
+    fn publish_hidden(&mut self, next: HashSet<String>, cx: &mut Context<Self>) {
+        if self
+            .grid
+            .update(cx, |g, cx| g.set_hidden_columns(&next, cx))
+        {
+            self.hidden = next;
+            self.form_for = None;
+            self.editor_cell = None;
+            cx.notify();
+        }
     }
 
     fn insert_row(&mut self, cx: &mut Context<Self>) {
@@ -1292,6 +1303,11 @@ impl TableViewer {
     }
 
     fn toggle_column(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        self.grid.update(cx, |g, cx| g.commit_edit(window, cx));
+        self.flush_form(cx);
         let visible = self
             .grid
             .read(cx)
@@ -1308,17 +1324,10 @@ impl TableViewer {
             next.insert(name);
         }
         if self.grid.read(cx).model(cx).has_changes() {
-            // A commit in flight would leave the new set without its reprojection
-            if self.busy {
-                return;
-            }
-            self.hidden_revert = Some(std::mem::replace(&mut self.hidden, next));
+            self.hidden_after_commit = Some(next);
             self.apply_changes(false, window, cx);
         } else {
-            let previous = std::mem::replace(&mut self.hidden, next);
-            if !self.reproject(cx) {
-                self.hidden = previous;
-            }
+            self.publish_hidden(next, cx);
         }
     }
 
@@ -2128,5 +2137,106 @@ mod ownership_tests {
                 vec![Some("3".into()), Some("c".into())]
             ]
         );
+
+        // Keep a rejected hide out of the menu while its commit is running and after failure.
+        sql(
+            &file,
+            "CREATE TRIGGER reject_update BEFORE UPDATE ON t BEGIN SELECT RAISE(ABORT, 'reject pending edit'); END",
+        );
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                v.grid.update(cx, |g, cx| {
+                    g.update_model(cx, |m| {
+                        m.discard();
+                        m.set_value(0, 1, Some("pending".into()));
+                    });
+                });
+                v.toggle_column("id".into(), window, cx);
+                assert!(v.busy);
+                assert!(!v.hidden.contains("id"));
+                assert_eq!(v.grid.read(cx).model(cx).columns.len(), 2);
+                assert_eq!(
+                    v.grid.read(cx).model(cx).value(0, 1),
+                    Some(&Some("pending".into()))
+                );
+                // A second request during the same write must leave the candidate unchanged.
+                v.toggle_column("name".into(), window, cx);
+                assert_eq!(v.hidden_after_commit.as_ref(), Some(&["id".into()].into()));
+            });
+        })
+        .unwrap();
+        wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
+        cx.update(|cx| {
+            let v = viewer.read(cx);
+            assert!(!v.hidden.contains("id"));
+            assert!(v.hidden_after_commit.is_none());
+            let model = v.grid.read(cx).model(cx);
+            assert_eq!(model.columns.len(), 2);
+            assert_eq!(model.value(0, 1), Some(&Some("pending".into())));
+            assert!(model.has_changes());
+        });
+        assert_eq!(
+            sql(&file, "SELECT name FROM t WHERE id = 1"),
+            [vec![Some("z".into())]]
+        );
+
+        // Explicit recovery replaces the physical session, preserving the local row draft.
+        let previous_session = cx.update(|cx| viewer.read(cx).session.clone().unwrap());
+        cx.update_window(handle, |_, window, cx| window.close_dialog(cx))
+            .unwrap();
+        cx.update(|cx| {
+            Sessions::global(cx).update(cx, |sessions, cx| {
+                sessions.close_for_reopen(&id, cx);
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let v = viewer.read(cx);
+            assert!(v.session.is_none());
+            assert_eq!(
+                v.grid.read(cx).model(cx).value(0, 1),
+                Some(&Some("pending".into()))
+            );
+            assert!(v.grid.read(cx).model(cx).has_changes());
+            assert!(!v.hidden.contains("id"));
+        });
+        cx.update(|cx| {
+            Sessions::global(cx).update(cx, |sessions, cx| {
+                sessions.open(id.clone(), Secrets::default(), cx);
+            })
+        });
+        wait(cx, |cx| {
+            cx.update(|cx| {
+                Sessions::global(cx).read(cx).state(&id).is_open()
+                    && viewer.read(cx).session.is_some()
+                    && !viewer.read(cx).busy
+            })
+        });
+        cx.update(|cx| {
+            let v = viewer.read(cx);
+            assert!(!Arc::ptr_eq(v.session.as_ref().unwrap(), &previous_session));
+            let model = v.grid.read(cx).model(cx);
+            assert_eq!(model.columns.len(), 2);
+            assert_eq!(model.row_count(), 2);
+            assert_eq!(model.value(0, 1), Some(&Some("pending".into())));
+            assert!(model.has_changes());
+            assert!(!v.hidden.contains("id"));
+        });
+        assert_eq!(
+            sql(&file, "SELECT name FROM t WHERE id = 1"),
+            [vec![Some("z".into())]]
+        );
+        // Once the user verifies and explicitly applies the draft, it uses the new session.
+        sql(&file, "DROP TRIGGER reject_update");
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| v.apply_changes(false, window, cx));
+        })
+        .unwrap();
+        wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
+        assert_eq!(
+            sql(&file, "SELECT name FROM t WHERE id = 1"),
+            [vec![Some("pending".into())]]
+        );
+        cx.update(|cx| assert!(!viewer.read(cx).grid.read(cx).model(cx).has_changes()));
     }
 }

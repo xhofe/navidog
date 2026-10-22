@@ -195,6 +195,9 @@ query:
   discard:
     en: Discard Changes
     zh-CN: 放弃更改
+  pending_result_changes:
+    en: Commit or discard the result changes before sorting or refreshing.
+    zh-CN: 请先提交或放弃结果中的更改，再排序或刷新。
   commit_failed:
     en: The changes could not be saved.
     zh-CN: 无法保存更改。
