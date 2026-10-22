@@ -22,6 +22,8 @@ pub struct DbError {
     /// The physical session is dead. Ordinary SQL must never be replayed automatically;
     /// only an explicitly stateless read can opt in to recovery on a fresh session.
     pub disconnected: bool,
+    /// The statement may have reached the server; the client did not see how it ended.
+    pub outcome_unknown: bool,
 }
 
 impl std::fmt::Display for DbError {
@@ -39,6 +41,7 @@ impl DbError {
             code: None,
             message: message.into(),
             disconnected: false,
+            outcome_unknown: false,
         }
     }
 
@@ -47,6 +50,7 @@ impl DbError {
             code: Some(code.to_string()),
             message: message.into(),
             disconnected: false,
+            outcome_unknown: false,
         }
     }
 }

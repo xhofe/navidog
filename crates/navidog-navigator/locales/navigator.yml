@@ -1,8 +1,5 @@
 _version: 2
 nav:
-  save_failed:
-    en: "Connection settings could not be saved: %{detail}"
-    zh-CN: "无法保存连接设置：%{detail}"
   search:
     en: Search
     zh-CN: 搜索

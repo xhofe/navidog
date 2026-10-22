@@ -174,11 +174,11 @@ impl AskPassword {
                 }
             }
             let store = ConnectionStore::global(cx);
-            if let Err(e) = store.update(cx, |s, cx| s.upsert(conn, &to_save, cx)) {
-                self.secrets = secrets;
-                self.error = Some(crate::store_error_message(&e).into());
-                cx.notify();
-                return;
+            if store
+                .update(cx, |s, cx| s.upsert(conn, &to_save, cx))
+                .is_err()
+            {
+                window.push_notification(t!("conn.password_not_saved").to_string(), cx);
             }
         }
         window.close_dialog(cx);

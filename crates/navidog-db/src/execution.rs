@@ -32,11 +32,7 @@ impl RecoveryState {
 
 pub(crate) fn interrupted(mut error: DbError, outcome_unknown: bool) -> DbError {
     error.disconnected = true;
-    error.message.push_str(if outcome_unknown {
-        ". The execution outcome may be unknown. Reopen the connection before continuing."
-    } else {
-        ". Reopen the connection before continuing; its previous session state cannot be restored."
-    });
+    error.outcome_unknown = outcome_unknown;
     error
 }
 
@@ -125,6 +121,7 @@ mod tests {
         let error = interrupted(DbError::coded("08006", "connection lost"), true);
         assert_eq!(error.code.as_deref(), Some("08006"));
         assert!(error.disconnected);
-        assert!(error.message.contains("outcome may be unknown"));
+        assert!(error.outcome_unknown);
+        assert_eq!(error.message, "connection lost");
     }
 }

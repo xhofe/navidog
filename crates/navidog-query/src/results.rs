@@ -21,7 +21,7 @@ use gpui_kit::{
 use navidog_core::object::Scope;
 use navidog_core::settings::{ResultsPosition, Settings, ShowAfterRun};
 use navidog_db::dialect::{ChangeSet, Dialect, RowKey, Values, Writes};
-use navidog_db::sessions::{Sessions, run_on};
+use navidog_db::sessions::{Sessions, prepare_database, run_on};
 use navidog_db::{Column, ResultSet};
 use navidog_grid::commit::{Commit, apply};
 use navidog_grid::{Cell, GridColumn, GridEvent, GridTarget, ResultGrid};
@@ -453,6 +453,15 @@ fn grid_data(set: &ResultSet) -> (Vec<GridColumn>, Vec<Vec<Cell>>) {
 }
 
 /// One statement on the messages page (31 §4.3).
+pub(crate) fn db_text(e: &navidog_db::DbError) -> String {
+    navidog_ui::db_error_text(
+        e.code.as_deref(),
+        &e.message,
+        e.disconnected,
+        e.outcome_unknown,
+    )
+}
+
 pub(crate) fn message_block(
     sql: &str,
     result: &navidog_db::DbResult<Vec<ResultSet>>,
@@ -476,7 +485,7 @@ pub(crate) fn message_block(
                 _ => out.push_str("> OK\n"),
             }
         }
-        Err(e) => out.push_str(&format!("> {e}\n")),
+        Err(e) => out.push_str(&format!("> {}\n", db_text(e))),
     }
     out.push_str(&format!("> {}: {}\n\n", t!("query.time"), secs(elapsed)));
     out
@@ -489,7 +498,7 @@ fn summary_message(result: &navidog_db::DbResult<Vec<ResultSet>>) -> String {
             format!("{}: {n}", t!("query.affected_rows"))
         }
         Ok(_) => "OK".into(),
-        Err(e) => e.to_string(),
+        Err(e) => db_text(e),
     }
 }
 
@@ -781,6 +790,11 @@ impl ResultView {
     }
 
     #[cfg(test)]
+    pub(crate) fn status_text(&self) -> &str {
+        &self.status
+    }
+
+    #[cfg(test)]
     pub(crate) fn rows(&self, cx: &App) -> Vec<Vec<Option<String>>> {
         let model = self.grid.read(cx).model(cx);
         (0..model.row_count())
@@ -869,7 +883,14 @@ impl ResultView {
         match e {
             GridEvent::SortChanged(sort) => {
                 if self.grid.read(cx).model(cx).has_changes() {
+                    self.grid.update(cx, |g, cx| g.revert_header_sort(cx));
+                    self.status = t!("query.sort_blocked").into();
+                    cx.notify();
                     return;
+                }
+                let hint = t!("query.sort_blocked").to_string();
+                if self.status.as_ref() == hint {
+                    self.status = SharedString::default();
                 }
                 if let Some((name, asc)) = sort
                     && let Some(col) = self
@@ -880,8 +901,10 @@ impl ResultView {
                         .iter()
                         .position(|c| c.name == *name)
                 {
-                    self.grid
-                        .update(cx, |g, cx| g.update_model(cx, |m| m.sort_rows(col, *asc)));
+                    self.grid.update(cx, |g, cx| {
+                        g.update_model(cx, |m| m.sort_rows(col, *asc));
+                        g.accept_header_sort(cx);
+                    });
                 }
             }
             GridEvent::CommitRequested => self.commit(window, cx),
@@ -909,12 +932,19 @@ impl ResultView {
         }
         self.status = statements.join(";\n").into();
         let commit = Commit::new(edit.dialect, statements);
-        // On the connection's metadata session, outside any transaction opened in the editor
-        // (31 §4.2, a recorded deviation)
-        let Some(job) = Sessions::global(cx).read(cx).run_rel(
+        let database = edit.scope.database.clone();
+        let dialect = edit.dialect;
+        // On its own session, outside any transaction opened in the editor
+        // (31 §4.2, a recorded deviation). The shared metadata session stays recoverable.
+        let Some(job) = Sessions::global(cx).read(cx).run_once(
             &edit.scope.connection,
-            Some(&edit.scope.database),
-            move |rel| Box::pin(apply(rel, commit, false, false)),
+            Some(&database.clone()),
+            move |rel| {
+                Box::pin(async move {
+                    prepare_database(rel, dialect, &database).await?;
+                    apply(rel, commit, false, false).await
+                })
+            },
         ) else {
             return;
         };
@@ -923,7 +953,7 @@ impl ResultView {
             let result = job
                 .await
                 .map_err(|e| e.to_string())
-                .and_then(|r| r.map_err(|e| e.to_string()));
+                .and_then(|r| r.map_err(|e| db_text(&e)));
             let _ = this.update_in(cx, |this, window, cx| {
                 this.set_busy(false, cx);
                 match result {
@@ -1050,7 +1080,7 @@ impl ResultView {
                             this.grid.update(cx, |g, cx| g.set_data(columns, rows, cx));
                         }
                     }
-                    Err(error) => this.status = error.to_string().into(),
+                    Err(error) => this.status = db_text(&error).into(),
                 }
                 cx.notify();
             });

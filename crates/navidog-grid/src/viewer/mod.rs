@@ -326,7 +326,7 @@ impl BasePanel for TableViewer {
                             let result = job
                                 .await
                                 .map_err(|e| e.to_string())
-                                .and_then(|r| r.map_err(|e| e.to_string()));
+                                .and_then(|r| r.map_err(|e| crate::db_text(&e)));
                             close_session(session);
                             let Err(e) = result else { return };
                             tracing::warn!("commit on tab close failed: {e}");
@@ -718,7 +718,7 @@ impl TableViewer {
                 Ok(Ok(s)) => s,
                 Ok(Err(e)) => {
                     return this
-                        .update(cx, |t, cx| t.fail(e.to_string(), cx))
+                        .update(cx, |t, cx| t.fail(crate::db_text(&e), cx))
                         .unwrap_or(());
                 }
                 Err(e) => {
@@ -771,7 +771,7 @@ impl TableViewer {
                     )
                 });
             }
-            Ok(Err(e)) => self.status = e.to_string().into(),
+            Ok(Err(e)) => self.status = crate::db_text(&e).into(),
             Err(e) => self.status = e.to_string().into(),
         }
         self.session = Some(shared);
@@ -895,7 +895,7 @@ impl TableViewer {
             let result = page
                 .await
                 .map_err(|e| e.to_string())
-                .and_then(|r| r.map_err(|e| e.to_string()));
+                .and_then(|r| r.map_err(|e| crate::db_text(&e)));
             let pending_close = this
                 .update(cx, |this, cx| this.apply_page(result, cx))
                 .unwrap_or(false);
@@ -1029,8 +1029,10 @@ impl TableViewer {
             if std::mem::take(&mut self.reload_after_commit) {
                 self.hidden_revert = None;
                 self.reload(true, cx);
-            } else if self.hidden_revert.take().is_some() {
-                self.reproject(cx);
+            } else if let Some(old) = self.hidden_revert.take()
+                && !self.reproject(cx)
+            {
+                self.hidden = old;
             }
             return;
         }
@@ -1044,7 +1046,7 @@ impl TableViewer {
             let result = job
                 .await
                 .map_err(|e| e.to_string())
-                .and_then(|r| r.map_err(|e| e.to_string()));
+                .and_then(|r| r.map_err(|e| crate::db_text(&e)));
             let _ = this.update_in(cx, |this, window, cx| {
                 this.set_busy(false, cx);
                 match result {
@@ -1117,7 +1119,7 @@ impl TableViewer {
             let result = job
                 .await
                 .map_err(|e| e.to_string())
-                .and_then(|r| r.map_err(|e| e.to_string()));
+                .and_then(|r| r.map_err(|e| crate::db_text(&e)));
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(_) => after(this, cx),
@@ -1264,14 +1266,19 @@ impl TableViewer {
         }
     }
 
-    fn reproject(&mut self, cx: &mut Context<Self>) {
-        self.grid.update(cx, |g, cx| {
-            g.set_hidden_columns(&self.hidden, cx);
-        });
+    fn reproject(&mut self, cx: &mut Context<Self>) -> bool {
+        let hidden = self.hidden.clone();
+        let ok = self
+            .grid
+            .update(cx, |g, cx| g.set_hidden_columns(&hidden, cx));
+        if !ok {
+            return false;
+        }
         self.form_for = None;
         // The focused cell may keep its coordinates on new rows; the next `render` reloads the
         // cell editor through `sync_editor`
         self.editor_cell = None;
+        true
     }
 
     fn insert_row(&mut self, cx: &mut Context<Self>) {
@@ -1308,8 +1315,10 @@ impl TableViewer {
             self.hidden_revert = Some(std::mem::replace(&mut self.hidden, next));
             self.apply_changes(false, window, cx);
         } else {
-            self.hidden = next;
-            self.reproject(cx);
+            let previous = std::mem::replace(&mut self.hidden, next);
+            if !self.reproject(cx) {
+                self.hidden = previous;
+            }
         }
     }
 

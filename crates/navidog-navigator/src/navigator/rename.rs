@@ -2,6 +2,8 @@
 
 use super::*;
 
+use navidog_core::store::error_message;
+
 impl NavigatorPanel {
     pub(crate) fn new_group(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let parent = match Workspace::global(cx).read(cx).selection() {
@@ -14,7 +16,7 @@ impl NavigatorPanel {
         let id = match result {
             Ok(id) => id,
             Err(error) => {
-                window.push_notification(t!("nav.save_failed", detail = error).to_string(), cx);
+                window.push_notification(error_message(&error), cx);
                 return;
             }
         };
@@ -150,7 +152,7 @@ impl NavigatorPanel {
                 let result =
                     ConnectionStore::global(cx).update(cx, |s, cx| s.rename_group(&g, name, cx));
                 if let Err(error) = result {
-                    window.push_notification(t!("nav.save_failed", detail = error).to_string(), cx);
+                    window.push_notification(error_message(&error), cx);
                     r.input.update(cx, |input, cx| input.focus(window, cx));
                     self.renaming = Some(r);
                     self.refresh_rows(cx);

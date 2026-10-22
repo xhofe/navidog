@@ -1528,3 +1528,158 @@ fn live_editor_runs_selection_current_errors_and_stop(cx: &mut TestAppContext) {
         });
     }
 }
+
+#[gpui_kit::test]
+fn a_dirty_result_keeps_its_sort_arrow(cx: &mut TestAppContext) {
+    let (_home, home) = isolate_home("sort-arrow");
+    let file = home.join("sort.db");
+    sql(
+        &file,
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT); INSERT INTO t VALUES (1, 'a'), (2, 'c'), (3, 'b')",
+    );
+    cx.executor().allow_parking();
+    let id = cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_core::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_db::init(cx);
+        navidog_grid::init(cx);
+        crate::init(cx);
+        Settings::update(cx, |s| s.sync_record = false);
+        ConnectionStore::global(cx).update(cx, |s, cx| {
+            s.set_key(Key::random());
+            let mut connection = Connection::new("sqlite");
+            connection.name = "sort".into();
+            connection.general.file = Some(file.to_string_lossy().into_owned());
+            connection.general.database = Some("main".into());
+            let id = connection.id.clone();
+            s.upsert(connection, &[], cx).unwrap();
+            id
+        })
+    });
+    cx.update(|cx| {
+        Sessions::global(cx).update(cx, |s, cx| s.open(id.clone(), Secrets::default(), cx))
+    });
+    wait(cx, "the sort connection", |cx| {
+        cx.update(|cx| Sessions::global(cx).read(cx).state(&id).is_open())
+    });
+    let (handle, editor) = cx.update(|cx| {
+        let mut editor = None;
+        // raw-px: tall enough that the result header is in the frame
+        let test_size = size(gpui_kit::px(1000.), gpui_kit::px(800.));
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(gpui_kit::Bounds {
+                origin: Default::default(),
+                size: test_size,
+            })),
+            ..Default::default()
+        };
+        let handle = gpui_kit::open_window(options, cx, |window, cx| {
+            let view = QueryEditor::new(
+                QuerySource::Untitled(1),
+                Target {
+                    connection: Some(id.clone()),
+                    database: Some("main".into()),
+                    schema: None,
+                },
+                "SELECT id, name FROM t ORDER BY id".into(),
+                window,
+                cx,
+            );
+            editor = Some(view.clone());
+            cx.new(|_| Host { editor: view })
+        })
+        .unwrap();
+        (handle.0, editor.unwrap())
+    });
+    run(cx, handle, &editor, RunKind::All);
+    idle(cx, &editor);
+    let view = cx.update(|cx| {
+        editor.update(cx, |e, _| {
+            let Body::Grid(view) = &e.results.tabs[0].body else {
+                panic!("grid result")
+            };
+            view.clone()
+        })
+    });
+    wait(cx, "editable sort result", |cx| {
+        cx.update(|cx| view.read(cx).editable())
+    });
+    let click_sort = |cx: &mut TestAppContext, col: u64| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            window.click(
+                gpui_kit::ElementId::NamedInteger("icon-sort".into(), col),
+                cx,
+            );
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    // Column 0 is the row-number marker. 2 is `name`; the first click sorts descending.
+    click_sort(cx, 2);
+    let sorted = [
+        vec![Some("2".into()), Some("c".into())],
+        vec![Some("3".into()), Some("b".into())],
+        vec![Some("1".into()), Some("a".into())],
+    ];
+    cx.update(|cx| {
+        assert_eq!(view.read(cx).rows(cx), sorted);
+        let grid = view.read(cx).grid.clone();
+        assert_eq!(
+            grid.read(cx)
+                .header_sort(cx)
+                .map(|(name, asc)| (name.to_string(), asc)),
+            Some(("name".into(), false))
+        );
+        grid.update(cx, |g, cx| {
+            g.update_model(cx, |m| m.set_value(0, 1, Some("z".into())))
+        });
+    });
+    click_sort(cx, 1);
+    cx.update(|cx| {
+        assert_eq!(
+            view.read(cx).rows(cx),
+            [
+                vec![Some("2".into()), Some("z".into())],
+                vec![Some("3".into()), Some("b".into())],
+                vec![Some("1".into()), Some("a".into())],
+            ]
+        );
+        assert_eq!(
+            view.read(cx).status_text(),
+            "Commit or discard changes before sorting."
+        );
+        let grid = view.read(cx).grid.clone();
+        assert_eq!(
+            grid.read(cx)
+                .header_sort(cx)
+                .map(|(name, asc)| (name.to_string(), asc)),
+            Some(("name".into(), false))
+        );
+        grid.update(cx, |g, cx| {
+            g.update_model(cx, |m| {
+                m.discard();
+                m.insert_row();
+            })
+        });
+    });
+    click_sort(cx, 1);
+    cx.update(|cx| {
+        let mut expected = sorted.to_vec();
+        expected.push(vec![None, None]);
+        assert_eq!(view.read(cx).rows(cx), expected);
+        assert_eq!(
+            view.read(cx).status_text(),
+            "Commit or discard changes before sorting."
+        );
+        let grid = view.read(cx).grid.clone();
+        assert_eq!(
+            grid.read(cx)
+                .header_sort(cx)
+                .map(|(name, asc)| (name.to_string(), asc)),
+            Some(("name".into(), false))
+        );
+    });
+}

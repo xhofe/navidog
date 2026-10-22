@@ -667,6 +667,59 @@ fn reconnects_after_the_server_kills_the_session() {
     });
 }
 
+/// An application write on its own session must not pin the metadata session, and recovering
+/// that session must not submit the write again.
+#[test]
+fn a_separate_write_leaves_the_metadata_session_recoverable() {
+    if !live() {
+        return;
+    }
+    runtime::runtime().block_on(async {
+        for (driver, mut params) in network_drivers() {
+            if driver.info().id.as_ref() != "postgres" {
+                params.database = Some("sakila".into());
+            }
+            let mut metadata = connect(driver.clone(), params.clone()).await.unwrap();
+            let mut writer = connect(driver.clone(), params.clone()).await.unwrap();
+            let dialect = metadata.relational().unwrap().dialect();
+            let table = format!("navidog_meta_{}_{}", params.port, std::process::id());
+            let quoted = dialect.quote_ident(&table);
+            metadata
+                .relational()
+                .unwrap()
+                .execute_read("SELECT 1")
+                .await
+                .unwrap();
+            let id = metadata.session_id().unwrap();
+            writer
+                .relational()
+                .unwrap()
+                .execute(&format!(
+                    "DROP TABLE IF EXISTS {quoted}; CREATE TABLE {quoted} (n INTEGER); INSERT INTO {quoted} VALUES (1)"
+                ))
+                .await
+                .unwrap();
+            kill_backend(writer.as_mut(), dialect, id).await;
+            writer.close().await.unwrap();
+            let sets = metadata
+                .relational()
+                .unwrap()
+                .execute_read(&format!("SELECT COUNT(*) FROM {quoted}"))
+                .await
+                .unwrap();
+            assert_eq!(sets[0].rows, [vec![Some("1".to_string())]], "{table}");
+            assert_ne!(metadata.session_id(), Some(id), "{table}");
+            metadata
+                .relational()
+                .unwrap()
+                .execute(&format!("DROP TABLE {quoted}"))
+                .await
+                .unwrap();
+            metadata.close().await.unwrap();
+        }
+    });
+}
+
 #[test]
 fn ssh_tunnel_to_mysql_and_postgres() {
     if !live() {
@@ -807,7 +860,8 @@ fn uncertain_writes_are_never_replayed() {
                 assert!(promptly, "a disconnected write was replayed or stalled");
                 let error = result.unwrap_err();
                 assert!(error.disconnected, "{error}");
-                assert!(error.message.contains("outcome may be unknown"), "{error}");
+                assert!(error.outcome_unknown, "{error}");
+                assert!(!error.message.contains("outcome may be unknown"), "{error}");
                 assert!(
                     same_session,
                     "a write silently moved to a different physical session"
@@ -842,10 +896,7 @@ fn transaction_loss_cannot_reconnect_through_metadata_or_ping() {
                 .execute_read("SELECT 1")
                 .await
                 .unwrap_err();
-            assert!(
-                read.disconnected && read.message.contains("Reopen"),
-                "{read}"
-            );
+            assert!(read.disconnected && !read.outcome_unknown, "{read}");
             assert!(session.ping().await.is_err());
             assert!(
                 session

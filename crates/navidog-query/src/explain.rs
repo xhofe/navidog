@@ -392,7 +392,7 @@ impl QueryEditor {
                 self.results.note(outcome, window, cx);
             }
             Err(e) => {
-                self.mark_error(planned.range.clone(), &e.to_string(), cx);
+                self.mark_error(planned.range.clone(), &crate::results::db_text(&e), cx);
                 let outcome = Outcome {
                     planned,
                     result: Err(e),

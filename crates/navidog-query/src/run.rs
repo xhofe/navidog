@@ -511,7 +511,11 @@ impl QueryEditor {
         cx: &mut Context<Self>,
     ) {
         if let Err(e) = &outcome.result {
-            self.mark_error(outcome.planned.range.clone(), &e.to_string(), cx);
+            self.mark_error(
+                outcome.planned.range.clone(),
+                &crate::results::db_text(e),
+                cx,
+            );
         }
         let editor = cx.entity().downgrade();
         info.at = outcome.started;

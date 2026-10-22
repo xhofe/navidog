@@ -9,6 +9,25 @@ use serde_json::{Map, Value};
 use crate::connection::{Connection, ConnectionId, Group, GroupId, SecretField, new_group_id};
 use crate::crypto::{self, CryptoError, CryptoMode, Key};
 use crate::paths;
+use rust_i18n::t;
+
+/// A store or key error in the interface language. `StoreError`'s own text stays English, for logs.
+pub fn error_message(e: &StoreError) -> String {
+    match e {
+        StoreError::Locked => t!("core.store_locked").to_string(),
+        StoreError::NotFound => t!("core.not_found").to_string(),
+        StoreError::Io(detail) => t!("core.save_failed", detail = detail).to_string(),
+        StoreError::Crypto(CryptoError::Decrypt | CryptoError::Format) => {
+            t!("core.secret_unreadable").to_string()
+        }
+        StoreError::Crypto(CryptoError::Keychain(detail) | CryptoError::Io(detail)) => {
+            t!("core.keychain_failed", detail = detail).to_string()
+        }
+        StoreError::Crypto(CryptoError::Kdf(detail)) => {
+            t!("core.kdf_failed", detail = detail).to_string()
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConnectionsFile {
@@ -163,6 +182,8 @@ impl ConnectionsFile {
 pub enum StoreError {
     #[error("a master password is set; unlock first")]
     Locked,
+    #[error("connection or group was not found")]
+    NotFound,
     #[error(transparent)]
     Crypto(#[from] CryptoError),
     #[error("cannot save connection settings: {0}")]
@@ -357,11 +378,11 @@ impl ConnectionStore {
         cx: &mut Context<Self>,
     ) -> Result<(), StoreError> {
         let mut candidate = self.file.clone();
-        if let Some(conn) = candidate.connections.iter_mut().find(|c| c.id == id) {
-            f(conn);
-            self.commit(candidate, None, cx)?;
-        }
-        Ok(())
+        let Some(conn) = candidate.connections.iter_mut().find(|c| c.id == id) else {
+            return Err(StoreError::NotFound);
+        };
+        f(conn);
+        self.commit(candidate, None, cx)
     }
 
     /// Saves a multi-selection operation as a single candidate, with no partial changes on failure.
@@ -372,17 +393,21 @@ impl ConnectionStore {
         cx: &mut Context<Self>,
     ) -> Result<(), StoreError> {
         let mut candidate = self.file.clone();
-        let mut changed = false;
+        if ids
+            .iter()
+            .any(|id| !candidate.connections.iter().any(|c| &c.id == id))
+        {
+            return Err(StoreError::NotFound);
+        }
+        if ids.is_empty() {
+            return Ok(());
+        }
         for conn in &mut candidate.connections {
             if ids.contains(&conn.id) {
                 f(conn);
-                changed = true;
             }
         }
-        if changed {
-            self.commit(candidate, None, cx)?;
-        }
-        Ok(())
+        self.commit(candidate, None, cx)
     }
 
     pub fn add_group(
@@ -410,11 +435,11 @@ impl ConnectionStore {
         cx: &mut Context<Self>,
     ) -> Result<(), StoreError> {
         let mut candidate = self.file.clone();
-        if let Some(g) = candidate.groups.iter_mut().find(|g| g.id == id) {
-            g.name = name;
-            self.commit(candidate, None, cx)?;
-        }
-        Ok(())
+        let Some(g) = candidate.groups.iter_mut().find(|g| g.id == id) else {
+            return Err(StoreError::NotFound);
+        };
+        g.name = name;
+        self.commit(candidate, None, cx)
     }
 
     pub fn remove_group(&mut self, id: &str, cx: &mut Context<Self>) -> Result<(), StoreError> {
@@ -822,5 +847,65 @@ mod tests {
         file.remove_group("a");
         assert_eq!(file.connections[0].group, None);
         assert!(file.groups.is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn missing_targets_change_nothing(cx: &mut gpui_kit::TestAppContext) {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let fixture = StoreFixture::new();
+        let key = Key::random();
+        let conn = profiled_connection(&key);
+        let id = conn.id.clone();
+        let store = cx.new(|_| ConnectionStore::load(fixture.path.clone()));
+        let group = store.update(cx, |store, cx| {
+            store.set_key(key);
+            store.upsert(conn, &[], cx).unwrap();
+            store.add_group("original".into(), None, cx).unwrap()
+        });
+        let memory = cx.update(|cx| store.read(cx).file.clone());
+        let disk = std::fs::read(&fixture.path).unwrap();
+        let changes = Rc::new(Cell::new(0));
+        let seen = changes.clone();
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&store, move |_, _: &StoreEvent, _| {
+                seen.set(seen.get() + 1);
+            })
+        });
+        let called = Cell::new(false);
+        store.update(cx, |store, cx| {
+            assert!(matches!(
+                store.update("missing", |_| {}, cx),
+                Err(StoreError::NotFound)
+            ));
+            assert!(matches!(
+                store.update_many(
+                    &["missing".into(), id.clone()],
+                    |c| {
+                        called.set(true);
+                        c.name = "changed".into();
+                    },
+                    cx
+                ),
+                Err(StoreError::NotFound)
+            ));
+            assert!(matches!(
+                store.rename_group("missing", "renamed".into(), cx),
+                Err(StoreError::NotFound)
+            ));
+            assert!(store.update_many(&[], |_| {}, cx).is_ok());
+            assert!(store.rename_group(&group, "renamed".into(), cx).is_ok());
+        });
+        assert!(!called.get());
+        // The rejected calls publish nothing. The successful rename publishes once.
+        assert_eq!(changes.get(), 1);
+        let file = cx.update(|cx| store.read(cx).file.clone());
+        assert_eq!(file.connections, memory.connections);
+        assert_eq!(file.groups[0].name, "renamed");
+        let bytes = std::fs::read(&fixture.path).unwrap();
+        assert_ne!(bytes, disk);
+        assert!(std::str::from_utf8(&bytes).unwrap().contains("renamed"));
+        assert!(!std::str::from_utf8(&bytes).unwrap().contains("\"missing\""));
     }
 }

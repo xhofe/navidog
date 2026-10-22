@@ -9,13 +9,14 @@ pub mod profile;
 mod reload;
 mod secrets;
 
+pub use secrets::resolve;
+
 use std::sync::Arc;
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, InteractiveElement, SharedString, Window};
 use navidog_core::actions::*;
 use navidog_core::connection::SecretField;
-use navidog_core::crypto::CryptoError;
 use navidog_core::registry::{CommandInfo, CommandRegistry, Source};
 use navidog_core::store::{ConnectionStore, StoreError};
 use navidog_core::workspace::{Selection, Workspace};
@@ -285,19 +286,16 @@ fn confirm_delete_group(window: &mut Window, cx: &mut App) {
 
 /// A store or key error in the interface language. The errors' own text is English, for logs.
 pub fn store_error_message(e: &StoreError) -> String {
-    match e {
-        StoreError::Locked => t!("conn.store_locked").to_string(),
-        StoreError::Io(detail) => t!("conn.save_failed", detail = detail).to_string(),
-        StoreError::Crypto(CryptoError::Decrypt | CryptoError::Format) => {
-            t!("conn.secret_unreadable").to_string()
-        }
-        StoreError::Crypto(CryptoError::Keychain(detail) | CryptoError::Io(detail)) => {
-            t!("conn.keychain_failed", detail = detail).to_string()
-        }
-        StoreError::Crypto(CryptoError::Kdf(detail)) => {
-            t!("conn.kdf_failed", detail = detail).to_string()
-        }
-    }
+    navidog_core::store::error_message(e)
+}
+
+pub(crate) fn db_text(e: &navidog_db::DbError) -> String {
+    navidog_ui::db_error_text(
+        e.code.as_deref(),
+        &e.message,
+        e.disconnected,
+        e.outcome_unknown,
+    )
 }
 
 pub(crate) fn show_error(
