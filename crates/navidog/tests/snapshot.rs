@@ -15,13 +15,14 @@ mod macos {
 
     use gpui_kit::component::{Theme, ThemeMode, WindowExt as _};
     use gpui_kit::test::TestWindowExt as _;
-    use gpui_kit::{AppContext as _, Focusable as _, HeadlessAppContext};
+    use gpui_kit::{AppContext as _, Focusable as _, HeadlessAppContext, InputEvent as _};
     use navidog::main_window::MainWindow;
     use navidog::state::AppState;
     use navidog_core::actions::{NewConnection, NewConnectionOf, OpenObject};
     use navidog_core::connection::Connection;
     use navidog_core::crypto::Key;
     use navidog_core::object::{ObjectKind, ObjectRef, Scope};
+    use navidog_core::settings::Settings;
     use navidog_core::store::ConnectionStore;
     use navidog_core::workspace::{Selection, Workspace};
     use navidog_db::sessions::Sessions;
@@ -44,6 +45,7 @@ mod macos {
         );
         cx.update(|cx| {
             navidog::init(cx);
+            cx.set_reduce_motion(true);
             seed(cx);
         });
         let (handle, view) = cx
@@ -102,6 +104,60 @@ mod macos {
             cx.update_window(handle, |_, window, cx| window.close_all_dialogs(cx))
                 .unwrap();
         }
+
+        // Failed persistence keeps the editable connection form open with its entered values.
+        let original_connections =
+            cx.update(|cx| ConnectionStore::global(cx).read(cx).file().clone());
+        let original_bytes = std::fs::read(home.join("connections.json")).unwrap();
+        std::fs::create_dir(home.join("connections.tmp")).unwrap();
+        dispatch(
+            &mut cx,
+            Box::new(NewConnectionOf {
+                driver: "mysql".into(),
+            }),
+        );
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("conn-name", cx);
+            window.press("secondary-a", cx);
+            window.input("保存失败示例", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("ok", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window.try_find("conn-name").is_some(),
+                "failed save retains the form"
+            );
+            assert!(
+                ConnectionStore::global(cx).read(cx).file() == &original_connections,
+                "failed save retains the existing connections"
+            );
+        })
+        .unwrap();
+        assert!(
+            std::fs::read(home.join("connections.json")).unwrap() == original_bytes,
+            "failed save leaves the original configuration on disk"
+        );
+        for (mode, name) in [
+            (ThemeMode::Light, "connection-save-failed-light.png"),
+            (ThemeMode::Dark, "connection-save-failed-dark.png"),
+        ] {
+            cx.update(|cx| Theme::change(mode, None, cx));
+            shot(&mut cx, name);
+        }
+        std::fs::remove_dir(home.join("connections.tmp")).unwrap();
+        cx.update_window(handle, |_, window, cx| window.close_all_dialogs(cx))
+            .unwrap();
+        cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
 
         // M2: open the sample SQLite database, expand to objects, show the object list and editor tabs
         let lite = cx.update(|cx| {
@@ -210,6 +266,109 @@ mod macos {
         cx.update(|cx| Theme::change(ThemeMode::Dark, None, cx));
         shot(&mut cx, "viewer-wide-end-dark.png");
         cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
+
+        // Keep the last batch SQL visible instead of replacing it with a sync SELECT.
+        let record_settings = cx.update(|cx| {
+            let s = Settings::global(cx);
+            let saved = (s.sync_record, s.auto_begin_transaction);
+            Settings::update(cx, |s| {
+                s.sync_record = false;
+                s.auto_begin_transaction = false;
+            });
+            saved
+        });
+        cx.update_window(handle, |_, window, cx| {
+            // raw-px: return from the last column to the row markers before selecting.
+            let dx = gpui_kit::px(100000.);
+            window.scroll(
+                gpui_kit::ElementId::NamedInteger("row".into(), 0),
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(dx, gpui_kit::Pixels::ZERO)),
+                cx,
+            );
+        })
+        .unwrap();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click_at(
+                gpui_kit::ElementId::NamedInteger("row".into(), 0),
+                gpui_kit::point(
+                    navidog_ui::tokens::grid::ROW_NUMBER_WIDTH.to_pixels(window.rem_size()) / 2.,
+                    window.rem_size() / 2.,
+                ),
+                cx,
+            );
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.press("shift-down", cx))
+            .unwrap();
+        cx.run_until_parked();
+        for button in ["row-delete", "row-apply"] {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.click(button, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            cx.run_until_parked();
+            let empty = cx
+                .update_window(handle, |_, window, cx| {
+                    window.render_frame(cx);
+                    window
+                        .try_find(gpui_kit::ElementId::NamedInteger("row".into(), 0))
+                        .is_none()
+                })
+                .unwrap();
+            if empty {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "batch delete did not commit"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        shot(&mut cx, "viewer-batch-delete-narrow-light.png");
+        cx.update(|cx| Theme::change(ThemeMode::Dark, None, cx));
+        shot(&mut cx, "viewer-batch-delete-narrow-dark.png");
+        cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
+        dispatch(&mut cx, Box::new(navidog::actions::ToggleInfoPane));
+        shot(&mut cx, "viewer-batch-delete-light.png");
+        cx.update(|cx| Theme::change(ThemeMode::Dark, None, cx));
+        shot(&mut cx, "viewer-batch-delete-dark.png");
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let button = window.find("show-sql").bounds();
+            window.dispatch_event(
+                gpui_kit::MouseMoveEvent {
+                    position: gpui_kit::point(
+                        button.right() + window.rem_size() / 2.,
+                        button.center().y,
+                    ),
+                    pressed_button: None,
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+        cx.advance_clock(std::time::Duration::from_secs(1));
+        cx.run_until_parked();
+        shot(&mut cx, "viewer-batch-delete-hover-dark.png");
+        cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
+        shot(&mut cx, "viewer-batch-delete-hover-light.png");
+        dispatch(&mut cx, Box::new(navidog::actions::ToggleInfoPane));
+        cx.update(|cx| {
+            Theme::change(ThemeMode::Light, None, cx);
+            Settings::update(cx, |s| {
+                s.sync_record = record_settings.0;
+                s.auto_begin_transaction = record_settings.1;
+            });
+        });
 
         // M3: a query editor with results, the explain plan, the console and the history log
         cx.update(|cx| {
@@ -833,7 +992,7 @@ mod macos {
         let store = ConnectionStore::global(cx);
         store.update(cx, |s, cx| {
             s.set_key(Key::random());
-            let group = s.add_group("生产环境".into(), None, cx);
+            let group = s.add_group("生产环境".into(), None, cx).unwrap();
             let mut my = Connection::new("mysql");
             my.name = "本地 MySQL".into();
             my.color = Some("blue".into());

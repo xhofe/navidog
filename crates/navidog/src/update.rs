@@ -1,11 +1,11 @@
 //! In-app update check and install.
 //!
-//! Stable builds read `latest.json` from the latest GitHub release. The
-//! pre-release channel (on by default for a nightly build) walks the release
-//! list and also offers the rolling `nightly` tag, compared by publish time.
-//! A download is installed only when its SHA-256 matches `latest.json`.
-//! Nightly reads that file from the `nightly` release, the same way a
-//! pre-release tag does. A missing file or an empty checksum is not installed.
+//! Both channels read `latest.json` from [`RELEASE_MIRROR`]. The file's
+//! `releases` list is every published release; the top-level fields stay this
+//! release's own version and assets. The stable channel skips pre-releases and
+//! the rolling `nightly` tag. Nightly is compared by publish time. A download
+//! is installed only when its SHA-256 matches the manifest. A missing file or
+//! an empty checksum is not installed.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -27,10 +27,20 @@ use rust_i18n::t;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-const MANIFEST_URL: &str = "https://github.com/xhofe/navidog/releases/latest/download/latest.json";
-const LATEST_API: &str = "https://api.github.com/repos/xhofe/navidog/releases/latest";
-const RELEASES_PAGE: &str = "https://github.com/xhofe/navidog/releases/latest";
-const RELEASE_LIST_API: &str = "https://api.github.com/repos/xhofe/navidog/releases?per_page=15";
+/// Release files. This mirror only serves the `xhofe` user.
+const RELEASE_MIRROR: &str = "https://gh.nn.ci";
+const REPO: &str = "xhofe/navidog";
+
+/// Nightly's manifest. Its `releases` list covers both channels.
+fn manifest_url() -> String {
+    format!("{RELEASE_MIRROR}/{REPO}/releases/download/nightly/latest.json")
+}
+
+/// Used when the nightly release does not exist yet.
+fn manifest_url_stable() -> String {
+    format!("{RELEASE_MIRROR}/{REPO}/releases/latest/download/latest.json")
+}
+
 const NIGHTLY_TAG: &str = "nightly";
 const MAX_DOWNLOAD: u64 = 512 * 1024 * 1024;
 const USER_AGENT: &str = concat!("navidog/", env!("CARGO_PKG_VERSION"));
@@ -107,10 +117,11 @@ pub(crate) enum Availability {
 }
 
 /// The release list either has nothing published, nothing newer, or one release to offer.
+#[derive(Debug)]
 enum Listed<'a> {
     Unpublished,
     Current,
-    Chosen(&'a GithubRelease),
+    Chosen(&'a UpdateRelease),
 }
 
 pub enum Delivery {
@@ -131,11 +142,36 @@ pub(crate) enum InstallError {
     Other(String),
 }
 
+/// `latest.json`. `releases` is the index; the other fields are this release.
+/// An older file has no `releases` and is treated as that one release.
 #[derive(Debug, Deserialize)]
 struct Manifest {
+    #[serde(default)]
     version: String,
     #[serde(default)]
-    notes: String,
+    tag: String,
+    #[serde(default, deserialize_with = "empty_if_null")]
+    body: String,
+    #[serde(default)]
+    assets: Vec<ManifestAsset>,
+    #[serde(default)]
+    releases: Vec<UpdateRelease>,
+}
+
+/// One entry of `latest.json`'s `releases`. `body` is null when there are no notes.
+#[derive(Debug, Deserialize)]
+struct UpdateRelease {
+    tag: String,
+    #[serde(default)]
+    version: String,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default, deserialize_with = "empty_if_null")]
+    published_at: String,
+    #[serde(default, deserialize_with = "empty_if_null")]
+    body: String,
     #[serde(default)]
     assets: Vec<ManifestAsset>,
 }
@@ -153,19 +189,26 @@ struct ManifestAsset {
     size: u64,
 }
 
-#[derive(Debug, Deserialize)]
-struct GithubRelease {
-    tag_name: String,
-    #[serde(default)]
-    html_url: String,
-    #[serde(default)]
-    body: String,
-    #[serde(default)]
-    prerelease: bool,
-    #[serde(default)]
-    draft: bool,
-    #[serde(default)]
-    published_at: String,
+fn empty_if_null<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// The browser page for a tag. The file mirror does not serve this page.
+fn release_page(tag: &str) -> String {
+    format!("https://github.com/{REPO}/releases/tag/{tag}")
+}
+
+/// Rewrite a GitHub release file for this repo onto the file mirror.
+/// Another host, including an address that is already mirrored, stays as it is.
+fn mirror_release_file(url: &str) -> String {
+    let github = format!("https://github.com/{REPO}/");
+    match url.strip_prefix(github.as_str()) {
+        Some(rest) => format!("{RELEASE_MIRROR}/{REPO}/{rest}"),
+        None => url.to_string(),
+    }
 }
 
 fn pick_asset_for(assets: &[ManifestAsset], os: &str, arch: &str) -> Option<UpdateAsset> {
@@ -181,47 +224,31 @@ fn pick_asset_for(assets: &[ManifestAsset], os: &str, arch: &str) -> Option<Upda
         .find(|a| a.kind == preferred)
         .or_else(|| here.find(|_| true))?;
     Some(UpdateAsset {
-        url: chosen.url.clone(),
+        url: mirror_release_file(&chosen.url),
         sha256: chosen.sha256.clone(),
         name: chosen.name.clone(),
         size: chosen.size,
     })
 }
 
-/// The asset for this machine from a release's `latest.json`. `None` when the
-/// file is missing or the asset has no checksum: those are not installed.
-/// A failure is logged; the dialog then offers the release page instead.
-fn release_manifest_asset(tag: &str) -> Option<UpdateAsset> {
-    let url = format!("https://github.com/xhofe/navidog/releases/download/{tag}/latest.json");
-    let text = match http_get(&url, Duration::from_secs(15), false) {
-        Ok(text) => text,
-        Err(err) => {
-            tracing::warn!(%tag, error = %err.detail, "update: could not read latest.json");
-            return None;
-        }
-    };
-    let manifest = match serde_json::from_str::<Manifest>(&text) {
-        Ok(manifest) => manifest,
-        Err(err) => {
-            tracing::warn!(%tag, error = %err, "update: latest.json is not a manifest");
-            return None;
-        }
-    };
+/// The installer for this machine. `None` when the release has none, or the
+/// checksum is empty: those are not installed. The dialog then offers the page.
+fn installer_for(release: &UpdateRelease) -> Option<UpdateAsset> {
     let Some(asset) = pick_asset_for(
-        &manifest.assets,
+        &release.assets,
         std::env::consts::OS,
         std::env::consts::ARCH,
     ) else {
         tracing::warn!(
-            %tag,
+            tag = %release.tag,
             os = std::env::consts::OS,
             arch = std::env::consts::ARCH,
-            "update: latest.json has no installer for this computer"
+            "update: no installer for this computer"
         );
         return None;
     };
     if asset.sha256.trim().is_empty() {
-        tracing::warn!(%tag, "update: installer has no checksum");
+        tracing::warn!(tag = %release.tag, "update: installer has no checksum");
         return None;
     }
     Some(asset)
@@ -247,7 +274,7 @@ pub(crate) fn version_label(version: &str, channel: &str, built_at: &str) -> Str
     }
 }
 
-/// A 404 from `/releases/latest` means GitHub has no published release to offer.
+/// A 404 from both index URLs means nothing has been published.
 /// Any other failure stays an error, with `detail` for the notification.
 fn missing_latest(status: Option<u16>, detail: &str) -> Result<Availability, String> {
     if status == Some(404) {
@@ -257,18 +284,34 @@ fn missing_latest(status: Option<u16>, detail: &str) -> Result<Availability, Str
     }
 }
 
-/// First non-draft release that is newer than this build. Drafts do not count as published.
-fn pick_release(releases: &[GithubRelease]) -> Listed<'_> {
+/// Newest published release that this build should offer.
+///
+/// Entries are ordered by `published_at`, newest first. Drafts do not count as
+/// published. Without `include_prerelease`, pre-releases and `nightly` are skipped.
+fn pick_release(releases: &[UpdateRelease], include_prerelease: bool) -> Listed<'_> {
+    let mut order: Vec<usize> = (0..releases.len()).collect();
+    order.sort_by(|&a, &b| releases[b].published_at.cmp(&releases[a].published_at));
     let mut published = false;
-    for release in releases.iter().filter(|release| !release.draft) {
+    for release in order.iter().map(|&index| &releases[index]) {
+        if release.draft {
+            continue;
+        }
+        if !include_prerelease && (release.prerelease || release.tag == NIGHTLY_TAG) {
+            continue;
+        }
         published = true;
-        if release.tag_name == NIGHTLY_TAG {
+        if release.tag == NIGHTLY_TAG {
             if nightly_is_newer(&release.published_at, BUILD_TIMESTAMP) {
                 return Listed::Chosen(release);
             }
             continue;
         }
-        if newer_version(&release.tag_name, env!("CARGO_PKG_VERSION")).is_some() {
+        let version = if release.version.is_empty() {
+            release.tag.as_str()
+        } else {
+            release.version.as_str()
+        };
+        if newer_version(version, env!("CARGO_PKG_VERSION")).is_some() {
             return Listed::Chosen(release);
         }
     }
@@ -279,124 +322,69 @@ fn pick_release(releases: &[GithubRelease]) -> Listed<'_> {
     }
 }
 
+fn offered_version(release: &UpdateRelease) -> String {
+    if release.tag == NIGHTLY_TAG {
+        let published = release.published_at.get(..10).unwrap_or(NIGHTLY_TAG);
+        return format!("{NIGHTLY_TAG} {published}");
+    }
+    let raw = if release.version.is_empty() {
+        release.tag.as_str()
+    } else {
+        release.version.as_str()
+    };
+    newer_version(raw, env!("CARGO_PKG_VERSION"))
+        .unwrap_or_else(|| raw.trim_start_matches('v').to_string())
+}
+
 /// Blocking. Run it off the UI thread.
 pub fn fetch_latest_release(include_prerelease: bool) -> Result<Availability, String> {
-    if include_prerelease {
-        match fetch_from_release_list() {
-            Ok(found) => return Ok(found),
-            Err(e) => tracing::debug!(error = %e, "update check: release list unavailable"),
-        }
-    }
-    match fetch_from_manifest() {
-        Ok(Some(info)) => return Ok(Availability::Available(info)),
-        Ok(None) => return Ok(Availability::Current),
-        Err(e) => tracing::debug!(error = %e, "update check: manifest unavailable"),
-    }
-    fetch_from_api()
-}
-
-fn fetch_from_manifest() -> Result<Option<UpdateInfo>, String> {
-    let manifest: Manifest = serde_json::from_str(
-        &http_get(MANIFEST_URL, Duration::from_secs(15), false).map_err(|err| err.detail)?,
-    )
-    .map_err(|e| e.to_string())?;
-    let Some(latest) = newer_version(&manifest.version, env!("CARGO_PKG_VERSION")) else {
-        return Ok(None);
-    };
-    let page_url = if manifest.notes.starts_with("http") {
-        manifest.notes.clone()
-    } else {
-        RELEASES_PAGE.to_string()
-    };
-    Ok(Some(UpdateInfo {
-        notes: release_notes_for(&latest),
-        version: latest,
-        current: current_label(),
-        page_url,
-        asset: pick_asset_for(
-            &manifest.assets,
-            std::env::consts::OS,
-            std::env::consts::ARCH,
-        ),
-    }))
-}
-
-fn release_notes_for(version: &str) -> String {
-    let Ok(text) = http_get(LATEST_API, Duration::from_secs(15), true) else {
-        return String::new();
-    };
-    let Ok(release) = serde_json::from_str::<GithubRelease>(&text) else {
-        return String::new();
-    };
-    if release.tag_name.trim_start_matches('v') == version {
-        release.body.trim().to_string()
-    } else {
-        String::new()
-    }
-}
-
-fn fetch_from_api() -> Result<Availability, String> {
-    let text = match http_get(LATEST_API, Duration::from_secs(15), true) {
+    let text = match read_updates() {
         Ok(text) => text,
         Err(err) => return missing_latest(err.status, &err.detail),
     };
-    let release: GithubRelease = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    if release.draft || release.prerelease {
-        return Ok(Availability::Current);
-    }
-    let Some(latest) = newer_version(&release.tag_name, env!("CARGO_PKG_VERSION")) else {
-        return Ok(Availability::Current);
-    };
-    let page_url = if release.html_url.is_empty() {
-        RELEASES_PAGE.to_string()
-    } else {
-        release.html_url
-    };
-    Ok(Availability::Available(UpdateInfo {
-        version: latest,
-        current: current_label(),
-        page_url,
-        notes: release.body.trim().to_string(),
-        asset: None,
-    }))
-}
-
-fn fetch_from_release_list() -> Result<Availability, String> {
-    let releases: Vec<GithubRelease> = serde_json::from_str(
-        &http_get(RELEASE_LIST_API, Duration::from_secs(15), true).map_err(|err| err.detail)?,
-    )
-    .map_err(|e| e.to_string())?;
-    let release = match pick_release(&releases) {
+    let manifest: Manifest = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let releases = listed_releases(manifest);
+    let release = match pick_release(&releases, include_prerelease) {
         Listed::Unpublished => return Ok(Availability::Unpublished),
         Listed::Current => return Ok(Availability::Current),
         Listed::Chosen(release) => release,
     };
-    let page_url = if release.html_url.trim().is_empty() {
-        RELEASES_PAGE.to_string()
-    } else {
-        release.html_url.clone()
-    };
-    let asset = release_manifest_asset(&release.tag_name);
-    if release.tag_name == NIGHTLY_TAG {
-        let published = release.published_at.get(..10).unwrap_or(NIGHTLY_TAG);
-        return Ok(Availability::Available(UpdateInfo {
-            version: format!("{NIGHTLY_TAG} {published}"),
-            current: current_label(),
-            page_url,
-            notes: release.body.trim().to_string(),
-            asset,
-        }));
-    }
-    let Some(latest) = newer_version(&release.tag_name, env!("CARGO_PKG_VERSION")) else {
-        return Ok(Availability::Current);
-    };
     Ok(Availability::Available(UpdateInfo {
-        version: latest,
+        version: offered_version(release),
         current: current_label(),
-        page_url,
+        page_url: release_page(&release.tag),
         notes: release.body.trim().to_string(),
-        asset,
+        asset: installer_for(release),
     }))
+}
+
+fn read_updates() -> Result<String, HttpFail> {
+    match http_get(&manifest_url(), Duration::from_secs(15)) {
+        Ok(text) => Ok(text),
+        Err(err) if err.status == Some(404) => {
+            http_get(&manifest_url_stable(), Duration::from_secs(15))
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// The index, or this file alone when it was published before `releases` existed.
+fn listed_releases(manifest: Manifest) -> Vec<UpdateRelease> {
+    if !manifest.releases.is_empty() {
+        return manifest.releases;
+    }
+    if manifest.tag.is_empty() && manifest.version.is_empty() {
+        return Vec::new();
+    }
+    vec![UpdateRelease {
+        tag: manifest.tag,
+        version: manifest.version,
+        prerelease: false,
+        draft: false,
+        published_at: String::new(),
+        body: manifest.body,
+        assets: manifest.assets,
+    }]
 }
 
 struct HttpFail {
@@ -404,26 +392,22 @@ struct HttpFail {
     detail: String,
 }
 
-fn http_get(url: &str, timeout: Duration, github_api: bool) -> Result<String, HttpFail> {
+fn http_get(url: &str, timeout: Duration) -> Result<String, HttpFail> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(timeout))
         .build()
         .into();
-    let request = agent.get(url).header("User-Agent", USER_AGENT);
-    // The asset host is a file download. The API Accept value makes GitHub
-    // answer with release metadata instead of the file.
-    let request = if github_api {
-        request.header("Accept", "application/vnd.github+json")
-    } else {
-        request
-    };
-    let mut response = request.call().map_err(|err| HttpFail {
-        status: match &err {
-            ureq::Error::StatusCode(code) => Some(*code),
-            _ => None,
-        },
-        detail: err.to_string(),
-    })?;
+    let mut response = agent
+        .get(url)
+        .header("User-Agent", USER_AGENT)
+        .call()
+        .map_err(|err| HttpFail {
+            status: match &err {
+                ureq::Error::StatusCode(code) => Some(*code),
+                _ => None,
+            },
+            detail: err.to_string(),
+        })?;
     response
         .body_mut()
         .read_to_string()
@@ -1153,23 +1137,86 @@ mod tests {
             "a.AppImage.tar.gz"
         );
         assert!(pick_asset_for(&assets, "macos", "aarch64").is_none());
+        assert_eq!(
+            pick_asset_for(&assets, "linux", "x86_64").unwrap().url,
+            "https://example.test/a.AppImage.tar.gz"
+        );
     }
 
     #[test]
-    fn no_published_release_is_not_treated_as_up_to_date() {
-        assert!(matches!(pick_release(&[]), Listed::Unpublished));
-        let drafts: Vec<GithubRelease> =
-            serde_json::from_str(r#"[{"tag_name":"9.0.0","draft":true}]"#).unwrap();
-        assert!(matches!(pick_release(&drafts), Listed::Unpublished));
-        let older: Vec<GithubRelease> = serde_json::from_str(r#"[{"tag_name":"0.0.0"}]"#).unwrap();
-        assert!(matches!(pick_release(&older), Listed::Current));
-        let newer: Vec<GithubRelease> = serde_json::from_str(r#"[{"tag_name":"9.0.0"}]"#).unwrap();
-        assert!(matches!(pick_release(&newer), Listed::Chosen(_)));
+    fn release_files_go_through_the_mirror() {
+        assert_eq!(
+            manifest_url(),
+            "https://gh.nn.ci/xhofe/navidog/releases/download/nightly/latest.json"
+        );
+        assert_eq!(
+            manifest_url_stable(),
+            "https://gh.nn.ci/xhofe/navidog/releases/latest/download/latest.json"
+        );
+        let github =
+            "https://github.com/xhofe/navidog/releases/download/v0.2.0/Navidog-aarch64.dmg";
+        let mirrored =
+            "https://gh.nn.ci/xhofe/navidog/releases/download/v0.2.0/Navidog-aarch64.dmg";
+        assert_eq!(mirror_release_file(github), mirrored);
+        assert_eq!(mirror_release_file(mirrored), mirrored);
+    }
+
+    #[test]
+    fn one_list_serves_both_channels() {
+        assert!(matches!(pick_release(&[], false), Listed::Unpublished));
+        let list: Vec<UpdateRelease> = serde_json::from_str(
+            r#"[
+                {"tag":"v8.0.0","version":"8.0.0","draft":true,"published_at":null,"body":null},
+                {"tag":"nightly","version":"nightly","prerelease":true,"published_at":"2099-01-02T00:00:00Z","body":"nightly notes"},
+                {"tag":"v9.0.0","version":"9.0.0","published_at":"2099-01-01T00:00:00Z","body":"nine"},
+                {"tag":"v9.1.0-rc.1","version":"9.1.0-rc.1","prerelease":true,"published_at":"2098-01-01T00:00:00Z","body":"rc"},
+                {"tag":"v0.0.0","version":"0.0.0","published_at":"2020-01-01T00:00:00Z","body":"old"}
+            ]"#,
+        )
+        .unwrap();
+        assert!(list[0].body.is_empty());
+        assert!(list[0].published_at.is_empty());
+        assert!(matches!(
+            pick_release(&list[..1], false),
+            Listed::Unpublished
+        ));
+        match pick_release(&list, false) {
+            Listed::Chosen(release) => assert_eq!(release.tag, "v9.0.0"),
+            other => panic!("stable channel should offer v9.0.0, got {other:?}"),
+        }
+        match pick_release(&list, true) {
+            Listed::Chosen(release) => assert_eq!(release.tag, "nightly"),
+            other => panic!("pre-release channel should offer nightly, got {other:?}"),
+        }
+        let older: Vec<UpdateRelease> =
+            serde_json::from_str(r#"[{"tag":"v0.0.0","version":"0.0.0"}]"#).unwrap();
+        assert!(matches!(pick_release(&older, false), Listed::Current));
+        let rc: Vec<UpdateRelease> = serde_json::from_str(
+            r#"[{"tag":"v9.1.0-rc.1","version":"9.1.0-rc.1","prerelease":true,"published_at":"2099-01-01T00:00:00Z"}]"#,
+        )
+        .unwrap();
+        assert!(matches!(pick_release(&rc, false), Listed::Unpublished));
+        match pick_release(&rc, true) {
+            Listed::Chosen(release) => assert_eq!(release.tag, "v9.1.0-rc.1"),
+            other => panic!("pre-release channel should offer the rc, got {other:?}"),
+        }
         assert!(matches!(
             missing_latest(Some(404), "http status: 404"),
             Ok(Availability::Unpublished)
         ));
         assert!(missing_latest(None, "connection failed").is_err());
+    }
+
+    #[test]
+    fn an_old_latest_json_is_one_release() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{"version":"9.0.0","tag":"v9.0.0","notes":"https://github.com/xhofe/navidog/releases/tag/v9.0.0","assets":[]}"#,
+        )
+        .unwrap();
+        let releases = listed_releases(manifest);
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].tag, "v9.0.0");
+        assert!(matches!(pick_release(&releases, false), Listed::Chosen(_)));
     }
 
     #[test]
