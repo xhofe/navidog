@@ -51,6 +51,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 历史日志、QueryExec.log | 完成 | 31 第 6 节 |
 | 命令列界面 | 完成 | 31 第 7 节 |
 | 批量删除后底部 SQL 状态文字溢出修复 | 完成 | 共享单行组件处理显式换行并保留悬停原文，表查看器与查询结果固定底栏高度；见 [验收记录](acceptance-status-overflow.md) |
+| TLS 依赖审计补丁更新 | 完成 | `rustls-webpki` 升至 0.103.16、`webpki-roots` 升至 1.0.10；audit 与 deny 均通过，未新增忽略项；见 [验收记录](acceptance-status-overflow.md) |
 
 ## 3. 功能状态
 
@@ -188,7 +189,6 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 
 | 项目 | 引入于 | 计划处理 |
 | --- | --- | --- |
-| 2026-10-22 审计：基线锁文件的 `rustls-webpki 0.103.15`（RUSTSEC-2026-0382）及 `webpki-roots 1.0.9`（RUSTSEC-2026-0381）使 audit、deny advisories 失败 | M3 | 单独更新依赖并重新审计；本次状态栏修复未改锁文件，见 [验收记录](acceptance-status-overflow.md) |
 | 类型选择和连接表单是窗口内的模态对话框，而不是独立窗口 | M1 | AX 实测后决定 |
 | 暂定 token：工具栏、导航树行、按钮高度、连接表单尺寸、偏好设置分类栏宽度 | M1 | 运行 `tools/ax-dump.swift` 后替换。偏好设置窗口已按 nib 改为 640 × 480 |
 | SQLite 加密数据库、新建 SQLite 2 不支持 | M1 | M4 评估 SQLCipher |
