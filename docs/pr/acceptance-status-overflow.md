@@ -39,10 +39,6 @@
 
 截图程序在临时 SQLite 表 `wide` 中用真实鼠标点击、Shift+Down、删除和应用按钮一次删除两行，等待网格清空后再截图。关闭“修改后同步记录”，以保留本次 DELETE 状态，避免被刷新时的 SELECT 覆盖。截图后恢复设置。
 
-已核对栏内两条 DELETE 连成一行并以省略号结束，悬停提示仍分两行完整显示；打开信息窗格后可用宽度变窄时，状态文字继续截断，底栏不向上下溢出。原图保存在 [screenshots/status-overflow](screenshots/status-overflow/)：
-
-- [浅色](screenshots/status-overflow/viewer-batch-delete-light.png)、[深色](screenshots/status-overflow/viewer-batch-delete-dark.png)。
-- [浅色悬停](screenshots/status-overflow/viewer-batch-delete-hover-light.png)、[深色悬停](screenshots/status-overflow/viewer-batch-delete-hover-dark.png)。
-- [浅色窄内容区](screenshots/status-overflow/viewer-batch-delete-narrow-light.png)、[深色窄内容区](screenshots/status-overflow/viewer-batch-delete-narrow-dark.png)。
+已核对栏内两条 DELETE 连成一行并以省略号结束，悬停提示仍分两行完整显示；打开信息窗格后可用宽度变窄时，状态文字继续截断，底栏不向上下溢出。浅色、深色、悬停和窄内容区的原图在 PR 描述里，不进仓库。
 
 本机 Metal/headless 检查不等同于实际 AppKit 窗口的人工操作验收。
