@@ -20,7 +20,7 @@ use gpui_kit::{App, InteractiveElement, SharedString, Window};
 use navidog_core::actions::*;
 use navidog_core::connection::SecretField;
 use navidog_core::registry::{CommandInfo, CommandRegistry, Source};
-use navidog_core::store::ConnectionStore;
+use navidog_core::store::{ConnectionStore, StoreError};
 use navidog_core::workspace::{Selection, Workspace};
 use navidog_db::sessions::Sessions;
 use rust_i18n::t;
@@ -313,6 +313,12 @@ fn confirm_delete_group(window: &mut Window, cx: &mut App) {
                 true
             })
     });
+}
+
+/// A store or key error in the interface language. `Display` remains suitable for logs.
+#[deprecated(note = "Use navidog_core::store::StoreError::localized_message instead")]
+pub fn store_error_message(error: &StoreError) -> String {
+    error.localized_message()
 }
 
 pub(crate) fn show_error(

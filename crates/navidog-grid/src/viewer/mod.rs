@@ -182,6 +182,7 @@ pub struct TableViewer {
     page: u64,
     total: Option<u64>,
     session: Option<SharedSession>,
+    session_generation: u64,
     cancel: Option<CancelHandle>,
     dialect: Option<Dialect>,
     columns: Vec<ColumnInfo>,
@@ -625,6 +626,13 @@ impl TableViewer {
                             if let Some(s) = this.session.take() {
                                 close_session(s);
                             }
+                            this.task = None;
+                            this.cancel = None;
+                            this.set_busy(false, cx);
+                            this.add_after_commit = false;
+                            this.reload_after_commit = false;
+                            this.close_after_commit = false;
+                            this.hidden_after_commit = None;
                             this.set_in_transaction(false, cx);
                             this.status = t!("viewer.closed").to_string().into();
                             cx.notify();
@@ -668,6 +676,7 @@ impl TableViewer {
                 page: 0,
                 total: None,
                 session: None,
+                session_generation: 0,
                 cancel: None,
                 dialect: None,
                 columns: Vec::new(),
@@ -711,6 +720,7 @@ impl TableViewer {
         ) else {
             return;
         };
+        let generation = sessions.generation(&self.object.scope.connection);
         let (scope, table) = (self.object.scope.clone(), self.object.name.clone());
         self.set_busy(true, cx);
         self.task = Some(cx.spawn(async move |this, cx| {
@@ -718,17 +728,32 @@ impl TableViewer {
                 Ok(Ok(s)) => s,
                 Ok(Err(e)) => {
                     return this
-                        .update(cx, |t, cx| t.fail(error_message(&e), cx))
+                        .update(cx, |t, cx| {
+                            if t.generation_matches(generation, cx) {
+                                t.fail(error_message(&e), cx);
+                            }
+                        })
                         .unwrap_or(());
                 }
                 Err(e) => {
                     return this
-                        .update(cx, |t, cx| t.fail(e.to_string(), cx))
+                        .update(cx, |t, cx| {
+                            if t.generation_matches(generation, cx) {
+                                t.fail(e.to_string(), cx);
+                            }
+                        })
                         .unwrap_or(());
                 }
             };
             let cancel = session.cancel_handle();
             let shared: SharedSession = std::sync::Arc::new(tokio::sync::Mutex::new(Some(session)));
+            if !this
+                .update(cx, |this, cx| this.generation_matches(generation, cx))
+                .unwrap_or(false)
+            {
+                close_session(shared);
+                return;
+            }
             let columns = run_on(shared.clone(), move |rel| {
                 Box::pin(async move {
                     let d = rel.dialect();
@@ -738,7 +763,7 @@ impl TableViewer {
             .await;
             let pending_close = this
                 .update(cx, |this, cx| {
-                    this.apply_connected(columns, shared, cancel, cx)
+                    this.apply_connected(generation, columns, shared, cancel, cx)
                 })
                 .unwrap_or(false);
             if pending_close {
@@ -751,11 +776,17 @@ impl TableViewer {
     /// close that waited on this load should continue.
     fn apply_connected(
         &mut self,
+        generation: u64,
         columns: Result<navidog_db::DbResult<(Dialect, Vec<ColumnInfo>)>, tokio::task::JoinError>,
         shared: SharedSession,
         cancel: Option<CancelHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
+        if !self.generation_matches(generation, cx) {
+            close_session(shared);
+            return false;
+        }
+        self.session_generation = generation;
         match columns {
             Ok(Ok((dialect, columns))) => {
                 self.dialect = Some(dialect);
@@ -795,6 +826,7 @@ impl TableViewer {
         let Some(session) = self.session.clone() else {
             return;
         };
+        let generation = self.session_generation;
         let (scope, table) = (self.object.scope.clone(), self.object.name.clone());
         let job = run_on(session, move |rel| {
             Box::pin(async move { rel.foreign_keys(&scope, &table).await })
@@ -802,6 +834,9 @@ impl TableViewer {
         cx.spawn(async move |this, cx| {
             let result = job.await;
             let _ = this.update(cx, |this, cx| {
+                if !this.generation_matches(generation, cx) {
+                    return;
+                }
                 let Ok(Ok(keys)) = result else {
                     return;
                 };
@@ -855,6 +890,13 @@ impl TableViewer {
         refresh_spinning(self.busy, self.spin_until, Instant::now())
     }
 
+    fn generation_matches(&self, generation: u64, cx: &App) -> bool {
+        Sessions::global(cx)
+            .read(cx)
+            .generation(&self.object.scope.connection)
+            == generation
+    }
+
     fn fail(&mut self, message: String, cx: &mut Context<Self>) {
         self.set_busy(false, cx);
         self.status = message.into();
@@ -866,6 +908,7 @@ impl TableViewer {
         let (Some(session), Some(d)) = (self.session.clone(), self.dialect) else {
             return;
         };
+        let generation = self.session_generation;
         let (scope, table) = (&self.object.scope, &self.object.name);
         let filter = self.filter.read(cx).value().to_string();
         let order = self.order.read(cx).value().to_string();
@@ -897,7 +940,7 @@ impl TableViewer {
                 .map_err(|e| e.to_string())
                 .and_then(|r| r.map_err(|e| error_message(&e)));
             let pending_close = this
-                .update(cx, |this, cx| this.apply_page(result, cx))
+                .update(cx, |this, cx| this.apply_page(generation, result, cx))
                 .unwrap_or(false);
             if pending_close {
                 cx.update(|cx| TableViewer::resume_close(this.clone(), cx));
@@ -910,8 +953,10 @@ impl TableViewer {
                     .and_then(|r| r.ok())
                     .and_then(|sets| first_cell(&sets));
                 let _ = this.update(cx, |this, cx| {
-                    this.total = n;
-                    cx.notify();
+                    if this.generation_matches(generation, cx) {
+                        this.total = n;
+                        cx.notify();
+                    }
                 });
             }
         }));
@@ -921,9 +966,13 @@ impl TableViewer {
     /// should continue.
     fn apply_page(
         &mut self,
+        generation: u64,
         result: Result<Vec<ResultSet>, String>,
         cx: &mut Context<Self>,
     ) -> bool {
+        if !self.generation_matches(generation, cx) {
+            return false;
+        }
         self.set_busy(false, cx);
         match result {
             Ok(mut sets) if !sets.is_empty() => {
@@ -957,7 +1006,14 @@ impl TableViewer {
                     .into_iter()
                     .map(|r| r.into_iter().map(|v| v.map(Into::into)).collect())
                     .collect();
-                self.grid.update(cx, |g, cx| g.set_data(columns, rows, cx));
+                self.grid.update(cx, |g, cx| {
+                    let mut drafts = None;
+                    g.update_model(cx, |m| drafts = Some(m.take_blank_insert_drafts()));
+                    g.set_data(columns, rows, cx);
+                    g.update_model(cx, |m| {
+                        m.restore_blank_insert_drafts(drafts.expect("the blank drafts were moved"));
+                    });
+                });
                 self.reproject(cx);
                 if std::mem::take(&mut self.add_after_commit) {
                     self.insert_row(cx);
@@ -1035,6 +1091,7 @@ impl TableViewer {
             return;
         }
         let in_tx = self.in_transaction;
+        let generation = self.session_generation;
         self.status = commit.statements.join(";\n").into();
         self.set_busy(true, cx);
         let job = run_on(session, move |rel| {
@@ -1046,59 +1103,73 @@ impl TableViewer {
                 .map_err(|e| e.to_string())
                 .and_then(|r| r.map_err(|e| error_message(&e)));
             let _ = this.update_in(cx, |this, window, cx| {
-                this.set_busy(false, cx);
-                match result {
-                    Ok(()) => {
-                        if end_transaction {
-                            this.set_in_transaction(false, cx);
-                        }
-                        // Committed from the close prompt: nothing to reload, the tab goes
-                        if std::mem::take(&mut this.close_after_commit) {
-                            this.grid.update(cx, |g, cx| {
-                                g.update_model(cx, |m| m.accept_committed());
-                            });
-                            this.close_now(window, cx);
-                            return;
-                        }
-                        let hidden = this.hidden_after_commit.take();
-                        let reproject = hidden.is_some();
-                        let leaving = std::mem::take(&mut this.reload_after_commit);
-                        let sync = !cx.has_global::<Settings>() || Settings::global(cx).sync_record;
-                        // Accept the completed write before any projection or reload. A failed
-                        // SELECT must not leave this batch available for a second Apply.
-                        let unknown = this.grid.read(cx).model(cx).commit_needs_reload();
-                        this.grid.update(cx, |g, cx| {
-                            g.update_model(cx, |m| m.accept_committed());
-                        });
-                        if let Some(next) = hidden {
-                            this.publish_hidden(next, cx);
-                        }
-                        if sync || reproject || leaving || unknown {
-                            this.reload(true, cx);
-                        } else {
-                            this.form_for = None;
-                            if std::mem::take(&mut this.add_after_commit) {
-                                this.insert_row(cx);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        this.add_after_commit = false;
-                        this.reload_after_commit = false;
-                        this.close_after_commit = false;
-                        this.hidden_after_commit = None;
-                        this.status = e.clone().into();
-                        window.open_alert_dialog(cx, move |alert, _, _| {
-                            alert
-                                .icon(lucide("circle-x"))
-                                .title(t!("viewer.commit_failed").to_string())
-                                .description(e.clone())
-                        });
-                    }
-                }
-                cx.notify();
+                this.apply_commit_result(generation, result, end_transaction, window, cx);
             });
         }));
+    }
+
+    fn apply_commit_result(
+        &mut self,
+        generation: u64,
+        result: Result<(), String>,
+        end_transaction: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.generation_matches(generation, cx) {
+            return;
+        }
+        self.set_busy(false, cx);
+        match result {
+            Ok(()) => {
+                if end_transaction {
+                    self.set_in_transaction(false, cx);
+                }
+                // Committed from the close prompt: nothing to reload, the tab goes
+                if std::mem::take(&mut self.close_after_commit) {
+                    self.grid.update(cx, |g, cx| {
+                        g.update_model(cx, |m| m.accept_committed_preserving_drafts());
+                    });
+                    self.close_now(window, cx);
+                    return;
+                }
+                let hidden = self.hidden_after_commit.take();
+                let reproject = hidden.is_some();
+                let leaving = std::mem::take(&mut self.reload_after_commit);
+                let sync = !cx.has_global::<Settings>() || Settings::global(cx).sync_record;
+                // Accept the completed write before any projection or reload. A failed
+                // SELECT must not leave this batch available for a second Apply.
+                let unknown = self.grid.read(cx).model(cx).commit_needs_reload();
+                self.grid.update(cx, |g, cx| {
+                    g.update_model(cx, |m| m.accept_committed_preserving_drafts());
+                });
+                if let Some(next) = hidden {
+                    self.publish_hidden(next, cx);
+                }
+                if sync || reproject || leaving || unknown {
+                    self.reload(true, cx);
+                } else {
+                    self.form_for = None;
+                    if std::mem::take(&mut self.add_after_commit) {
+                        self.insert_row(cx);
+                    }
+                }
+            }
+            Err(e) => {
+                self.add_after_commit = false;
+                self.reload_after_commit = false;
+                self.close_after_commit = false;
+                self.hidden_after_commit = None;
+                self.status = e.clone().into();
+                window.open_alert_dialog(cx, move |alert, _, _| {
+                    alert
+                        .icon(lucide("circle-x"))
+                        .title(t!("viewer.commit_failed").to_string())
+                        .description(e.clone())
+                });
+            }
+        }
+        cx.notify();
     }
 
     fn run_simple(
@@ -1110,6 +1181,7 @@ impl TableViewer {
         let Some(session) = self.session.clone() else {
             return;
         };
+        let generation = self.session_generation;
         let job = run_on(session, move |rel| {
             Box::pin(async move { rel.execute(sql).await })
         });
@@ -1121,6 +1193,9 @@ impl TableViewer {
                 .map_err(|e| e.to_string())
                 .and_then(|r| r.map_err(|e| error_message(&e)));
             let _ = this.update(cx, |this, cx| {
+                if !this.generation_matches(generation, cx) {
+                    return;
+                }
                 match result {
                     Ok(_) => after(this, cx),
                     Err(e) => this.status = e.into(),
@@ -1972,6 +2047,7 @@ mod spin_tests {
 #[cfg(test)]
 mod ownership_tests {
     use super::*;
+    use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{TestAppContext, WindowOptions};
     use navidog_core::{connection::Connection, crypto::Key, store::ConnectionStore};
     use navidog_db::{ConnectParams, Secrets, connect, sqlite::SqliteDriver};
@@ -2238,5 +2314,225 @@ mod ownership_tests {
             [vec![Some("pending".into())]]
         );
         cx.update(|cx| assert!(!viewer.read(cx).grid.read(cx).model(cx).has_changes()));
+
+        // Mixed writes must not consume independent blank drafts, whether synchronization is
+        // disabled, succeeds, or fails after the database has already committed the batch.
+        sql(
+            &file,
+            "CREATE TABLE write_audit(event TEXT); \
+             CREATE TRIGGER audit_update AFTER UPDATE ON t BEGIN INSERT INTO write_audit VALUES('update'); END; \
+             CREATE TRIGGER audit_insert AFTER INSERT ON t BEGIN INSERT INTO write_audit VALUES('insert'); END; \
+             CREATE TRIGGER audit_delete AFTER DELETE ON t BEGIN INSERT INTO write_audit VALUES('delete'); END",
+        );
+        for (sync, fail_sync) in [(false, false), (true, false), (true, true)] {
+            sql(
+                &file,
+                "DELETE FROM t; INSERT INTO t VALUES(1, 'a'), (2, 'b'); DELETE FROM write_audit",
+            );
+            cx.update(|cx| {
+                Settings::update(cx, |s| s.sync_record = sync);
+                viewer.update(cx, |v, cx| v.reload(true, cx));
+            });
+            wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
+            cx.update_window(handle, |_, window, cx| {
+                viewer.update(cx, |v, cx| {
+                    if fail_sync {
+                        v.filter.update(cx, |input, cx| {
+                            input.set_value("missing_sync_column = 1", window, cx);
+                        });
+                    }
+                    v.grid.update(cx, |g, cx| {
+                        g.update_model(cx, |m| {
+                            m.set_value(0, 1, Some("updated".into()));
+                            m.select((1, 0), false);
+                            m.delete_selected_rows();
+                            m.insert_row();
+                            let filled = m.insert_row();
+                            m.set_value(filled, 0, Some("3".into()));
+                            m.set_value(filled, 1, Some("inserted".into()));
+                            let blank = m.insert_row();
+                            m.select((blank, 1), false);
+                        });
+                    });
+                    v.apply_changes(false, window, cx);
+                });
+            })
+            .unwrap();
+            wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
+            cx.update(|cx| {
+                let v = viewer.read(cx);
+                let model = v.grid.read(cx).model(cx);
+                assert_eq!(model.row_count(), 4, "sync={sync}, fail_sync={fail_sync}");
+                assert_eq!(model.value(0, 1), Some(&Some("updated".into())));
+                assert_eq!(model.value(1, 1), Some(&Some("inserted".into())));
+                assert_eq!(model.head(), (3, 1));
+                for row in 2..4 {
+                    assert_eq!(model.row_state(row), crate::model::RowState::Inserted);
+                    assert_eq!(model.value(row, 0), None);
+                    assert_eq!(model.value(row, 1), None);
+                }
+                let changes = model.change_set();
+                assert!(changes.updates.is_empty());
+                assert!(changes.deletes.is_empty());
+                assert!(changes.inserts.is_empty());
+                if fail_sync {
+                    assert!(v.status.contains("missing_sync_column"));
+                }
+            });
+            assert_eq!(
+                sql(&file, "SELECT id,name FROM t ORDER BY id"),
+                [
+                    vec![Some("1".into()), Some("updated".into())],
+                    vec![Some("3".into()), Some("inserted".into())]
+                ]
+            );
+            assert_eq!(
+                sql(&file, "SELECT COUNT(*) FROM write_audit"),
+                [vec![Some("3".into())]]
+            );
+
+            // Apply again only sees blank drafts. It sends no writes and preserves defaults.
+            cx.update_window(handle, |_, window, cx| {
+                viewer.update(cx, |v, cx| v.apply_changes(false, window, cx));
+            })
+            .unwrap();
+            cx.run_until_parked();
+            assert_eq!(
+                sql(&file, "SELECT COUNT(*) FROM write_audit"),
+                [vec![Some("3".into())]]
+            );
+            for _ in 0..2 {
+                cx.update_window(handle, |_, window, cx| {
+                    viewer.update(cx, |v, cx| {
+                        v.filter
+                            .update(cx, |input, cx| input.set_value("", window, cx));
+                        v.reload(true, cx);
+                    });
+                })
+                .unwrap();
+                wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
+                cx.update(|cx| {
+                    let model = viewer.read(cx).grid.read(cx).model(cx);
+                    assert_eq!(model.row_count(), 4, "sync must not duplicate blank drafts");
+                    assert!(model.change_set().inserts.is_empty());
+                });
+            }
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                gpui_kit::test::TestWindowExt::click(window, "row-discard", cx);
+            })
+            .unwrap();
+            cx.update(|cx| {
+                let model = viewer.read(cx).grid.read(cx).model(cx);
+                assert_eq!(model.row_count(), 2);
+                assert!(!model.has_changes());
+            });
+        }
+
+        // Construct the FK picker through its real owner handler. The owner is already
+        // mutably borrowed here, so the constructor must use its captured session generation.
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                v.grid
+                    .update(cx, |g, cx| g.update_model(cx, |m| m.select((0, 0), false)));
+                v.foreign_keys = vec![navidog_db::ForeignKey {
+                    column: "id".into(),
+                    schema: "main".into(),
+                    table: "t".into(),
+                    referenced: "id".into(),
+                }];
+                v.open_fk_picker(window, cx);
+            });
+            assert!(window.has_active_dialog(cx));
+            window.close_dialog(cx);
+        })
+        .unwrap();
+
+        // A detached transaction command can finish after Reopening. Its callback, and stale
+        // load/commit/connect results, must not mutate or unlock the replacement session's view.
+        let (old_generation, old_session) = cx.update(|cx| {
+            viewer.update(cx, |v, cx| {
+                v.run_simple("SELECT 1", |v, _| v.status = "stale statement".into(), cx);
+                (v.session_generation, v.session.clone().unwrap())
+            })
+        });
+        cx.update(|cx| {
+            Sessions::global(cx).update(cx, |sessions, cx| {
+                sessions.close_for_reopen(&id, cx);
+                sessions.open(id.clone(), Secrets::default(), cx);
+            });
+        });
+        wait(cx, |cx| {
+            cx.update(|cx| {
+                let v = viewer.read(cx);
+                v.session.is_some() && v.session_generation != old_generation && !v.busy
+            })
+        });
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                assert_ne!(v.status.as_ref(), "stale statement");
+                v.grid.update(cx, |g, cx| {
+                    g.update_model(cx, |m| {
+                        m.set_value(0, 1, Some("newer pending".into()));
+                        m.insert_row();
+                    });
+                });
+                v.status = "replacement operation".into();
+                v.set_busy(true, cx);
+                let replacement = v.session.clone().unwrap();
+                assert!(!v.apply_page(old_generation, Ok(Vec::new()), cx));
+                assert!(!v.apply_page(old_generation, Err("stale SELECT".into()), cx));
+                v.apply_commit_result(old_generation, Ok(()), true, window, cx);
+                v.apply_commit_result(old_generation, Err("stale commit".into()), true, window, cx);
+                assert!(!v.apply_connected(
+                    old_generation,
+                    Ok(Ok((Dialect::Sqlite, Vec::new()))),
+                    old_session,
+                    None,
+                    cx,
+                ));
+                assert!(v.busy, "old callbacks must not unlock a new operation");
+                assert!(v.grid.read(cx).model(cx).locked);
+                assert_eq!(v.status.as_ref(), "replacement operation");
+                assert!(Arc::ptr_eq(v.session.as_ref().unwrap(), &replacement));
+                let model = v.grid.read(cx).model(cx);
+                assert_eq!(model.row_count(), 3);
+                assert_eq!(model.value(0, 1), Some(&Some("newer pending".into())));
+                assert!(model.has_changes());
+                v.set_busy(false, cx);
+            });
+        })
+        .unwrap();
+
+        // The public direct-open path can also replace an already open connection. It must
+        // publish Reopening so the existing editor releases its old session and reconnects.
+        let (replaced_generation, replaced_session) = cx.update(|cx| {
+            let v = viewer.read(cx);
+            (v.session_generation, v.session.clone().unwrap())
+        });
+        cx.update(|cx| {
+            Sessions::global(cx).update(cx, |sessions, cx| {
+                sessions.open(id.clone(), Secrets::default(), cx);
+            });
+        });
+        wait(cx, |cx| {
+            cx.update(|cx| {
+                let v = viewer.read(cx);
+                Sessions::global(cx).read(cx).state(&id).is_open()
+                    && v.session.is_some()
+                    && v.session_generation != replaced_generation
+                    && !v.busy
+            })
+        });
+        cx.update(|cx| {
+            let v = viewer.read(cx);
+            assert!(!Arc::ptr_eq(v.session.as_ref().unwrap(), &replaced_session));
+            let model = v.grid.read(cx).model(cx);
+            assert!(!model.locked);
+            assert_eq!(model.row_count(), 3);
+            assert_eq!(model.value(0, 1), Some(&Some("newer pending".into())));
+            assert_eq!(model.row_state(2), crate::model::RowState::Inserted);
+            assert!(model.has_changes());
+        });
     }
 }

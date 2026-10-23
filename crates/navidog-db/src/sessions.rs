@@ -18,6 +18,9 @@ use crate::dialect::Dialect;
 use crate::{
     ConnectParams, DbError, DbResult, Driver, DriverRegistry, Relational, Secrets, Session, runtime,
 };
+use operation::OperationScope;
+
+mod operation;
 
 /// Closing takes the session out; other holders get `None` afterwards.
 pub type SharedSession = Arc<Mutex<Option<Box<dyn Session>>>>;
@@ -57,10 +60,12 @@ struct Live {
     primary_db: Option<String>,
     per_db: Arc<Mutex<HashMap<String, SharedSession>>>,
     keepalive: Option<JoinHandle<()>>,
+    operations: OperationScope,
 }
 
 impl Live {
-    fn close_all(self) {
+    fn close_all(self) -> OperationScope {
+        self.operations.revoke();
         if let Some(k) = &self.keepalive {
             k.abort();
         }
@@ -75,6 +80,7 @@ impl Live {
                 }
             }
         });
+        self.operations
     }
 }
 
@@ -82,6 +88,9 @@ impl Live {
 pub struct Sessions {
     states: HashMap<ConnectionId, ConnState>,
     live: HashMap<ConnectionId, Live>,
+    generations: HashMap<ConnectionId, u64>,
+    /// Retired domains stay available to every subsequent open until their operations drain.
+    retiring: HashMap<ConnectionId, Vec<OperationScope>>,
     /// Opens in flight; closing or opening again drops the task, so its result is discarded
     tasks: HashMap<ConnectionId, Task<()>>,
 }
@@ -97,6 +106,10 @@ fn closed() -> DbError {
     DbError::msg("连接已关闭")
 }
 
+fn not_relational() -> DbError {
+    DbError::msg(rust_i18n::t!("database.not_relational").to_string())
+}
+
 impl Sessions {
     pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalSessions>().0.clone()
@@ -104,6 +117,30 @@ impl Sessions {
 
     pub fn state(&self, id: &str) -> &ConnState {
         self.states.get(id).unwrap_or(&CLOSED)
+    }
+
+    /// Changes synchronously when opening or closing, including an explicit reopen. Async UI
+    /// work captures this value and ignores its result if the connection has since changed.
+    pub fn generation(&self, id: &str) -> u64 {
+        self.generations.get(id).copied().unwrap_or(0)
+    }
+
+    fn advance_generation(&mut self, id: &str) {
+        let generation = self.generations.entry(id.to_string()).or_default();
+        *generation = generation
+            .checked_add(1)
+            .expect("connection generation overflow");
+    }
+
+    fn retire(&mut self, id: &str) {
+        let retiring = self.retiring.entry(id.to_string()).or_default();
+        retiring.retain(|scope| !scope.is_drained());
+        if let Some(live) = self.live.remove(id) {
+            let scope = live.close_all();
+            if !scope.is_drained() {
+                retiring.push(scope);
+            }
+        }
     }
 
     pub fn dialect(&self, id: &str) -> Option<Dialect> {
@@ -135,9 +172,15 @@ impl Sessions {
         let custom = conn.databases.clone();
         let keepalive = conn.advanced.keepalive_secs.filter(|s| *s > 0);
 
-        if let Some(old) = self.live.remove(&id) {
-            old.close_all();
+        let replacing = self.live.contains_key(&id) || self.tasks.contains_key(&id);
+        self.advance_generation(&id);
+        if replacing {
+            // Direct open callers can replace a live connection without close_for_reopen.
+            // Its editors must retire their owned sessions before Opened installs new ones.
+            cx.emit(SessionsEvent::Reopening(id.clone()));
         }
+        self.retire(&id);
+        let retiring = self.retiring.get(&id).cloned().unwrap_or_default();
         self.states.insert(id.clone(), ConnState::Opening);
         cx.notify();
 
@@ -145,7 +188,7 @@ impl Sessions {
             let driver = driver.clone();
             let params = params.clone();
             async move {
-                let mut session = crate::connect(driver, params).await?;
+                let mut session = operation::connect_after_drain(retiring, driver, params).await?;
                 let (dialect, databases) = match session.relational() {
                     Some(rel) => (Some(rel.dialect()), rel.list_databases().await?),
                     None => (None, Vec::new()),
@@ -184,6 +227,7 @@ impl Sessions {
                                 primary_db,
                                 per_db: Default::default(),
                                 keepalive,
+                                operations: OperationScope::default(),
                             },
                         );
                         this.states
@@ -219,10 +263,9 @@ impl Sessions {
     }
 
     fn shut(&mut self, id: &str) {
+        self.advance_generation(id);
         self.tasks.remove(id);
-        if let Some(live) = self.live.remove(id) {
-            live.close_all();
-        }
+        self.retire(id);
         self.states.insert(id.to_string(), ConnState::Closed);
     }
 
@@ -286,7 +329,9 @@ impl Sessions {
 
     /// Runs one generated write/DDL operation on a separate session and closes it afterwards.
     /// The operation is invoked once and never replayed; its outcome is preserved even if closing
-    /// fails. Shared metadata sessions stay eligible for safe read recovery after completed writes.
+    /// fails. Closing or reopening revokes pending work; an interrupted operation that started
+    /// its business closure has an unknown outcome. New opens wait for local cancellation and
+    /// cleanup, which cannot guarantee server rollback. Shared metadata stays recoverable.
     pub fn run_operation_rel<T: Send + 'static>(
         &self,
         id: &str,
@@ -294,20 +339,12 @@ impl Sessions {
         f: impl for<'a> FnOnce(&'a mut dyn Relational) -> BoxFuture<'a, DbResult<T>> + Send + 'static,
     ) -> Option<JoinHandle<DbResult<T>>> {
         let (driver, params) = self.session_target(id, database)?;
-        Some(runtime::spawn(async move {
-            let mut session = crate::connect(driver, params).await?;
-            let result = match session.relational() {
-                Some(rel) => f(rel).await,
-                None => Err(DbError::msg("该连接不是关系型数据库")),
-            };
-            if let Err(error) = session.close().await {
-                tracing::warn!("Closing an operation session failed: {error}");
-            }
-            result
-        }))
+        let operations = &self.live.get(id)?.operations;
+        Some(operations.run(driver, params, f))
     }
 
-    /// Runs one application operation without borrowing the shared metadata session.
+    /// Compatibility entry point for callers of the original public operation API.
+    #[deprecated(note = "Use run_operation_rel instead.")]
     pub fn run_once<T: Send + 'static>(
         &self,
         id: &str,
@@ -371,9 +408,7 @@ async fn with_rel<T>(
 ) -> DbResult<T> {
     let mut guard = shared.lock().await;
     let session = guard.as_mut().ok_or_else(closed)?;
-    let rel = session
-        .relational()
-        .ok_or_else(|| DbError::msg("该连接不是关系型数据库"))?;
+    let rel = session.relational().ok_or_else(not_relational)?;
     f(rel).await
 }
 

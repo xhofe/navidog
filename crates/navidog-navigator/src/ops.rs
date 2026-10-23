@@ -205,6 +205,16 @@ pub(crate) fn run(
     window: &mut Window,
     cx: &mut App,
 ) {
+    let generations: Vec<_> = stmts
+        .iter()
+        .map(|(obj, _)| obj.scope.connection.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .map(|id| {
+            let generation = Sessions::global(cx).read(cx).generation(&id);
+            (id, generation)
+        })
+        .collect();
     window
         .spawn(cx, async move |cx| {
             let mut error = None;
@@ -217,7 +227,10 @@ pub(crate) fn run(
                     .flatten();
                 let job = cx
                     .update(|_, cx| {
-                        Sessions::global(cx).read(cx).run_operation_rel(
+                        if !connections_unchanged(&generations, cx) {
+                            return None;
+                        }
+                        Some(Sessions::global(cx).read(cx).run_operation_rel(
                             &obj.scope.connection,
                             Some(&obj.scope.database),
                             move |r| {
@@ -228,16 +241,14 @@ pub(crate) fn run(
                                     r.execute(&sql).await.map(|_| ())
                                 })
                             },
-                        )
+                        ))
                     })
                     .ok()
                     .flatten();
+                // The command belongs to its original connections, including between statements.
+                let Some(job) = job else { return };
                 let Some(job) = job else {
-                    error = Some((
-                        obj.scope.connection.clone(),
-                        DbError::msg(t!("obj.connection_closed").to_string()),
-                    ));
-                    break;
+                    continue;
                 };
                 let result = match job.await {
                     Ok(result) => result,
@@ -249,6 +260,9 @@ pub(crate) fn run(
                 }
             }
             let _ = cx.update(|window, cx| {
+                if !connections_unchanged(&generations, cx) {
+                    return;
+                }
                 refresh(stmts.iter().map(|(o, _)| o), cx);
                 match error {
                     Some((connection, error)) => show_database_error(error, connection, window, cx),
@@ -261,6 +275,14 @@ pub(crate) fn run(
             });
         })
         .detach();
+}
+
+fn connections_unchanged(generations: &[(String, u64)], cx: &App) -> bool {
+    let sessions = Sessions::global(cx);
+    let sessions = sessions.read(cx);
+    generations
+        .iter()
+        .all(|(id, generation)| sessions.generation(id) == *generation)
 }
 
 fn refresh<'a>(objects: impl Iterator<Item = &'a ObjectRef>, cx: &mut App) {
@@ -338,6 +360,9 @@ fn duplicate(with_data: bool, window: &mut Window, cx: &mut App) {
         ..o.clone()
     };
     let (src, target) = (o.clone(), new);
+    let generation = Sessions::global(cx)
+        .read(cx)
+        .generation(&o.scope.connection);
     let Some(job) = Sessions::global(cx).read(cx).run_operation_rel(
         &o.scope.connection,
         Some(&o.scope.database),
@@ -367,6 +392,13 @@ fn duplicate(with_data: bool, window: &mut Window, cx: &mut App) {
                 Err(error) => Err(DbError::msg(error.to_string())),
             };
             let _ = cx.update(|window, cx| {
+                if Sessions::global(cx)
+                    .read(cx)
+                    .generation(&copy.scope.connection)
+                    != generation
+                {
+                    return;
+                }
                 refresh(std::iter::once(&copy), cx);
                 match result {
                     Ok(()) => Workspace::global(cx)
@@ -403,6 +435,57 @@ mod recovery_tests {
                 .on_action(cx.listener(|this, action: &ReopenConnectionId, _, _| {
                     this.reopened.push(action.id.to_string());
                 }))
+        }
+    }
+
+    #[gpui_kit::test]
+    fn closing_before_a_queued_batch_starts_discards_its_work_and_callbacks(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            navidog_ui::theme::init(cx);
+            navidog_db::init(cx);
+        });
+        let (handle, _) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| Host {
+                    focus: cx.focus_handle(),
+                    reopened: Vec::new(),
+                })
+            })
+            .unwrap()
+        });
+        for reopen in [false, true] {
+            cx.update_window(handle, |_, window, cx| {
+                let object = ObjectRef {
+                    scope: navidog_core::object::Scope::new("retired", "main", None),
+                    kind: ObjectKind::Table,
+                    name: "t".into(),
+                };
+                run(
+                    vec![(object.clone(), "DELETE FROM t".into())],
+                    Some(Selection::Object(object)),
+                    window,
+                    cx,
+                );
+                Sessions::global(cx).update(cx, |sessions, cx| {
+                    if reopen {
+                        sessions.close_for_reopen("retired", cx);
+                    } else {
+                        sessions.close("retired", cx);
+                    }
+                });
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(!window.has_active_dialog(cx));
+                // No Catalog or Workspace is installed: touching either would fail this test.
+                // A retired command must neither refresh objects nor publish its old selection.
+            })
+            .unwrap();
         }
     }
 

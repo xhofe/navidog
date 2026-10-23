@@ -122,10 +122,7 @@ pub(crate) fn format_result(
             }
         }
         Err(e) if e.is_session_lost() => {
-            out.push_str(&format!(
-                "ERROR: {}\n",
-                navidog_grid::commit::error_message(e)
-            ));
+            out.push_str(&format!("ERROR: {}\n", crate::errors::error_message(e)));
         }
         Err(e) => match (dialect, &e.code) {
             (Dialect::Postgres, _) => out.push_str(&format!("ERROR:  {}\n", e.message)),
@@ -305,10 +302,7 @@ impl Console {
                 Ok(Ok(s)) => s,
                 Ok(Err(e)) => {
                     let _ = this.update(cx, |this, cx| {
-                        this.append(
-                            format!("ERROR: {}\n", navidog_grid::commit::error_message(&e)),
-                            cx,
-                        )
+                        this.append(format!("ERROR: {}\n", crate::errors::error_message(&e)), cx)
                     });
                     return;
                 }

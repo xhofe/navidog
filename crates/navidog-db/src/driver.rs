@@ -16,7 +16,6 @@ use crate::params::ConnectParams;
 /// Driver error. `code` keeps the database's original error code, displayed in Navicat's
 /// "1045 - Access denied …" format.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
 pub struct DbError {
     pub code: Option<String>,
     pub message: String,

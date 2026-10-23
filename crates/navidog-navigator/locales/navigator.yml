@@ -323,9 +323,6 @@ obj:
   close:
     en: Close
     zh-CN: 关闭
-  connection_closed:
-    en: The connection is closed. Open it before running this operation.
-    zh-CN: 连接已关闭。请打开连接后再执行此操作。
   definition_unavailable:
     en: The table definition could not be read.
     zh-CN: 无法读取表定义。

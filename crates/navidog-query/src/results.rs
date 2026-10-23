@@ -23,7 +23,7 @@ use navidog_core::settings::{ResultsPosition, Settings, ShowAfterRun};
 use navidog_db::dialect::{ChangeSet, Dialect, RowKey, Values, Writes};
 use navidog_db::sessions::{Sessions, prepare_database, run_on};
 use navidog_db::{Column, ResultSet};
-use navidog_grid::commit::{Commit, apply, error_message};
+use navidog_grid::commit::{Commit, apply};
 use navidog_grid::{Cell, GridColumn, GridEvent, GridTarget, ResultGrid};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
@@ -32,6 +32,7 @@ use navidog_util::sql_text;
 use rust_i18n::t;
 
 use crate::editor::QueryEditor;
+use crate::errors::error_message;
 use crate::explain::ExplainView;
 use crate::run::Outcome;
 
@@ -784,6 +785,21 @@ impl ResultView {
     }
 
     #[cfg(test)]
+    pub(crate) fn sort_now(
+        &mut self,
+        sort: Option<(SharedString, bool)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_grid_event(
+            &self.grid.clone(),
+            &GridEvent::SortChanged(sort),
+            window,
+            cx,
+        );
+    }
+
+    #[cfg(test)]
     pub(crate) fn status_text(&self) -> &str {
         &self.status
     }
@@ -822,6 +838,7 @@ impl ResultView {
         let Some(scope) = self.info.scope_for(&schema) else {
             return;
         };
+        let generation = Sessions::global(cx).read(cx).generation(&scope.connection);
         let (s, t) = (scope.clone(), table.clone());
         let Some(job) = Sessions::global(cx).read(cx).run_rel(
             &scope.connection,
@@ -833,6 +850,9 @@ impl ResultView {
         cx.spawn(async move |this, cx| {
             let Ok(Ok(columns)) = job.await else { return };
             let _ = this.update(cx, |this, cx| {
+                if Sessions::global(cx).read(cx).generation(&scope.connection) != generation {
+                    return;
+                }
                 let pk: Vec<&str> = columns
                     .iter()
                     .filter(|c| c.primary_key)
@@ -888,7 +908,7 @@ impl ResultView {
         match e {
             GridEvent::SortChanged(sort) => {
                 self.grid.update(cx, |g, cx| g.commit_edit(window, cx));
-                if self.busy || self.grid.read(cx).model(cx).has_changes() {
+                if self.grid.read(cx).model(cx).has_changes() {
                     self.grid
                         .update(cx, |g, cx| g.set_sort(self.accepted_sort.clone(), cx));
                     self.status = t!("query.sort_blocked").to_string().into();
@@ -935,6 +955,9 @@ impl ResultView {
         }
         self.status = statements.join(";\n").into();
         let commit = Commit::new(edit.dialect, statements);
+        let generation = Sessions::global(cx)
+            .read(cx)
+            .generation(&self.info.connection_id);
         let database = edit.scope.database.clone();
         let dialect = edit.dialect;
         // A fresh operation session cannot inherit a metadata caller's transaction or locks.
@@ -957,6 +980,9 @@ impl ResultView {
                 .map_err(|e| navidog_db::DbError::msg(e.to_string()))
                 .and_then(|r| r);
             let _ = this.update_in(cx, |this, window, cx| {
+                if !this.accepts_generation(generation, cx) {
+                    return;
+                }
                 this.set_busy(false, cx);
                 match result {
                     Ok(()) => {
@@ -964,8 +990,9 @@ impl ResultView {
                         let unknown = this.grid.read(cx).model(cx).commit_needs_reload();
                         // The write is complete even if the following SELECT fails. Leaving its
                         // changes pending would allow a later Apply to replay the same batch.
-                        this.grid
-                            .update(cx, |g, cx| g.update_model(cx, |m| m.accept_committed()));
+                        this.grid.update(cx, |g, cx| {
+                            g.update_model(cx, |m| m.accept_committed_preserving_drafts())
+                        });
                         if sync || unknown {
                             this.reload(cx);
                         }
@@ -987,22 +1014,22 @@ impl ResultView {
         .detach();
     }
 
-    /// Manual refresh never discards or implicitly commits result edits.
-    #[allow(dead_code)] // The result refresh command is not yet exposed by the shell.
+    /// Guard reserved for a future explicit refresh action; no user entry point exists yet.
+    #[allow(dead_code)] // Production currently reloads only after accepting a successful write.
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy {
-            return;
-        }
         self.grid.update(cx, |g, cx| g.commit_edit(window, cx));
         if self.grid.read(cx).model(cx).has_changes() {
             self.status = t!("query.pending_result_changes").to_string().into();
             cx.notify();
             return;
         }
+        if self.busy {
+            return;
+        }
         self.reload(cx);
     }
 
-    /// Reloads accepted rows after a successful commit, or a clean manual refresh.
+    /// Reloads accepted rows after a successful commit, or the internal explicit-refresh guard.
     /// Reuses the editor session only while it still matches the result's original source.
     fn reload(&mut self, cx: &mut Context<Self>) {
         let session = self.editor.upgrade().and_then(|e| {
@@ -1029,6 +1056,9 @@ impl ResultView {
             cx.notify();
             return;
         }
+        let generation = Sessions::global(cx)
+            .read(cx)
+            .generation(&self.info.connection_id);
         let sql = self.sql.clone();
         let info = self.info.clone();
         self.set_busy(true, cx);
@@ -1083,6 +1113,9 @@ impl ResultView {
             }
             .await;
             let _ = this.update(cx, |this, cx| {
+                if !this.accepts_generation(generation, cx) {
+                    return;
+                }
                 this.set_busy(false, cx);
                 match result {
                     Ok(sets) => {
@@ -1100,12 +1133,15 @@ impl ResultView {
                                 columns.iter().any(|column| column.name == *name)
                             });
                             this.grid.update(cx, |g, cx| {
+                                let mut drafts = None;
+                                g.update_model(cx, |model| drafts = Some(model.take_blank_insert_drafts()));
                                 g.set_data(columns, rows, cx);
                                 if let Some((name, asc)) = &this.accepted_sort
                                     && let Some(col) = g.model(cx).columns.iter().position(|c| c.name == *name)
                                 {
                                     g.update_model(cx, |model| model.sort_rows(col, *asc));
                                 }
+                                g.update_model(cx, |model| model.restore_blank_insert_drafts(drafts.unwrap()));
                                 g.set_sort(this.accepted_sort.clone(), cx);
                             });
                         }
@@ -1116,6 +1152,24 @@ impl ResultView {
             });
         })
         .detach();
+    }
+
+    /// A retired operation must not replace rows, accept edits, or surface an old modal.
+    fn accepts_generation(&mut self, generation: u64, cx: &mut Context<Self>) -> bool {
+        if Sessions::global(cx)
+            .read(cx)
+            .generation(&self.info.connection_id)
+            == generation
+        {
+            return true;
+        }
+        // This view serializes its work through `busy`; reopening does not start a newer load.
+        self.set_busy(false, cx);
+        self.status = t!("query.connection_changed_during_operation")
+            .to_string()
+            .into();
+        cx.notify();
+        false
     }
 
     fn set_busy(&mut self, busy: bool, cx: &mut Context<Self>) {

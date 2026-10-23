@@ -4,32 +4,32 @@ use navidog_db::DbError;
 use rust_i18n::t;
 
 pub(crate) fn database_message(error: &DbError) -> String {
-    message(
-        &error.to_string(),
-        error.is_session_lost(),
-        error.is_outcome_unknown(),
-        &rust_i18n::locale(),
-    )
+    message(error, &rust_i18n::locale())
 }
 
-fn message(detail: &str, session_lost: bool, outcome_unknown: bool, locale: &str) -> String {
-    if outcome_unknown {
-        t!(
-            "nav.database_outcome_unknown",
-            locale = locale,
-            detail = detail
-        )
-        .to_string()
-    } else if session_lost {
-        t!(
-            "nav.database_session_lost",
-            locale = locale,
-            detail = detail
-        )
-        .to_string()
-    } else {
-        detail.to_string()
-    }
+fn message(error: &DbError, locale: &str) -> String {
+    navidog_ui::db_error_text_with(
+        error.code.as_deref(),
+        &error.message,
+        error.is_session_lost(),
+        error.is_outcome_unknown(),
+        |detail| {
+            t!(
+                "nav.database_session_lost",
+                locale = locale,
+                detail = detail
+            )
+            .to_string()
+        },
+        |detail| {
+            t!(
+                "nav.database_outcome_unknown",
+                locale = locale,
+                detail = detail
+            )
+            .to_string()
+        },
+    )
 }
 
 #[cfg(test)]
@@ -38,12 +38,16 @@ mod tests {
 
     #[test]
     fn recovery_guidance_is_localized_without_changing_the_driver_diagnostic() {
-        let detail = "08006 - original driver diagnostic";
+        let mut error = DbError::coded("08006", "original driver diagnostic");
+        let detail = error.to_string();
         for locale in ["en", "zh-CN"] {
-            assert_eq!(message(detail, false, false, locale), detail);
+            assert_eq!(message(&error, locale), detail);
+            error.disconnected = true;
             for unknown in [false, true] {
-                let text = message(detail, true, unknown, locale);
-                assert!(text.contains(detail));
+                error.outcome_unknown = unknown;
+                let text = message(&error, locale);
+                assert!(text.starts_with(&detail));
+                assert!(!text.contains('\n'));
                 assert!(text.contains(if locale == "en" {
                     "Reopen"
                 } else {
@@ -60,6 +64,9 @@ mod tests {
                     assert!(!text.contains("Reopen"));
                 }
             }
+            error.disconnected = false;
+            error.outcome_unknown = false;
         }
+        assert_eq!(error.to_string(), detail);
     }
 }

@@ -268,7 +268,24 @@ fn accepted_results_keep_their_rows_and_original_source(cx: &mut TestAppContext)
         click_name_sort(cx); // Descending -> ascending for the next case.
     }
 
-    // Manual refresh must settle an active input and keep its value without issuing SQL.
+    // A clean in-flight reload accepts sorting and reapplies it to the returned rows.
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |v, cx| {
+            v.refresh_now(window, cx);
+            assert!(v.is_busy());
+            v.sort_now(Some(("name".into(), false)), window, cx);
+            assert!(v.is_busy());
+            assert_eq!(v.rows(cx)[0][1].as_deref(), Some("b"));
+        });
+    })
+    .unwrap();
+    wait(cx, "sorting during a clean reload", |cx| {
+        cx.update(|cx| !view.read(cx).is_busy())
+    });
+    cx.update(|cx| assert_eq!(view.read(cx).rows(cx)[0][1].as_deref(), Some("b")));
+    click_name_sort(cx); // Return to ascending before checking pending input.
+
+    // The internal refresh guard must settle active input without issuing SQL.
     let revision = navidog_db::log::revision();
     cx.update_window(handle, |_, window, cx| {
         view.read(cx)
@@ -588,6 +605,8 @@ fn accepted_results_keep_their_rows_and_original_source(cx: &mut TestAppContext)
             v.grid.update(cx, |g, cx| {
                 g.update_model(cx, |m| {
                     m.set_value(0, 1, Some("accepted once".into()));
+                    m.insert_row();
+                    m.insert_row();
                 })
             });
             v.commit_now(window, cx);
@@ -598,7 +617,17 @@ fn accepted_results_keep_their_rows_and_original_source(cx: &mut TestAppContext)
         cx.update(|cx| !view.read(cx).is_busy())
     });
     cx.update(|cx| {
-        assert!(!view.read(cx).grid.read(cx).model(cx).has_changes());
+        let model = view.read(cx).grid.read(cx).model(cx);
+        assert!(
+            model.has_changes(),
+            "unsubmitted blank drafts survive a failed reload"
+        );
+        let changes = model.change_set();
+        assert!(
+            changes.updates.is_empty() && changes.inserts.is_empty() && changes.deletes.is_empty()
+        );
+        assert_eq!(model.row_count(), 4);
+        assert!(model.value(2, 0).is_none() && model.value(3, 0).is_none());
         assert_eq!(
             view.read(cx).rows(cx)[0][1].as_deref(),
             Some("accepted once")
@@ -615,6 +644,102 @@ fn accepted_results_keep_their_rows_and_original_source(cx: &mut TestAppContext)
         sql(&first_file, "SELECT n FROM applied_count"),
         [vec![Some("1".into())]]
     );
+
+    // Blank drafts also survive acceptance without synchronization and a successful reload.
+    for (sync, value) in [
+        (false, "accepted without sync"),
+        (true, "accepted with sync"),
+    ] {
+        cx.update(|cx| Settings::update(cx, |settings| settings.sync_record = sync));
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |v, cx| {
+                v.sql = "SELECT id, name FROM t ORDER BY id".into();
+                v.grid.update(cx, |grid, cx| {
+                    grid.update_model(cx, |model| model.set_value(0, 1, Some(value.into())));
+                });
+                v.commit_now(window, cx);
+            });
+        })
+        .unwrap();
+        wait(cx, "committing while retaining blank drafts", |cx| {
+            cx.update(|cx| !view.read(cx).is_busy())
+        });
+        cx.update(|cx| {
+            let model = view.read(cx).grid.read(cx).model(cx);
+            assert_eq!(
+                model.row_count(),
+                4,
+                "synchronization must not duplicate drafts"
+            );
+            let changes = model.change_set();
+            assert!(
+                changes.updates.is_empty()
+                    && changes.inserts.is_empty()
+                    && changes.deletes.is_empty()
+            );
+            assert!(model.value(2, 0).is_none() && model.value(3, 0).is_none());
+        });
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |v, cx| v.commit_now(window, cx))
+        })
+        .unwrap();
+    }
+    assert_eq!(
+        sql(&first_file, "SELECT n FROM applied_count"),
+        [vec![Some("3".into())]]
+    );
+    cx.update(|cx| {
+        view.read(cx)
+            .grid
+            .clone()
+            .update(cx, |g, cx| g.update_model(cx, |model| model.discard()))
+    });
+
+    // Retiring a connection in the same UI update fences any old completion, even if the
+    // database already finished the write. No old success may accept the new view's draft.
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |v, cx| {
+            v.grid.update(cx, |g, cx| {
+                g.update_model(cx, |model| {
+                    model.set_value(0, 1, Some("retired operation".into()))
+                })
+            });
+            v.commit_now(window, cx);
+            assert!(v.is_busy());
+        });
+        Sessions::global(cx).update(cx, |sessions, cx| {
+            sessions.close_for_reopen(&ids[0], cx);
+            sessions.open(ids[0].clone(), Secrets::default(), cx);
+        });
+    })
+    .unwrap();
+    wait(
+        cx,
+        "the replacement session and retired result callback",
+        |cx| {
+            cx.update(|cx| {
+                Sessions::global(cx).read(cx).state(&ids[0]).is_open() && !view.read(cx).is_busy()
+            })
+        },
+    );
+    cx.update(|cx| {
+        let result = view.read(cx);
+        let model = result.grid.read(cx).model(cx);
+        assert!(model.has_changes());
+        assert_eq!(
+            model.value(0, 1).and_then(|cell| cell.as_deref()),
+            Some("retired operation")
+        );
+        assert_eq!(
+            result.status(),
+            rust_i18n::t!("query.connection_changed_during_operation").as_ref()
+        );
+        assert_ne!(result.status(), "query.connection_changed_during_operation");
+        result
+            .grid
+            .clone()
+            .update(cx, |g, cx| g.update_model(cx, |model| model.discard()));
+    });
 
     // A changed result shape invalidates the accepted sort rather than retaining a stale arrow.
     cx.update_window(handle, |_, window, cx| {
