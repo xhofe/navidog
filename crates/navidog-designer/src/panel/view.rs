@@ -13,6 +13,7 @@ impl TableDesigner {
             matches!(self.page, Page::Indexes | Page::ForeignKeys | Page::Checks)
                 && self.entry_selected.is_some()
         };
+        let preview = self.page == Page::Preview;
         h_flex()
             .min_h(tokens::object_toolbar::HEIGHT.rems())
             .flex_wrap()
@@ -20,19 +21,11 @@ impl TableDesigner {
             .gap_1()
             .border_b_1()
             .border_color(palette(cx).separator)
-            .child(
-                Button::new("designer-save")
-                    .ghost()
-                    .small()
-                    .icon(lucide("save"))
-                    .label(t!("designer.save").to_string())
-                    .disabled(disabled || self.needs_reload)
-                    .on_click(cx.listener(|this, _, w, cx| this.show_preview(w, cx))),
-            )
-            .when(self.page == Page::Preview, |bar| {
+            .when(preview, |bar| {
                 bar.child(
                     Button::new("designer-execute")
                         .small()
+                        .icon(lucide("play"))
                         .label(t!("designer.execute").to_string())
                         .disabled(
                             disabled
@@ -40,6 +33,17 @@ impl TableDesigner {
                                 || self.preview.as_ref().is_none_or(Vec::is_empty),
                         )
                         .on_click(cx.listener(|this, _, w, cx| this.request(true, w, cx))),
+                )
+            })
+            .when(!preview, |bar| {
+                bar.child(
+                    Button::new("designer-save")
+                        .ghost()
+                        .small()
+                        .icon(lucide("save"))
+                        .label(t!("designer.save").to_string())
+                        .disabled(disabled || self.needs_reload)
+                        .on_click(cx.listener(|this, _, w, cx| this.show_preview(w, cx))),
                 )
             })
             .child(

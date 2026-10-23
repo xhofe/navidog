@@ -215,6 +215,8 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
     });
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        assert!(window.try_find("designer-save").is_none());
+        assert!(window.try_find("designer-add").is_some());
         assert_ne!(window.find("designer-execute").disabled(), Some(true));
         use gpui_kit::component::dock::{BasePanel as _, PanelInfo};
         let PanelInfo::Panel(value) = panel.read(cx).dump(cx).info else {
@@ -408,8 +410,15 @@ fn saves_only_after_preview_and_keeps_failed_draft(cx: &mut TestAppContext) {
         window.click("designer-save", cx);
     })
     .unwrap();
-    cx.run_until_parked();
+    wait(cx, &|cx| {
+        cx.update(|cx| {
+            let p = panel.read(cx);
+            !p.busy && p.preview.is_some()
+        })
+    });
     cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("designer-save").is_none());
         window.click("designer-execute", cx);
     })
     .unwrap();

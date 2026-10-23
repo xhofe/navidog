@@ -13,7 +13,7 @@ mod tests;
 
 use crate::{DbError, DbResult, Relational, dialect::Dialect};
 use navidog_core::object::{ObjectKind, Scope};
-pub use plan::plan;
+pub use plan::{plan, plan_with};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -265,6 +265,30 @@ pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult
     })
 }
 
+/// Table names in one SQLite database, used to pick a free `_table_old_YYYYMMDD` backup.
+pub async fn sqlite_table_names(r: &mut dyn Relational, scope: &Scope) -> DbResult<Vec<String>> {
+    let sql = format!(
+        "SELECT name FROM {}.sqlite_schema WHERE type = 'table'",
+        Dialect::Sqlite.quote_ident(&scope.database)
+    );
+    let mut names = Vec::new();
+    for set in r.execute(&sql).await? {
+        for row in set.rows {
+            if let Some(name) = row.first().and_then(|value| value.clone()) {
+                names.push(name);
+            }
+        }
+    }
+    Ok(names)
+}
+
+fn sqlite_rename(statements: &[String]) -> bool {
+    statements.first().is_some_and(|sql| {
+        let upper = sql.to_uppercase();
+        upper.contains(" RENAME TO ") && !upper.contains("RENAME COLUMN")
+    })
+}
+
 /// Applies precisely the previewed plan on a caller-owned session. Never retries DDL.
 pub async fn apply(
     r: &mut dyn Relational,
@@ -307,15 +331,16 @@ pub async fn apply(
         }
         _ => {}
     }
-    let statements = plan(d, scope, before, after)?;
+    let occupied = if d == Dialect::Sqlite && before.is_some() {
+        sqlite_table_names(r, scope).await?
+    } else {
+        Vec::new()
+    };
+    let statements = plan_with(d, scope, before, after, &occupied)?;
     if statements.is_empty() {
         return load(r, scope, &after.name).await;
     }
-    let sqlite_rebuild = d == Dialect::Sqlite
-        && before.is_some()
-        && statements
-            .first()
-            .is_some_and(|sql| sql.starts_with("CREATE TABLE "));
+    let sqlite_rebuild = d == Dialect::Sqlite && before.is_some() && sqlite_rename(&statements);
     let foreign_keys = if sqlite_rebuild {
         r.execute("PRAGMA foreign_keys")
             .await?

@@ -37,6 +37,86 @@ fn invalid_fragments_and_unsupported_attributes_are_rejected() {
     assert!(super::parse::fragment("TEXT DEFAULT 1 -- hidden suffix").is_err());
 }
 #[test]
+fn sqlite_backup_name_uses_the_date_then_a_suffix() {
+    let name = super::plan::backup_name;
+    assert_eq!(name("test", "20261024", &[]).unwrap(), "_test_old_20261024");
+    let taken = ["_test_old_20261024".into()];
+    assert_eq!(
+        name("test", "20261024", &taken).unwrap(),
+        "_test_old_20261024_1"
+    );
+    let taken = ["_test_old_20261024".into(), "_TEST_old_20261024_1".into()];
+    assert_eq!(
+        name("test", "20261024", &taken).unwrap(),
+        "_test_old_20261024_2"
+    );
+}
+
+#[test]
+fn sqlite_rebuild_renames_the_old_table_and_leaves_it() {
+    let sql = "CREATE TABLE \"test\" (\"id\" INTEGER NOT NULL, \"name\" TEXT, \"detail\" TEXT, PRIMARY KEY (\"id\"))";
+    let design = super::parse::create(sql, "test", Dialect::Sqlite).unwrap();
+    let before = TableSnapshot {
+        design: design.clone(),
+        ddl: sql.into(),
+        triggers: vec!["CREATE TRIGGER audit_t AFTER INSERT ON test BEGIN SELECT 1; END".into()],
+    };
+    let mut added = design.clone();
+    added.columns.push(DesignColumn::new(9, "add_col", "TEXT"));
+    added.indexes.push("CREATE INDEX ix_t ON test(name)".into());
+    let mut indexed = before.clone();
+    indexed
+        .design
+        .indexes
+        .push("CREATE INDEX ix_t ON test(name)".into());
+    let statements = super::plan::plan_on(
+        Dialect::Sqlite,
+        &scope(),
+        Some(&indexed),
+        &added,
+        &[],
+        "20261024",
+    )
+    .unwrap();
+    assert!(statements.iter().all(|sql| !sql.contains("DROP TABLE")));
+    assert_eq!(
+        statements[0],
+        "ALTER TABLE \"main\".\"test\" RENAME TO \"_test_old_20261024\""
+    );
+    assert!(statements[1].starts_with("CREATE TABLE \"main\".\"test\""));
+    assert!(statements[1].contains("\"add_col\" TEXT"));
+    assert_eq!(
+        statements[2],
+        "INSERT INTO \"main\".\"test\" (\"id\", \"name\", \"detail\") SELECT \"id\", \"name\", \"detail\" FROM \"main\".\"_test_old_20261024\""
+    );
+    assert_eq!(statements[3], "DROP INDEX \"main\".\"ix_t\"");
+    assert_eq!(statements[4], "DROP TRIGGER \"main\".\"audit_t\"");
+    assert_eq!(statements[5], "CREATE INDEX ix_t ON test(name)");
+    assert!(statements[6].starts_with("CREATE TRIGGER audit_t"));
+    let mut dropped = design;
+    dropped.columns.retain(|c| c.name != "detail");
+    let statements = super::plan::plan_on(
+        Dialect::Sqlite,
+        &scope(),
+        Some(&before),
+        &dropped,
+        &["_test_old_20261024".into()],
+        "20261024",
+    )
+    .unwrap();
+    assert_eq!(
+        statements[0],
+        "ALTER TABLE \"main\".\"test\" RENAME TO \"_test_old_20261024_1\""
+    );
+    assert!(!statements[1].contains("detail"));
+    assert_eq!(
+        statements[2],
+        "INSERT INTO \"main\".\"test\" (\"id\", \"name\") SELECT \"id\", \"name\" FROM \"main\".\"_test_old_20261024_1\""
+    );
+    assert!(statements.iter().all(|sql| !sql.contains("DROP TABLE")));
+}
+
+#[test]
 fn sqlite_rebuild_preserves_rows_indexes_triggers_and_rolls_back() {
     crate::runtime::runtime().block_on(async {
         let mut session=crate::connect(Arc::new(crate::sqlite::SqliteDriver::default()),crate::ConnectParams {file:Some(":memory:".into()),create_new:true,..Default::default()}).await.unwrap();
@@ -47,6 +127,8 @@ fn sqlite_rebuild_preserves_rows_indexes_triggers_and_rolls_back() {
         let saved=apply(r,&scope,Some(&old),&draft).await.unwrap();
         let rows=r.execute("SELECT id,value,parent,extra FROM t").await.unwrap();assert_eq!(rows[0].rows[0],vec![Some("1".into()),Some("before".into()),Some("1".into()),Some("new".into())]);
         assert_eq!(saved.triggers.len(),1);assert_eq!(saved.design.indexes.len(),1);
+        let tables=r.execute("SELECT name FROM sqlite_schema WHERE type='table'").await.unwrap();
+        assert_eq!(tables[0].rows.iter().filter(|row| row[0].as_deref().is_some_and(|n| n.starts_with("_t_old_"))).count(),1);
         r.execute("INSERT INTO t(value,parent) VALUES('after',1)").await.unwrap();
         assert_eq!(r.execute("SELECT count(*) FROM audit").await.unwrap()[0].rows[0][0].as_deref(),Some("2"));
         let mut bad=saved.design.clone();bad.columns[1].definition="TEXT NOT NULL CHECK(value='invalid')".into();

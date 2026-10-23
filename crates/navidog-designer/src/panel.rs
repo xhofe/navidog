@@ -653,12 +653,74 @@ impl TableDesigner {
             return;
         }
         self.flush(cx);
-        match table_design::plan(
-            self.dialect,
-            &self.scope,
-            self.baseline.as_ref(),
-            &self.draft,
-        ) {
+        if self.dialect == Dialect::Sqlite
+            && self.baseline.is_some()
+            && let Some(job) = Sessions::global(cx)
+                .read(cx)
+                .new_session(&self.scope.connection, Some(&self.scope.database))
+        {
+            self.busy = true;
+            self.error = None;
+            let scope = self.scope.clone();
+            self.task = Some(cx.spawn_in(window, async move |this, cx| {
+                let names: DbResult<Vec<String>> = async {
+                    let mut session = job.await.map_err(|e| DbError::msg(e.to_string()))??;
+                    let job = navidog_db::runtime::spawn(async move {
+                        let result = async {
+                            let r = session.relational().ok_or_else(|| {
+                                DbError::msg(t!("designer.not_relational").to_string())
+                            })?;
+                            table_design::sqlite_table_names(r, &scope).await
+                        }
+                        .await;
+                        let _ = session.close().await;
+                        result
+                    });
+                    job.await.map_err(|e| DbError::msg(e.to_string()))?
+                }
+                .await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.busy = false;
+                    match names {
+                        Ok(names) => this.publish_preview(
+                            table_design::plan_with(
+                                this.dialect,
+                                &this.scope,
+                                this.baseline.as_ref(),
+                                &this.draft,
+                                &names,
+                            ),
+                            window,
+                            cx,
+                        ),
+                        Err(e) => {
+                            this.error = Some(e.to_string());
+                            cx.notify();
+                        }
+                    }
+                });
+            }));
+            cx.notify();
+            return;
+        }
+        self.publish_preview(
+            table_design::plan(
+                self.dialect,
+                &self.scope,
+                self.baseline.as_ref(),
+                &self.draft,
+            ),
+            window,
+            cx,
+        );
+    }
+    fn publish_preview(
+        &mut self,
+        sql: DbResult<Vec<String>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match sql {
             Ok(sql) => {
                 self.sql.update(cx, |s, cx| {
                     s.set_value(

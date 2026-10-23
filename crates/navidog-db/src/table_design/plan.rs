@@ -7,6 +7,28 @@ pub fn plan(
     before: Option<&TableSnapshot>,
     after: &TableDesign,
 ) -> DbResult<Vec<String>> {
+    plan_on(d, scope, before, after, &[], &today())
+}
+
+/// Like [`plan`], but SQLite rebuilds avoid backup names already in `occupied`.
+pub fn plan_with(
+    d: Dialect,
+    scope: &Scope,
+    before: Option<&TableSnapshot>,
+    after: &TableDesign,
+    occupied: &[String],
+) -> DbResult<Vec<String>> {
+    plan_on(d, scope, before, after, occupied, &today())
+}
+
+pub(super) fn plan_on(
+    d: Dialect,
+    scope: &Scope,
+    before: Option<&TableSnapshot>,
+    after: &TableDesign,
+    occupied: &[String],
+    day: &str,
+) -> DbResult<Vec<String>> {
     let mut after = after.clone();
     let mut before = before.cloned();
     if d == Dialect::Postgres {
@@ -76,7 +98,7 @@ pub fn plan(
             );
             return Ok(statements);
         }
-        return sqlite(scope, before, after);
+        return sqlite(scope, before, after, occupied, day);
     }
     let table = d.qualified(scope, &old.name);
     let mut out = Vec::new();
@@ -312,6 +334,40 @@ pub(super) fn index_name(sql: &str) -> DbResult<String> {
     }
     Ok(name)
 }
+
+fn trigger_name(sql: &str) -> DbResult<String> {
+    let (_, rest) = ident(sql)?;
+    let (mut word, mut rest) = ident(rest)?;
+    if word.eq_ignore_ascii_case("TEMP") || word.eq_ignore_ascii_case("TEMPORARY") {
+        (word, rest) = ident(rest)?;
+    }
+    if !word.eq_ignore_ascii_case("TRIGGER") {
+        return Err(DbError::msg("Expected a CREATE TRIGGER statement."));
+    }
+    Ok(ident(rest)?.0)
+}
+
+fn today() -> String {
+    chrono::Local::now().format("%Y%m%d").to_string()
+}
+
+/// `_table_old_YYYYMMDD`, then `_1`, `_2`, when that name is already a table.
+pub(super) fn backup_name(table: &str, day: &str, taken: &[String]) -> DbResult<String> {
+    let base = format!("_{table}_old_{day}");
+    if !taken.iter().any(|name| name.eq_ignore_ascii_case(&base)) {
+        return Ok(base);
+    }
+    // ponytail: a few same-day leftovers are enough; past this the schema is already a mess.
+    for n in 1..1000 {
+        let name = format!("{base}_{n}");
+        if !taken.iter().any(|taken| taken.eq_ignore_ascii_case(&name)) {
+            return Ok(name);
+        }
+    }
+    Err(DbError::msg(
+        "Too many leftover SQLite backup tables for this date.",
+    ))
+}
 fn pg_column(definition: &str) -> DbResult<(String, bool, Option<String>)> {
     let upper = definition.to_uppercase();
     for unsupported in [
@@ -356,7 +412,13 @@ fn pg_column(definition: &str) -> DbResult<(String, bool, Option<String>)> {
     };
     Ok((ty, not_null, default))
 }
-fn sqlite(scope: &Scope, before: &TableSnapshot, after: &TableDesign) -> DbResult<Vec<String>> {
+fn sqlite(
+    scope: &Scope,
+    before: &TableSnapshot,
+    after: &TableDesign,
+    occupied: &[String],
+    day: &str,
+) -> DbResult<Vec<String>> {
     let d = Dialect::Sqlite;
     let old = &before.design;
     if table_option(&old.options, "without_rowid", d)?
@@ -407,9 +469,13 @@ fn sqlite(scope: &Scope, before: &TableSnapshot, after: &TableDesign) -> DbResul
             })
             .collect());
     }
-    let temp = format!("__navidog_rebuild_{}", after.name);
+    let backup = backup_name(&after.name, day, occupied)?;
     let table = d.qualified(scope, &old.name);
-    let mut out = vec![after.create_sql(d, scope, &temp)?];
+    let mut out = vec![format!(
+        "ALTER TABLE {table} RENAME TO {}",
+        d.quote_ident(&backup)
+    )];
+    out.push(after.create_sql(d, scope, &after.name)?);
     let mut destination = Vec::new();
     let mut source = Vec::new();
     for c in &after.columns {
@@ -495,17 +561,28 @@ fn sqlite(scope: &Scope, before: &TableSnapshot, after: &TableDesign) -> DbResul
         ));
     }
     out.push(format!(
-        "INSERT INTO {} ({}) SELECT {} FROM {table}",
-        d.qualified(scope, &temp),
+        "INSERT INTO {table} ({}) SELECT {} FROM {}",
         destination.join(", "),
-        source.join(", ")
+        source.join(", "),
+        d.qualified(scope, &backup)
     ));
-    out.push(format!("DROP TABLE {table}"));
-    out.push(format!(
-        "ALTER TABLE {} RENAME TO {}",
-        d.qualified(scope, &temp),
-        d.quote_ident(&after.name)
-    ));
+    // Index and trigger names are schema-wide. They still belong to the renamed
+    // table, so drop those objects and create them on the new table. The backup
+    // table itself stays, with its rows.
+    for sql in &old.indexes {
+        out.push(format!(
+            "DROP INDEX {}.{}",
+            d.quote_ident(&scope.database),
+            d.quote_ident(&index_name(sql)?)
+        ));
+    }
+    for sql in &before.triggers {
+        out.push(format!(
+            "DROP TRIGGER {}.{}",
+            d.quote_ident(&scope.database),
+            d.quote_ident(&trigger_name(sql)?)
+        ));
+    }
     out.extend(after.indexes.clone());
     out.extend(before.triggers.clone());
     Ok(out)
