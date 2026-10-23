@@ -269,7 +269,7 @@ SELECT * FROM nope
 - [x] PostgreSQL 开 SSL（require）时，“停止”能取消正在执行的语句。
 - [x] MySQL 设置读取超时 2 秒后，`SELECT SLEEP(5)` 被取消并报告超时。
 - [ ] 消息页的措辞与 Navicat 并排核对。
-- [x] 有未提交值或空白新增草稿时，结果排序和手动刷新先结算活动单元格，再拒绝操作；保留行、草稿和最近接受的排序箭头，拒绝刷新不发出 SELECT。回归入口为 `accepted_results_keep_their_rows_and_original_source`。
+- [x] 有未提交值或空白新增草稿时，结果排序先结算活动单元格，再拒绝操作；保留行、草稿和最近接受的排序箭头。内部刷新 guard 的回归证明拒绝时不发出 SELECT，尚无用户入口。回归入口为 `accepted_results_keep_their_rows_and_original_source`。
 - [x] 查询结果提交使用独立操作会话；成功后先接受写入再同步，读取失败后再次提交不重复写。相同编辑器会话上的临时对象仍能用于刷新。回归入口为同一原来源回归中的元数据事务隔离、临时视图及同步失败触发器计数检查；本轮完整验证见架构基础验收记录。
 
 结果数据所有权和来源约定见 [架构基础优化](05-architecture-foundations.md) 第 3 节；排序与隐藏列始终使用网格已接受的数据，不能恢复提交前的独立快照。
