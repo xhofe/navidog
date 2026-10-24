@@ -22,7 +22,7 @@
 | R-10 | enum key 手写映射 | P2 | 已修 |
 | D-01 | 6 个错误文案包装与重复测试 | P1 | 暂缓 |
 | D-02 | 9 处 JSON 持久化 | P1 | 已修 |
-| D-03 | MySQL/PG 生命周期复制 | P1 | 进行中 |
+| D-03 | MySQL/PG 生命周期复制 | P1 | 已修 |
 | D-04 | 网格/查询提交与关闭复制 | P1 | 暂缓 |
 | D-05 | SQL 扫描重复 | P1 | 暂缓 |
 | D-06 | 对话框 footer 复制 | P2 | 已修 |
@@ -75,7 +75,7 @@
 - **R-04 / D-05（SQL 扫描统一）**：需要语法级解析器和 MySQL/PostgreSQL/SQLite 实库回归；当前六处扫描各有方言假设，强行合并会扩大风险。
 - **R-08（objc_msgSend）**：`gpui` 没有 dock icon 的跨平台 API；迁移 `objc2` 需要 macOS 运行时验证和额外依赖审计，P2。
 - **D-01（错误文案包装）**：现有包装是跨 crate 边界适配器，底层文案已通过 `navidog.*` 稳定 code 和 `app_error_text` 统一；继续抽象收益低于改动面。
-- **D-03（MySQL/PG 生命周期，进行中）**：`execute`/`execute_read` 的恢复策略已由同一宏生成；`replay`/`ping` 仍需 `RecoveringSession` 包装器和两种驱动的 live 断线回归。
+
 - **D-04（网格/查询提交）**：`GridSession` 提取会改变表查看器与查询结果的事务/重载协议，必须配合 live 测试。
 - **D-08（Catalog/OutlineCache）**：`ScopeCache<T>` 需要先统一五类不同 key 和失效代际，属于缓存层重构。
 - **S-07（每 crate i18n 后端）**：统一后端要在构建期合并 locales，并验证加载顺序，另立 PR。
