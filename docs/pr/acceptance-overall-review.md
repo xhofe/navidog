@@ -2,7 +2,7 @@
 
 - 分支：`review/overall-fixes`
 - 审查与进度： [docs/cr/2026-10-24-overall-review.md](../cr/2026-10-24-overall-review.md)
-- 范围：11 个 crate + `xtask` + CI/scripts 的跨 crate 审查；46 项已修，3 项进行中，8 项架构级建议暂缓并记录原因。
+- 范围：11 个 crate + `xtask` + CI/scripts 的跨 crate 审查；47 项已修，2 项进行中，8 项架构级建议暂缓并记录原因。
 
 ## 验证
 

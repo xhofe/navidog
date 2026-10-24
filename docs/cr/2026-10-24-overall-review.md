@@ -23,7 +23,7 @@
 | D-01 | 6 个错误文案包装与重复测试 | P1 | 已修 |
 | D-02 | 9 处 JSON 持久化 | P1 | 已修 |
 | D-03 | MySQL/PG 生命周期复制 | P1 | 已修 |
-| D-04 | 网格/查询提交与关闭复制 | P1 | 进行中 |
+| D-04 | 网格/查询提交与关闭复制 | P1 | 已修 |
 | D-05 | SQL 扫描重复 | P1 | 进行中 |
 | D-06 | 对话框 footer 复制 | P2 | 已修 |
 | D-07 | driver_name/db_text/kind_label 等 | P1 | 已修 |
@@ -74,7 +74,6 @@
 
 - **R-04 / D-05（SQL 扫描统一，进行中）**：引号与 `$tag$` 跳过已收拢到 `navidog_util::sql_text`；`find_params`、分句器、筛选解析的完整词法层仍需语法级重构和三种方言的回归。
 
-- **D-04（网格/查询提交，进行中）**：未保存关闭对话框已共用 `skin::close_prompt_footer`；`GridSession` 的提交/重载协议仍未统一，需配合 live 测试。
 - **D-08（Catalog/OutlineCache）**：`ScopeCache<T>` 需要先统一五类不同 key 和失效代际，属于缓存层重构。
 - **S-07（每 crate i18n 后端）**：统一后端要在构建期合并 locales，并验证加载顺序，另立 PR。
 - **A-01/A-02/A-03（core/db 分层）**：`navidog-core` 的 UI 状态、`navidog-db` 的元数据/设计器职责需要跨 crate 迁移，属于架构 epic。
