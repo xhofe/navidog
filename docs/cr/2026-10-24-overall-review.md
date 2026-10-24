@@ -68,6 +68,20 @@
 | B-15 | write_atomic 无 fsync | P1 | 已修 |
 | B-16 | 查找 ASCII-only | P2 | 已修 |
 
+## 暂缓项与原因
+
+这些是架构级重构，不是单点 bug；已在本次分支记录，建议按主题另开 PR，避免把行为迁移和修复混在一起：
+
+- **R-04 / D-05（SQL 扫描统一）**：需要语法级解析器和 MySQL/PostgreSQL/SQLite 实库回归；当前六处扫描各有方言假设，强行合并会扩大风险。
+- **R-08（objc_msgSend）**：`gpui` 没有 dock icon 的跨平台 API；迁移 `objc2` 需要 macOS 运行时验证和额外依赖审计，P2。
+- **D-01（错误文案包装）**：现有包装是跨 crate 边界适配器，底层文案已通过 `navidog.*` 稳定 code 和 `app_error_text` 统一；继续抽象收益低于改动面。
+- **D-03（MySQL/PG 生命周期，进行中）**：`execute`/`execute_read` 的恢复策略已由同一宏生成；`replay`/`ping` 仍需 `RecoveringSession` 包装器和两种驱动的 live 断线回归。
+- **D-04（网格/查询提交）**：`GridSession` 提取会改变表查看器与查询结果的事务/重载协议，必须配合 live 测试。
+- **D-08（Catalog/OutlineCache）**：`ScopeCache<T>` 需要先统一五类不同 key 和失效代际，属于缓存层重构。
+- **S-07（每 crate i18n 后端）**：统一后端要在构建期合并 locales，并验证加载顺序，另立 PR。
+- **A-01/A-02/A-03（core/db 分层）**：`navidog-core` 的 UI 状态、`navidog-db` 的元数据/设计器职责需要跨 crate 迁移，属于架构 epic。
+- **A-05/A-06/A-07/A-10**：提交协议迁移、缓存/选择状态统一、超长文件拆分、profile 交换模型都会改变公开行为或大量测试；按主题另立 PR。
+
 ## 0. 结论
 
 整体工程质量在个人项目里属于上游：设计文档和规格齐全，283 个测试函数覆盖了真实数据库、headless UI 和截图，`fmt`、`clippy -D warnings`、裸值检查都通过，错误恢复、连接代际、配置原子写这些难点有专门设计。**没有发现新的崩溃级或写错库级缺陷**，但有几处值得优先处理的正确性/安全边界（连接表单静默丢配置、URI 的 `+` 解码、`$tag$` 参数替换、SSH 主机密钥、更新包路径与校验窗口）；更大的问题是随着功能增加而长出来的结构性债务。
