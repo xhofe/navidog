@@ -1,6 +1,6 @@
 # macOS 免费签名验收
 
-日期：2026-10-24。分支：`codex/macos-adhoc-signing`，基于 `upstream/main` 的 `a35b796`；规格先独立提交为 `f214daa`。对应 F-REL-001、F-REL-002、F-REL-003，规格见 [150-macos-distribution.md](design/150-macos-distribution.md)。
+日期：2026-10-24。分支：`codex/macos-adhoc-signing`，基于 `upstream/main` 的 `a35b796`；规格先独立提交为 `f214daa`。对应 F-REL-001、F-REL-002、F-REL-003，规格见 [150-macos-distribution.md](../design/150-macos-distribution.md)。
 
 ## 实现
 

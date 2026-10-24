@@ -54,7 +54,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 命令列界面 | 完成 | 31 第 7 节 |
 | 批量删除后底部 SQL 状态文字溢出修复 | 完成 | 共享单行组件处理显式换行并保留悬停原文，表查看器与查询结果固定底栏高度；见 [验收记录](pr/acceptance-status-overflow.md) |
 | TLS 依赖审计补丁更新 | 完成 | `rustls-webpki` 升至 0.103.16、`webpki-roots` 升至 1.0.10；audit 与 deny 均通过，未新增忽略项；见 [验收记录](pr/acceptance-status-overflow.md) |
-| 查询执行后的对象与表格联动刷新 | 完成 | `codex/query-auto-refresh`；同连接已加载目录、DDL 和安全表格自动更新，编辑/事务保留，关闭查询窗口后仍通知；226 项测试、39 张本地截图及三项性能检查通过，见 [验收记录](acceptance-query-refresh.md) |
+| 查询执行后的对象与表格联动刷新 | 完成 | `codex/query-auto-refresh`；同连接已加载目录、DDL 和安全表格自动更新，编辑/事务保留，关闭查询窗口后仍通知；226 项测试、39 张本地截图及三项性能检查通过，见 [验收记录](pr/acceptance-query-refresh.md) |
 | 联动刷新验证时的依赖审计补丁更新 | 完成 | `ctutils` 0.4.4、`tokio` 1.53.3 修复新公布的问题；audit 与 deny 通过，未新增忽略项，见同份验收记录 |
 
 ### 架构基础优化（独立分支）
@@ -223,7 +223,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 功能 | 状态 | 验证 | 说明 |
 | --- | --- | --- | --- |
 | F-REL-001 打包 | 部分 | publish 工作流（`main` 推送与每日定时；安装包经 artifact 汇总后统一替换 `nightly`）；PR 预览构建产出 macOS aarch64 DMG artifact（7 天） | macOS DMG、Windows zip / MSI / `.msi.zip`、Linux deb / rpm / AppImage / tarball，附 `latest.json` 和 `SHA256SUMS`。未在每台机器上安装验证 |
-| F-REL-002 签名与公证 | 部分 | 本机真实签名/篡改/DMG 回归、完整应用首帧；publish/lint 配置检查 | 无证书时本地打包和发布共用免费临时签名脚本，严格验签失败则停止；完整签名应用经过 DMG 复制、整包替换仍可启动。两架构 CI 已接入回归，远端未跑；正式签名与公证未实测。见 [验收记录](acceptance-macos-signing.md) |
+| F-REL-002 签名与公证 | 部分 | 本机真实签名/篡改/DMG 回归、完整应用首帧；publish/lint 配置检查 | 无证书时本地打包和发布共用免费临时签名脚本，严格验签失败则停止；完整签名应用经过 DMG 复制、整包替换仍可启动。两架构 CI 已接入回归，远端未跑；正式签名与公证未实测。见 [验收记录](pr/acceptance-macos-signing.md) |
 | F-REL-003 自动更新 | 完成 | update 单元测试 | 与 F-APP-018 同一条路径：读 `latest.json` 的 `releases` 并校验 SHA-256。tag 的发布说明由 changelogithub 写入清单。tag 在清单上传成功后取消 draft。tag 构建在编译前把 workspace 版本改成 tag，不改仓库里的 Cargo.toml |
 | F-REL-004 迁移或升级 | 未开始 | | 配置目录还没有版本迁移 |
 

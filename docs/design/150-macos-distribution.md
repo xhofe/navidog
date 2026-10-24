@@ -26,4 +26,4 @@
 
 本机只证明当前架构；Intel CI、公证和实际浏览器下载后的系统放行另行记录，不由本机签名完整性检查代替。
 
-2026-10-24 的验证与边界见 [验收记录](../acceptance-macos-signing.md)。
+2026-10-24 的验证与边界见 [验收记录](../pr/acceptance-macos-signing.md)。
