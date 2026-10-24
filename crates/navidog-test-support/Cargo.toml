@@ -7,5 +7,5 @@ license.workspace = true
 publish = false
 
 [dependencies]
-gpui-kit.workspace = true
+gpui-kit = { workspace = true, features = ["test-support"] }
 navidog-db = { path = "../navidog-db" }

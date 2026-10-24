@@ -430,7 +430,7 @@ fn query_editor_driver_features() {
         );
 
         let e = rel.execute("SELECT SLEEP(5)").await.unwrap_err();
-        assert!(e.message.contains("超时"), "{e}");
+        assert_eq!(e.code.as_deref(), Some("navidog.read_timeout"), "{e}");
         // The session survives the kill
         let one = rel.execute("SELECT 1").await.unwrap();
         assert_eq!(one[0].rows[0][0].as_deref(), Some("1"));

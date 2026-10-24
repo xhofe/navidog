@@ -650,7 +650,6 @@ fn install_macos(dmg: &Path) -> Result<Delivery, String> {
     Ok(Delivery::HandedToOs)
 }
 
-#[cfg(target_os = "macos")]
 /// `codesign` integrity check. Release CI can pin the expected Team ID in
 /// `NAVIDOG_TEAM_ID`; without it an ad-hoc signature still has to be valid.
 #[cfg(target_os = "macos")]
@@ -677,6 +676,7 @@ fn verify_bundle(app: &Path) -> bool {
     })
 }
 
+#[cfg(target_os = "macos")]
 fn replace_bundle(app: &Path, dmg: &Path) -> Result<(), String> {
     let mount = std::env::temp_dir().join(format!("navidog-dmg-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&mount);
