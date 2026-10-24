@@ -348,12 +348,6 @@ conn:
   password_not_saved:
     en: "The password was not saved and will only be used for this connection attempt. %{detail}"
     zh-CN: "密码未保存，仅用于本次连接。%{detail}"
-  reload_session_lost:
-    en: "%{detail} The previous session state cannot be restored. Reopen the connection to continue."
-    zh-CN: "%{detail} 原会话状态无法恢复。请重新打开连接后继续。"
-  reload_outcome_unknown:
-    en: "%{detail} The execution outcome may be unknown. Check the database before retrying, then reopen the connection to continue."
-    zh-CN: "%{detail} 执行结果可能未知。请先检查数据库，确认后再重试，并重新打开连接后继续。"
   later:
     en: Later
     zh-CN: 稍后

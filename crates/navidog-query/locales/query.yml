@@ -51,12 +51,6 @@ query:
   no_connection:
     en: Select a connection to run the query.
     zh-CN: 请先在工具栏中选择连接。
-  session_lost:
-    en: "%{detail} The query session was lost. Reopen the connection to continue; its previous transactions, locks, and temporary objects cannot be restored."
-    zh-CN: "%{detail} 查询会话已断开。请重新打开连接后再继续；原会话的事务、锁和临时对象无法恢复。"
-  outcome_unknown:
-    en: "%{detail} The query execution outcome may be unknown. Check the database before retrying. Reopen the connection to continue; its previous transactions, locks, and temporary objects cannot be restored."
-    zh-CN: "%{detail} 查询执行结果可能未知。请先检查数据库，确认后再重试。请重新打开连接后再继续；原会话的事务、锁和临时对象无法恢复。"
   source_context_unknown:
     en: The original session context could not be verified. Run the query again before refreshing this result.
     zh-CN: 无法确认原会话的数据库或模式，请重新运行查询后再刷新此结果。

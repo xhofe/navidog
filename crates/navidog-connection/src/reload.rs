@@ -89,24 +89,11 @@ impl Reload {
 }
 
 fn error_message(error: &DbError) -> String {
-    recovery_message(error, &rust_i18n::locale())
-}
-
-fn recovery_message(error: &DbError, locale: &str) -> String {
-    navidog_ui::db_error_text_with(
+    navidog_ui::db_error_text(
         error.code.as_deref(),
         &error.message,
         error.is_session_lost(),
         error.is_outcome_unknown(),
-        |detail| t!("conn.reload_session_lost", locale = locale, detail = detail).to_string(),
-        |detail| {
-            t!(
-                "conn.reload_outcome_unknown",
-                locale = locale,
-                detail = detail
-            )
-            .to_string()
-        },
     )
 }
 
@@ -135,7 +122,7 @@ impl Render for Reload {
 
 #[cfg(test)]
 mod tests {
-    use super::{recovery_message, statements};
+    use super::statements;
 
     #[test]
     fn one_flush_per_checked_option() {
@@ -144,39 +131,5 @@ mod tests {
             ["FLUSH PRIVILEGES", "FLUSH TABLES"]
         );
         assert!(statements(&[false; 5]).is_empty());
-    }
-
-    #[test]
-    fn flush_recovery_guidance_keeps_diagnostics_and_uses_the_interface_language() {
-        let mut error = navidog_db::DbError::coded("08006", "original FLUSH diagnostic");
-        let detail = error.to_string();
-        for locale in ["en", "zh-CN"] {
-            assert_eq!(recovery_message(&error, locale), detail);
-            error.disconnected = true;
-            for unknown in [false, true] {
-                error.outcome_unknown = unknown;
-                let message = recovery_message(&error, locale);
-                assert!(message.starts_with(&detail));
-                assert!(!message.contains('\n'));
-                if locale == "en" {
-                    assert!(message.to_ascii_lowercase().contains("reopen"));
-                } else {
-                    assert!(message.contains("重新打开"));
-                }
-                if unknown {
-                    assert!(message.contains(if locale == "en" {
-                        "outcome may be unknown"
-                    } else {
-                        "执行结果可能未知"
-                    }));
-                }
-                if locale == "zh-CN" {
-                    assert!(!message.contains("Reopen"));
-                }
-            }
-            error.disconnected = false;
-            error.outcome_unknown = false;
-        }
-        assert_eq!(error.to_string(), detail);
     }
 }
