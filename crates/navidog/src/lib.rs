@@ -250,49 +250,23 @@ pub fn register_app_actions(cx: &mut App) {
 /// `scripts/bundle-macos.sh`; gpui ignores `WindowOptions::icon` on macOS.
 #[cfg(target_os = "macos")]
 fn set_dock_icon() {
-    use std::ffi::{CStr, c_char, c_void};
-
-    #[link(name = "objc", kind = "dylib")]
-    unsafe extern "C" {
-        fn objc_getClass(name: *const c_char) -> *mut c_void;
-        fn sel_registerName(name: *const c_char) -> *mut c_void;
-        // Not variadic: on arm64 a variadic declaration uses another ABI, so
-        // the extra arguments never arrive and AppKit throws.
-        fn objc_msgSend();
-    }
+    use objc2::{AnyThread, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::NSData;
 
     const SVG: &[u8] = include_bytes!("../resources/navidog.svg");
-    type Send0 = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void;
-    type Send1 = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void;
-    type SendBytes =
-        unsafe extern "C" fn(*mut c_void, *mut c_void, *const u8, usize) -> *mut c_void;
-
-    unsafe {
-        let sel = |name: &CStr| sel_registerName(name.as_ptr());
-        let send0: Send0 = std::mem::transmute(objc_msgSend as *const ());
-        let send1: Send1 = std::mem::transmute(objc_msgSend as *const ());
-        let send_bytes: SendBytes = std::mem::transmute(objc_msgSend as *const ());
-        let data = send_bytes(
-            objc_getClass(c"NSData".as_ptr()),
-            sel(c"dataWithBytes:length:"),
-            SVG.as_ptr(),
-            SVG.len(),
-        );
-        let image = send1(
-            send0(objc_getClass(c"NSImage".as_ptr()), sel(c"alloc")),
-            sel(c"initWithData:"),
-            data,
-        );
-        if image.is_null() {
-            tracing::warn!("the dock icon SVG did not load");
-            return;
-        }
-        let app = send0(
-            objc_getClass(c"NSApplication".as_ptr()),
-            sel(c"sharedApplication"),
-        );
-        send1(app, sel(c"setApplicationIconImage:"), image);
-    }
+    let Some(mtm) = MainThreadMarker::new() else {
+        tracing::warn!("the dock icon must be set on the main thread");
+        return;
+    };
+    let data =
+        unsafe { NSData::initWithBytes_length(NSData::alloc(), SVG.as_ptr().cast(), SVG.len()) };
+    let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) else {
+        tracing::warn!("the dock icon SVG did not load");
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    unsafe { app.setApplicationIconImage(Some(&image)) };
 }
 
 #[cfg(not(target_os = "macos"))]
