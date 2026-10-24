@@ -265,6 +265,36 @@ pub fn dialog_footer(
         .child(Button::new("ok").primary().label(ok.into()).on_click(on_ok))
 }
 
+/// Keep / discard / commit row used by the unsaved-tab dialogs. `prefix` keeps
+/// element ids unique per surface (`close`, `query-close`).
+pub fn close_prompt_footer(
+    prefix: &'static str,
+    keep: impl Into<SharedString>,
+    discard: impl Into<SharedString>,
+    primary: impl Into<SharedString>,
+    on_keep: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_discard: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_primary: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let id = move |suffix: &str| gpui_kit::ElementId::Name(format!("{prefix}-{suffix}").into());
+    h_flex()
+        .w_full()
+        .justify_end()
+        .gap_2()
+        .child(Button::new(id("keep")).label(keep).on_click(on_keep))
+        .child(
+            Button::new(id("discard"))
+                .label(discard)
+                .on_click(on_discard),
+        )
+        .child(
+            Button::new(id("commit"))
+                .primary()
+                .label(primary)
+                .on_click(on_primary),
+        )
+}
+
 pub fn heading(text: impl Into<SharedString>) -> impl IntoElement {
     div().font_weight(FontWeight::SEMIBOLD).child(text.into())
 }

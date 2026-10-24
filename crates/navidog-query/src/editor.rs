@@ -852,37 +852,24 @@ impl QueryEditor {
                     enter.update(cx, |e, cx| e.save_and_close(window, cx));
                     true
                 })
-                .footer(
-                    h_flex()
-                        .w_full()
-                        .justify_end()
-                        .gap_2()
-                        .child(
-                            Button::new("query-close-cancel")
-                                .label(t!("query.cancel").to_string())
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(
-                            Button::new("query-close-discard")
-                                .label(t!("query.dont_save").to_string())
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    discard.update(cx, |e, cx| {
-                                        crate::recovery::forget(&e.id);
-                                        e.close_now(window, cx)
-                                    });
-                                }),
-                        )
-                        .child(
-                            Button::new("query-close-save")
-                                .primary()
-                                .label(t!("query.save").to_string())
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    save.update(cx, |e, cx| e.save_and_close(window, cx));
-                                }),
-                        ),
-                )
+                .footer(navidog_ui::skin::close_prompt_footer(
+                    "query-close",
+                    t!("query.cancel").to_string(),
+                    t!("query.dont_save").to_string(),
+                    t!("query.save").to_string(),
+                    |_, window, cx| window.close_dialog(cx),
+                    move |_, window, cx| {
+                        window.close_dialog(cx);
+                        discard.update(cx, |e, cx| {
+                            crate::recovery::forget(&e.id);
+                            e.close_now(window, cx)
+                        });
+                    },
+                    move |_, window, cx| {
+                        window.close_dialog(cx);
+                        save.update(cx, |e, cx| e.save_and_close(window, cx));
+                    },
+                ))
         });
     }
 

@@ -423,39 +423,25 @@ impl TableViewer {
                     enter.update(cx, |v, cx| v.commit_and_close(window, cx));
                     true
                 })
-                .footer(
-                    h_flex()
-                        .w_full()
-                        .justify_end()
-                        .gap_2()
-                        .child(
-                            Button::new("close-keep")
-                                .label(t!("grid.cancel").to_string())
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(
-                            Button::new("close-discard")
-                                .label(t!("viewer.discard").to_string())
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    discard.update(cx, |v, cx| {
-                                        v.grid.update(cx, |g, cx| {
-                                            g.update_model(cx, |m| m.discard())
-                                        });
-                                        v.close_now(window, cx);
-                                    });
-                                }),
-                        )
-                        .child(
-                            Button::new("close-commit")
-                                .primary()
-                                .label(t!("viewer.commit").to_string())
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    commit.update(cx, |v, cx| v.commit_and_close(window, cx));
-                                }),
-                        ),
-                )
+                .footer(navidog_ui::skin::close_prompt_footer(
+                    "close",
+                    t!("grid.cancel").to_string(),
+                    t!("viewer.discard").to_string(),
+                    t!("viewer.commit").to_string(),
+                    |_, window, cx| window.close_dialog(cx),
+                    move |_, window, cx| {
+                        window.close_dialog(cx);
+                        discard.update(cx, |v, cx| {
+                            v.grid
+                                .update(cx, |g, cx| g.update_model(cx, |m| m.discard()));
+                            v.close_now(window, cx);
+                        });
+                    },
+                    move |_, window, cx| {
+                        window.close_dialog(cx);
+                        commit.update(cx, |v, cx| v.commit_and_close(window, cx));
+                    },
+                ))
         });
     }
 
