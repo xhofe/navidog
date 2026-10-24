@@ -193,6 +193,35 @@ pub struct ForeignKey {
 /// `remember`, `lost`, `recovery` and `cancellation`. Both network drivers differ
 /// only in how they decide a connection is lost, so keeping the recovery policy
 /// here prevents the two copies from drifting.
+/// Generates `ping` for a network session whose `$probe` future checks liveness.
+#[macro_export]
+macro_rules! recovering_ping {
+    ($self:ident, $probe:expr) => {
+        fn ping(&mut $self) -> BoxFuture<'_, DbResult<()>> {
+            async move {
+                let first = $probe.await;
+                let result = match first {
+                    Err(e) if $self.lost(&e) && $self.recovery.can_reconnect() => {
+                        tracing::warn!("metadata session lost ({e}); reconnecting");
+                        $self.reconnect().await?;
+                        $probe.await
+                    }
+                    other => other,
+                };
+                result.map_err(|e| {
+                    if $self.lost(&e) {
+                        $self.cancellation.clear();
+                        interrupted(e, false)
+                    } else {
+                        e
+                    }
+                })
+            }
+            .boxed()
+        }
+    };
+}
+
 #[macro_export]
 macro_rules! recovering_execute {
     () => {

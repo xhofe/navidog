@@ -360,37 +360,13 @@ impl Session for PgSession {
         &self.version
     }
 
-    fn ping(&mut self) -> BoxFuture<'_, DbResult<()>> {
-        async move {
-            let result = match self
-                .client
-                .simple_query("SELECT 1")
-                .await
-                .map(|_| ())
-                .map_err(err)
-            {
-                Err(e) if self.lost(&e) && self.recovery.can_reconnect() => {
-                    tracing::warn!("PostgreSQL metadata session lost ({e}); reconnecting");
-                    self.reconnect().await?;
-                    self.client
-                        .simple_query("SELECT 1")
-                        .await
-                        .map(|_| ())
-                        .map_err(err)
-                }
-                other => other,
-            };
-            result.map_err(|e| {
-                if self.lost(&e) {
-                    self.cancellation.clear();
-                    interrupted(e, false)
-                } else {
-                    e
-                }
-            })
-        }
-        .boxed()
-    }
+    crate::recovering_ping!(self, async {
+        self.client
+            .simple_query("SELECT 1")
+            .await
+            .map(|_| ())
+            .map_err(err)
+    });
 
     fn cancel_handle(&self) -> Option<CancelHandle> {
         Some(self.cancellation.handle())

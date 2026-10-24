@@ -244,27 +244,7 @@ impl Session for MySqlSession {
         &self.version
     }
 
-    fn ping(&mut self) -> BoxFuture<'_, DbResult<()>> {
-        async move {
-            let result = match self.conn.ping().await.map_err(err) {
-                Err(e) if e.disconnected && self.recovery.can_reconnect() => {
-                    tracing::warn!("MySQL metadata session lost ({e}); reconnecting");
-                    self.reconnect().await?;
-                    self.conn.ping().await.map_err(err)
-                }
-                other => other,
-            };
-            result.map_err(|e| {
-                if e.disconnected {
-                    self.cancellation.clear();
-                    interrupted(e, false)
-                } else {
-                    e
-                }
-            })
-        }
-        .boxed()
-    }
+    crate::recovering_ping!(self, async { self.conn.ping().await.map_err(err) });
 
     fn cancel_handle(&self) -> Option<CancelHandle> {
         Some(self.cancellation.handle())
