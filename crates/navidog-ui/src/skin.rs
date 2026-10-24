@@ -1,7 +1,8 @@
 //! Skin components with the AppKit look. Behavior comes from GPUI elements and gpui-component
 //! components; these only handle appearance and sizing.
 
-use gpui_kit::component::{Icon, h_flex, v_flex};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::{Icon, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, ClickEvent, ElementId, FontWeight, Hsla, InteractiveElement as _, IntoElement,
@@ -245,6 +246,25 @@ pub fn form_note(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
 }
 
 /// Dialog heading (Semibold 13pt).
+/// Cancel/OK row shared by the connection dialogs. The caller owns both
+/// labels and the OK action; the ids stay `cancel`/`ok` for tests and Enter.
+pub fn dialog_footer(
+    cancel: impl Into<SharedString>,
+    ok: impl Into<SharedString>,
+    on_ok: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    h_flex()
+        .justify_end()
+        .gap_2()
+        .pt_2()
+        .child(
+            Button::new("cancel")
+                .label(cancel.into())
+                .on_click(|_, window, cx| window.close_dialog(cx)),
+        )
+        .child(Button::new("ok").primary().label(ok.into()).on_click(on_ok))
+}
+
 pub fn heading(text: impl Into<SharedString>) -> impl IntoElement {
     div().font_weight(FontWeight::SEMIBOLD).child(text.into())
 }

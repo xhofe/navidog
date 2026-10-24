@@ -5069,6 +5069,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shellexpand",
+ "strum",
  "sys-locale",
  "tempfile",
  "thiserror 2.0.21",

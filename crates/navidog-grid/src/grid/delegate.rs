@@ -504,11 +504,7 @@ impl TableDelegate for GridDelegate {
             .filter(|(pos, _)| *pos == (r, c))
             .map(|(_, input)| input.clone());
         let selected = self.model.is_selected(r, c);
-        let numeric = self
-            .model
-            .columns
-            .get(c)
-            .is_some_and(|col| type_kind(&col.type_name) == TypeKind::Number);
+        let numeric = self.model.kind(c) == TypeKind::Number;
         let hit = self
             .find
             .as_ref()

@@ -4,10 +4,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{WindowExt as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
@@ -224,16 +223,7 @@ pub(crate) fn footer(
     ok: String,
     on_ok: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    h_flex()
-        .justify_end()
-        .gap_2()
-        .pt_2()
-        .child(
-            Button::new("cancel")
-                .label(t!("conn.cancel").to_string())
-                .on_click(|_, window, cx| window.close_dialog(cx)),
-        )
-        .child(Button::new("ok").primary().label(ok).on_click(on_ok))
+    navidog_ui::skin::dialog_footer(t!("conn.cancel").to_string(), ok, on_ok)
 }
 
 struct Unlock {

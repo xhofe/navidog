@@ -22,6 +22,7 @@ dirs = "6"
 shellexpand = "3"
 tempfile = "3"
 sys-locale = "0.3"
+strum = { version = "0.28", features = ["derive"] }
 
 # macOS Keychain and Windows Credential Manager. Linux keeps the machine key
 # in a 0600 file (see `crypto::machine_key`); secret-service is not linked.

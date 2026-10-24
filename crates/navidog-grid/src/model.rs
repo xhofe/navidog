@@ -59,6 +59,8 @@ pub struct GridModel {
     /// While a commit or a load is running, edits are refused: the commit's success reloads the
     /// page (or marks every change committed), and a load replaces the rows, either way losing them.
     pub locked: bool,
+    kinds: Vec<TypeKind>,
+    text_columns: Vec<bool>,
     anchor: Pos,
     head: Pos,
 }
@@ -93,6 +95,7 @@ impl GridModel {
         }
         self.hidden_rows.clear();
         (self.columns, self.rows) = Self::project(&columns, &rows, hidden);
+        self.cache_columns();
         self.set_hidden_columns(&columns, &rows, hidden);
         for row in &mut self.new_rows {
             *row = vec![None; self.columns.len()];
@@ -142,6 +145,7 @@ impl GridModel {
     pub fn set_data(&mut self, columns: Vec<GridColumn>, rows: Vec<Vec<Cell>>) {
         self.columns = columns;
         self.rows = rows;
+        self.cache_columns();
         self.hidden_columns.clear();
         self.hidden_rows.clear();
         self.discard();
@@ -171,6 +175,7 @@ impl GridModel {
             return;
         }
         self.columns = order.iter().map(|&i| self.columns[i].clone()).collect();
+        self.cache_columns();
         for row in &mut self.rows {
             let next = permute_cells(row, order);
             *row = next;
@@ -213,17 +218,41 @@ impl GridModel {
         let Some(Some(s)) = self.value(r, c) else {
             return SharedString::default();
         };
-        let quote = raw_mode
-            && !self.raw.contains(&(r, c))
-            && self
-                .columns
-                .get(c)
-                .is_some_and(|col| is_string_type(&col.type_name));
+        let quote = raw_mode && !self.raw.contains(&(r, c)) && self.is_text(c);
         if quote {
             dialect.string_literal(s).into()
         } else {
             s.clone()
         }
+    }
+
+    /// Cached from `columns` on every column change; the delegate calls this per cell per frame.
+    pub fn kind(&self, c: usize) -> TypeKind {
+        self.kinds.get(c).copied().unwrap_or(TypeKind::Other)
+    }
+
+    pub fn set_column_type(&mut self, c: usize, type_name: impl Into<SharedString>) {
+        if let Some(column) = self.columns.get_mut(c) {
+            column.type_name = type_name.into();
+            self.cache_columns();
+        }
+    }
+
+    pub fn is_text(&self, c: usize) -> bool {
+        self.text_columns.get(c).copied().unwrap_or(false)
+    }
+
+    fn cache_columns(&mut self) {
+        self.kinds = self
+            .columns
+            .iter()
+            .map(|column| type_kind(&column.type_name))
+            .collect();
+        self.text_columns = self
+            .columns
+            .iter()
+            .map(|column| is_string_type(&column.type_name))
+            .collect();
     }
 
     pub fn value(&self, r: usize, c: usize) -> Option<&Cell> {
@@ -1328,19 +1357,29 @@ mod tests {
 
     #[test]
     fn sorting_uses_the_column_type_and_unicode_find_ignores_case() {
-        let mut m = model(true);
-        m.columns[0].type_name = "int".into();
-        m.set_data(
-            vec![m.columns[0].clone()],
+        let mut numeric = model(true);
+        numeric.columns[0].type_name = "int".into();
+        numeric.set_data(
+            vec![numeric.columns[0].clone()],
             vec![vec![Some("10".into())], vec![Some("9".into())]],
         );
-        m.sort_rows(0, true);
-        assert_eq!(m.value(0, 0), Some(&Some("9".into())));
-        m.columns[0].type_name = "varchar".into();
-        m.sort_rows(0, true);
-        assert_eq!(m.value(0, 0), Some(&Some("10".into())));
-        m.set_data(vec![m.columns[0].clone()], vec![vec![Some("Ärger".into())]]);
-        assert_eq!(m.find_cell("ärger", (0, 0), false, false), Some((0, 0)));
+        numeric.sort_rows(0, true);
+        assert_eq!(numeric.value(0, 0), Some(&Some("9".into())));
+
+        let mut text = model(true);
+        text.columns[0].type_name = "varchar".into();
+        text.set_data(
+            vec![text.columns[0].clone()],
+            vec![vec![Some("10".into())], vec![Some("9".into())]],
+        );
+        text.sort_rows(0, true);
+        assert_eq!(text.value(0, 0), Some(&Some("10".into())));
+
+        text.set_data(
+            vec![text.columns[0].clone()],
+            vec![vec![Some("Ärger".into())]],
+        );
+        assert_eq!(text.find_cell("ärger", (0, 0), false, false), Some((0, 0)));
     }
 
     #[test]
@@ -1523,7 +1562,7 @@ mod tests {
     #[test]
     fn raw_mode_quotes_string_values_only() {
         let mut m = model(true);
-        m.columns[1].type_name = "varchar(45)".into();
+        m.set_column_type(1, "varchar(45)");
         assert_eq!(m.raw_text(0, 1, true, Dialect::Sqlite), "'a'");
         assert_eq!(m.raw_text(0, 0, true, Dialect::Sqlite), "1");
         assert_eq!(m.raw_text(1, 1, true, Dialect::MySql), "");

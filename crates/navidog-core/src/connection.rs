@@ -328,8 +328,11 @@ pub struct AttachedDatabase {
     pub file: String,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr,
+)]
 #[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
 pub enum SslMode {
     Allow,
     #[default]
@@ -349,13 +352,7 @@ impl SslMode {
     ];
 
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Allow => "allow",
-            Self::Prefer => "prefer",
-            Self::Require => "require",
-            Self::VerifyCa => "verify-ca",
-            Self::VerifyFull => "verify-full",
-        }
+        self.into()
     }
 }
 
@@ -496,6 +493,14 @@ mod tests {
         lite.general.file = Some("/tmp/app.db".into());
         assert_eq!(lite.suggested_name(), "app");
         assert!(!lite.supports_network());
+    }
+
+    #[test]
+    fn ssl_mode_keys_match_their_serialized_names() {
+        for mode in SslMode::ALL {
+            let json = serde_json::to_string(&mode).unwrap();
+            assert_eq!(json, format!("\"{}\"", mode.as_str()));
+        }
     }
 
     #[test]

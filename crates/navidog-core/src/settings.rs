@@ -308,22 +308,11 @@ impl Settings {
     }
 
     fn load_from(path: &std::path::Path) -> Self {
-        let Ok(bytes) = std::fs::read(path) else {
-            return Self::default();
-        };
-        serde_json::from_slice(&bytes).unwrap_or_else(|err| {
-            // The next save writes defaults over this file: keep a copy, as connections.json does
-            tracing::error!("settings.json cannot be parsed, backed up: {err}");
-            let _ = std::fs::copy(path, path.with_extension("json.bak"));
-            Self::default()
-        })
+        crate::json_store::JsonStore::new(path).load()
     }
 
     pub fn save(&self) {
-        let bytes = serde_json::to_vec_pretty(self).expect("settings serialize");
-        if let Err(err) = paths::write_atomic(&Self::path(), &bytes) {
-            tracing::error!("failed to save settings.json: {err}");
-        }
+        crate::json_store::JsonStore::new(Self::path()).save_lossy(self);
     }
 
     pub fn global(cx: &App) -> &Self {
