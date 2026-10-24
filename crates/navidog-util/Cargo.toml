@@ -11,6 +11,7 @@ description = "Pure helpers shared by the navidog crates. No UI and no database 
 chrono.workspace = true
 semver = "1"
 hex.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sqlformat = "0.5"
 unicode-width = "0.2.2"

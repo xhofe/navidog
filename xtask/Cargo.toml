@@ -8,3 +8,5 @@ license.workspace = true
 [dependencies]
 nibarchive = "0.1"
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+navidog-util = { path = "../crates/navidog-util" }

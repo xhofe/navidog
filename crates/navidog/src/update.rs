@@ -23,6 +23,7 @@ use gpui_kit::{
 use navidog_core::settings::Settings;
 use navidog_ui::tokens;
 use navidog_util::update::{hex_encode, newer_version, nightly_is_newer, notes_preview};
+use navidog_util::update_manifest::Asset as ManifestAsset;
 use rust_i18n::t;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -174,19 +175,6 @@ struct UpdateRelease {
     body: String,
     #[serde(default)]
     assets: Vec<ManifestAsset>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ManifestAsset {
-    os: String,
-    arch: String,
-    kind: String,
-    name: String,
-    url: String,
-    #[serde(default)]
-    sha256: String,
-    #[serde(default)]
-    size: u64,
 }
 
 fn empty_if_null<'de, D>(deserializer: D) -> Result<String, D::Error>

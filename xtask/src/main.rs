@@ -3,6 +3,7 @@
 //! `cargo xtask nib-dump [Navicat.app] [output dir]`: export compiled Navicat nibs as JSON view trees.
 //! `cargo xtask help-index [Navicat.app] [output file]`: collect help-page names and titles.
 //! `cargo xtask nib-tree <nib name>`: print an exported nib as a compact tree (class, frame, text, font) for specs.
+//! `cargo xtask manifest --meta FILE --version V --tag T --repo R --notes FILE`: latest.json.
 
 use std::{collections::HashSet, fs, path::PathBuf};
 
@@ -18,8 +19,9 @@ fn main() {
         Some("nib-dump") => nib_dump(&app, args.get(2).map(PathBuf::from)),
         Some("help-index") => help_index(&app, args.get(2).map(PathBuf::from)),
         Some("nib-tree") if args.len() > 1 => nib_tree(&args[1]),
+        Some("manifest") => manifest(&args[1..]),
         _ => Err(
-            "usage: cargo xtask <nib-dump|help-index> [Navicat.app] [output path] | nib-tree <name>"
+            "usage: cargo xtask <nib-dump|help-index> [Navicat.app] [output path] | nib-tree <name> | manifest --meta FILE --version V --tag T --repo R --notes FILE"
                 .into(),
         ),
     };
@@ -30,6 +32,74 @@ fn main() {
 }
 
 type Result<T> = std::result::Result<T, String>;
+
+fn manifest(args: &[String]) -> Result<()> {
+    use navidog_util::update_manifest::{Asset, Manifest};
+
+    let mut meta = None;
+    let mut version = None;
+    let mut tag = None;
+    let mut repo = None;
+    let mut notes = None;
+    let mut i = 0;
+    while i < args.len() {
+        let value = args
+            .get(i + 1)
+            .ok_or_else(|| format!("{} needs a value", args[i]))?;
+        match args[i].as_str() {
+            "--meta" => meta = Some(value),
+            "--version" => version = Some(value),
+            "--tag" => tag = Some(value),
+            "--repo" => repo = Some(value),
+            "--notes" => notes = Some(value),
+            other => return Err(format!("unknown manifest flag: {other}")),
+        }
+        i += 2;
+    }
+    let meta = meta.ok_or("manifest needs --meta")?;
+    let version = version.ok_or("manifest needs --version")?;
+    let tag = tag.ok_or("manifest needs --tag")?;
+    let repo = repo.ok_or("manifest needs --repo")?;
+    let notes = notes.ok_or("manifest needs --notes")?;
+
+    let mut assets = Vec::new();
+    for (line, text) in fs::read_to_string(meta)
+        .map_err(|e| e.to_string())?
+        .lines()
+        .enumerate()
+    {
+        let fields: Vec<&str> = text.split_whitespace().collect();
+        if fields.is_empty() {
+            continue;
+        }
+        let [os, arch, kind, name, sha256, size] = fields.as_slice() else {
+            return Err(format!("{}:{}: expected 6 fields", meta, line + 1));
+        };
+        assets.push(Asset {
+            os: (*os).into(),
+            arch: (*arch).into(),
+            kind: (*kind).into(),
+            name: (*name).into(),
+            url: format!("https://github.com/{repo}/releases/download/{tag}/{name}"),
+            sha256: (*sha256).into(),
+            size: size
+                .parse()
+                .map_err(|_| format!("{}:{}: bad size", meta, line + 1))?,
+        });
+    }
+    let manifest = Manifest {
+        version: version.into(),
+        tag: tag.into(),
+        notes: format!("https://github.com/{repo}/releases/tag/{tag}"),
+        assets,
+        body: fs::read_to_string(notes).map_err(|e| e.to_string())?,
+    };
+    println!(
+        "{}",
+        serde_json::to_string(&manifest).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}
 
 fn nib_dump(app: &std::path::Path, out: Option<PathBuf>) -> Result<()> {
     let src = app.join("Contents/Resources/Base.lproj");
