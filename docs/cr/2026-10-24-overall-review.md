@@ -29,7 +29,7 @@
 | D-07 | driver_name/db_text/kind_label 等 | P1 | 已修 |
 | D-08 | Catalog 与 OutlineCache 双缓存 | P2 | 待修 |
 | D-09 | nav.* locale 死块 | P0 | 已修 |
-| D-10 | 测试 helper 复制 | P2 | 待修 |
+| D-10 | 测试 helper 复制 | P2 | 进行中 |
 | D-11 | 更新清单 Rust/CI 双份 | P1 | 待修 |
 | D-12 | 状态栏重建对象列表 | P1 | 已修 |
 | S-01 | 中文注释/文案与 DbError 本地化 | P0 | 已修 |

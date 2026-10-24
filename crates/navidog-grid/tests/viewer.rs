@@ -1,8 +1,9 @@
 //! Headless UI test of the table viewer on a real SQLite table: paging with an uncommitted edit
 //! commits it first, and "auto begin transaction" still loads the first page.
 
+use navidog_test_support::wait;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
@@ -35,15 +36,6 @@ struct Host {
 impl Render for Host {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().size_full().child(self.viewer.clone())
-    }
-}
-
-fn wait(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !done(cx) {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        cx.run_until_parked();
-        std::thread::sleep(Duration::from_millis(20));
     }
 }
 

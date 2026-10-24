@@ -1,8 +1,9 @@
 //! Headless UI test of navigator arrow keys on a real SQLite connection: once a table is expanded,
 //! ↓ walks through the rows under it to the next table instead of stopping on the table row.
 
+use navidog_test_support::wait;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
@@ -39,14 +40,6 @@ impl Render for Host {
 }
 
 /// Runs the app and the tokio driver until `done`, or fails after a few seconds.
-fn wait(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !done(cx) {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        cx.run_until_parked();
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
 
 #[gpui_kit::test]
 fn arrow_keys_walk_through_the_rows_under_a_table(cx: &mut TestAppContext) {

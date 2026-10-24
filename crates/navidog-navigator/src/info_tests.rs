@@ -1,8 +1,8 @@
 //! Headless test of the info pane's query pages: they come and go with the query editor, a
 //! snippet saves from the editor dialog, and identifiers list a real SQLite table.
 
+use navidog_test_support::wait;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
@@ -26,15 +26,6 @@ struct Host {
 impl Render for Host {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         crate::bind_actions(div().size_full().child(self.info.clone()))
-    }
-}
-
-fn wait(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !done(cx) {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        cx.run_until_parked();
-        std::thread::sleep(Duration::from_millis(20));
     }
 }
 

@@ -5123,6 +5123,7 @@ dependencies = [
  "gpui-kit",
  "navidog-core",
  "navidog-db",
+ "navidog-test-support",
  "navidog-ui",
  "navidog-util",
  "rust-i18n",
@@ -5139,6 +5140,7 @@ dependencies = [
  "gpui-kit",
  "navidog-core",
  "navidog-db",
+ "navidog-test-support",
  "navidog-ui",
  "navidog-util",
  "rust-i18n",
@@ -5160,6 +5162,7 @@ dependencies = [
  "navidog-core",
  "navidog-db",
  "navidog-grid",
+ "navidog-test-support",
  "navidog-ui",
  "navidog-util",
  "regex",
@@ -5169,6 +5172,13 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "navidog-test-support"
+version = "0.0.1"
+dependencies = [
+ "gpui-kit",
 ]
 
 [[package]]

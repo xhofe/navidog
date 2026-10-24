@@ -21,5 +21,6 @@ serde.workspace = true
 chrono.workspace = true
 
 [dev-dependencies]
+navidog-test-support = { path = "../navidog-test-support" }
 gpui-kit = { workspace = true, features = ["test-support", "tree-sitter-sql"] }
 tempfile = "3"

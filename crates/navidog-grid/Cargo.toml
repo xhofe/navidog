@@ -20,4 +20,5 @@ tokio.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+navidog-test-support = { path = "../navidog-test-support" }
 gpui-kit = { workspace = true, features = ["test-support"] }
