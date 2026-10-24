@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::json_store::JsonStore;
 use crate::object::Scope;
 use crate::paths;
 
@@ -19,9 +20,7 @@ struct File {
 }
 
 fn file_path(root: &Path, connection: &str) -> PathBuf {
-    root.join("profiles")
-        .join(connection)
-        .join(".column-widths.json")
+    paths::profile_dir_in(root, connection).join(".column-widths.json")
 }
 
 /// `database \u{1f} schema \u{1f} table`. An empty schema is an empty segment.
@@ -34,34 +33,16 @@ fn table_key(scope: &Scope, table: &str) -> String {
 }
 
 fn read_file(path: &Path) -> File {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            return File {
-                version: 1,
-                tables: BTreeMap::new(),
-            };
-        }
-    };
-    match serde_json::from_slice(&bytes) {
-        Ok(file) => file,
-        Err(err) => {
-            tracing::error!("failed to read column widths at {}: {err}", path.display());
-            File {
-                version: 1,
-                tables: BTreeMap::new(),
-            }
-        }
-    }
+    JsonStore::new(path)
+        .load_optional::<File>()
+        .unwrap_or(File {
+            version: 1,
+            tables: BTreeMap::new(),
+        })
 }
 
 fn write_file(path: &Path, file: &File) {
-    let Ok(bytes) = serde_json::to_vec_pretty(file) else {
-        return;
-    };
-    if let Err(err) = paths::write_atomic(path, &bytes) {
-        tracing::error!("failed to save column widths: {err}");
-    }
+    JsonStore::new(path).save_lossy(file);
 }
 
 pub fn load(scope: &Scope, table: &str) -> BTreeMap<String, f32> {

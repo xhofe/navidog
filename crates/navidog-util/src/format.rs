@@ -2,41 +2,25 @@
 
 /// Bytes of `text` as lowercase hex pairs separated by spaces.
 pub fn encode_hex(text: &str) -> String {
-    text.bytes()
-        .map(|b| format!("{b:02x}"))
+    let encoded = hex::encode(text.as_bytes());
+    encoded
+        .as_bytes()
+        .chunks(2)
+        .map(|pair| std::str::from_utf8(pair).unwrap_or_default())
         .collect::<Vec<_>>()
         .join(" ")
 }
 
 /// `None` when the hex is malformed or the bytes are not UTF-8.
 pub fn decode_hex(text: &str) -> Option<String> {
-    let hex: Vec<u8> = text.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
-    if !hex.len().is_multiple_of(2) {
-        return None;
-    }
-    let mut bytes = Vec::with_capacity(hex.len() / 2);
-    let mut i = 0;
-    while i < hex.len() {
-        let hi = hex_val(hex[i])?;
-        let lo = hex_val(hex[i + 1])?;
-        bytes.push((hi << 4) | lo);
-        i += 2;
-    }
+    let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    let bytes = hex::decode(compact).ok()?;
     String::from_utf8(bytes).ok()
 }
 
 pub fn pretty_json(text: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(text.trim()).ok()?;
     serde_json::to_string_pretty(&value).ok()
-}
-
-fn hex_val(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

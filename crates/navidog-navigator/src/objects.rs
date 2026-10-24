@@ -28,7 +28,7 @@ use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::ObjectInfo;
 use navidog_db::dialect::Dialect;
 use navidog_db::sessions::{ConnState, Sessions};
-use navidog_ui::assets::{driver_icon, lucide};
+use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
 use navidog_ui::{palette, tabs, tokens};
 use rust_i18n::t;
@@ -66,6 +66,9 @@ pub struct ObjectsPanel {
     /// Detail view sort: (column key, ascending)
     sort: Option<(String, bool)>,
     scroll: UniformListScrollHandle,
+    /// Row count from the last render. The status bar reads this instead of
+    /// rebuilding every row (and cloning every property) on each frame.
+    last_rows: Option<usize>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -198,6 +201,7 @@ impl ObjectsPanel {
                 view: ViewMode::List,
                 sort: None,
                 scroll: UniformListScrollHandle::new(),
+                last_rows: None,
                 _subscriptions: subs,
             }
         });
@@ -257,6 +261,15 @@ impl ObjectsPanel {
             }
         }
         listed_kind(&selection).is_some_and(|(scope, kind)| missing(&scope, kind))
+    }
+
+    /// The row count of the last render, or `None` until the panel rendered once.
+    pub(crate) fn cached_rows(cx: &App) -> Option<usize> {
+        cx.try_global::<SharedObjects>()?
+            .0
+            .upgrade()?
+            .read(cx)
+            .last_rows
     }
 
     pub(crate) fn content(cx: &App) -> Content {
@@ -693,7 +706,7 @@ impl ObjectsPanel {
                         let row = &rows[ix];
                         let selected = row.target == selection;
                         let icon = match &row.icon {
-                            RowIcon::Driver(d) => img(driver_icon(d))
+                            RowIcon::Driver(d) => img(navidog_db::DriverRegistry::icon(cx, d))
                                 .size(tokens::navigator::ROW_ICON.rems())
                                 .into_any_element(),
                             RowIcon::Folder => lucide("folder")
@@ -797,6 +810,10 @@ impl Render for ObjectsPanel {
         }
         let p = palette(cx);
         let content = Self::content(cx);
+        self.last_rows = match &content {
+            Content::Rows(rows, _) => Some(rows.len()),
+            _ => None,
+        };
         let show_profile = crate::navigator::view_options(cx).show_table_profile;
         let selection = Workspace::global(cx).read(cx).selection().clone();
         let mut profile = None;

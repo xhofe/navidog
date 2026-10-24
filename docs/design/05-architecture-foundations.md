@@ -2,6 +2,9 @@
 
 基线：`upstream/main` 的 `4c403de`；分支：`codex/architecture-foundations`。覆盖 F-CONN-011/012/020、F-PREF-010、F-DATA-003/004/009 与 F-QRY-006/007。保留现有 capability crate 分层与全量内存结果模型；M4 独立 PR 不纳入此分支。
 
+> 2026-10-24 整体审查清理时删除了 `navidog_connection::store_error_message` 和 `Sessions::run_once` 两个弃用兼容入口；下文“保留为弃用入口”描述的是当时批次的行为。
+
+
 ## 1. 执行与会话安全
 
 普通 `Relational::execute` 和用户 SQL 的 `execute_statement` 每次调用最多向当前物理会话提交一次。传输失败不重放原语句；写入响应丢失时返回可见错误，说明执行结果可能未知。事务、锁、临时表和会话设置不得因自动重连静默丢失。

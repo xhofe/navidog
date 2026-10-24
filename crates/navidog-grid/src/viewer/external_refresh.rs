@@ -17,7 +17,9 @@ impl TableViewer {
             let dialect = self.dialect.unwrap_or(Dialect::Sqlite);
             if self.form_inputs.iter().enumerate().any(|(column, input)| {
                 input.read(cx).value().as_ref()
-                    != grid.model(cx).raw_text(row, column, self.raw_data, dialect)
+                    != grid
+                        .model(cx)
+                        .raw_text(row, column, self.grid.read(cx).raw_mode(), dialect)
             }) {
                 return true;
             }
@@ -72,7 +74,7 @@ impl TableViewer {
             &order,
             self.limit,
             self.page * self.limit.unwrap_or(0),
-            self.show_rowid,
+            self.grid.read(cx).show_rowid,
         );
         let count_sql = dialect.count(&scope, &table, &filter);
         self.status = sql.clone().into();

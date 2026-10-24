@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
+use navidog_core::json_store::JsonStore;
 use navidog_core::object::Scope;
 use navidog_core::queries::encode_segment;
 use navidog_core::settings::Settings;
@@ -200,9 +201,7 @@ pub async fn fetch(rel: &mut dyn Relational, scope: &Scope, system: bool) -> DbR
 
 fn path_in(root: &Path, scope: &Scope) -> PathBuf {
     // A leading dot cannot clash with a database folder: those names encode `.` as `%2E`.
-    let base = root
-        .join("profiles")
-        .join(&scope.connection)
+    let base = navidog_core::paths::profile_dir_in(root, &scope.connection)
         .join(".outline")
         .join(encode_segment(&scope.database));
     match &scope.schema {
@@ -216,15 +215,11 @@ pub fn path(scope: &Scope) -> PathBuf {
 }
 
 pub fn load(scope: &Scope) -> Option<Outline> {
-    serde_json::from_slice(&std::fs::read(path(scope)).ok()?).ok()
+    JsonStore::new(path(scope)).load_optional()
 }
 
 pub fn save(scope: &Scope, outline: &Outline) {
-    if let Ok(bytes) = serde_json::to_vec(outline)
-        && let Err(e) = navidog_core::paths::write_atomic(&path(scope), &bytes)
-    {
-        tracing::warn!("saving code completion info failed: {e}");
-    }
+    JsonStore::new(path(scope)).save_lossy(outline);
 }
 
 fn clear_files() {

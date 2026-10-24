@@ -59,13 +59,7 @@ pub fn asset_identity(name: &str) -> Option<(&'static str, String, &'static str)
 }
 
 pub fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0xf) as usize] as char);
-    }
-    out
+    hex::encode(bytes)
 }
 
 /// Release notes shown in the update dialog, cut on a char boundary.

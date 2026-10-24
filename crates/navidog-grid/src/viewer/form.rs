@@ -24,7 +24,7 @@ impl TableViewer {
         text: String,
         cx: &mut Context<Self>,
     ) {
-        let raw = self.raw_data;
+        let raw = self.grid.read(cx).raw_mode();
         let dialect = self.dialect.unwrap_or(Dialect::Sqlite);
         self.grid.update(cx, |g, cx| {
             g.update_model(cx, |m| {
@@ -54,7 +54,7 @@ impl TableViewer {
         }
         self.form_inputs.clear();
         for c in 0..n {
-            let raw = self.raw_data;
+            let raw = self.grid.read(cx).raw_mode();
             let dialect = self.dialect.unwrap_or(Dialect::Sqlite);
             let value = self.grid.read(cx).model(cx).raw_text(row, c, raw, dialect);
             let input = cx.new(|cx| InputState::new(window, cx).default_value(value));

@@ -1141,7 +1141,9 @@ impl ResultView {
                                 {
                                     g.update_model(cx, |model| model.sort_rows(col, *asc));
                                 }
-                                g.update_model(cx, |model| model.restore_blank_insert_drafts(drafts.unwrap()));
+                                if let Some(drafts) = drafts {
+                                    g.update_model(cx, |model| model.restore_blank_insert_drafts(drafts));
+                                }
                                 g.set_sort(this.accepted_sort.clone(), cx);
                             });
                         }

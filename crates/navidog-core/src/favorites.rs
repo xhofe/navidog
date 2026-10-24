@@ -4,6 +4,7 @@
 use gpui_kit::{App, AppContext as _, Context, Entity, Global};
 use serde::{Deserialize, Serialize};
 
+use crate::json_store::JsonStore;
 use crate::object::ObjectRef;
 use crate::paths;
 
@@ -42,10 +43,7 @@ impl Favorites {
 
     fn load() -> Self {
         let path = paths::config_dir().join("favorites.json");
-        let lists = std::fs::read(&path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
+        let lists = JsonStore::new(&path).load();
         Self {
             lists,
             path: Some(path),
@@ -54,10 +52,7 @@ impl Favorites {
 
     fn commit(&mut self, cx: &mut Context<Self>) {
         if let Some(path) = &self.path {
-            let bytes = serde_json::to_vec_pretty(&self.lists).expect("favorites serialize");
-            if let Err(err) = paths::write_atomic(path, &bytes) {
-                tracing::error!("failed to save favorites.json: {err}");
-            }
+            JsonStore::new(path.clone()).save_lossy(&self.lists);
         }
         cx.notify();
     }

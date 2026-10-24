@@ -23,6 +23,7 @@ use gpui_kit::{
 use navidog_core::settings::Settings;
 use navidog_ui::tokens;
 use navidog_util::update::{hex_encode, newer_version, nightly_is_newer, notes_preview};
+use navidog_util::update_manifest::Asset as ManifestAsset;
 use rust_i18n::t;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -174,19 +175,6 @@ struct UpdateRelease {
     body: String,
     #[serde(default)]
     assets: Vec<ManifestAsset>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ManifestAsset {
-    os: String,
-    arch: String,
-    kind: String,
-    name: String,
-    url: String,
-    #[serde(default)]
-    sha256: String,
-    #[serde(default)]
-    size: u64,
 }
 
 fn empty_if_null<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -427,6 +415,57 @@ fn download_file_name(name: &str) -> Option<&str> {
     }
 }
 
+/// The update directory: created once, private to this user, and never
+/// followed through a symlink. On Unix the mode is forced to 0700 and a
+/// directory owned by another user is refused.
+fn download_dir() -> Result<PathBuf, InstallError> {
+    let dir = std::env::temp_dir().join("navidog-update");
+    match std::fs::symlink_metadata(&dir) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() || !meta.is_dir() {
+                return Err(InstallError::Other(
+                    "the update path is not a private directory".into(),
+                ));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if meta.permissions().mode() & 0o077 != 0 {
+                    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+                        .map_err(|e| InstallError::Other(e.to_string()))?;
+                }
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                let mut builder = std::fs::DirBuilder::new();
+                builder.mode(0o700);
+                match builder.create(&dir) {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                        // Another navigation or test created it between the
+                        // metadata check and this call; re-check it.
+                        return download_dir();
+                    }
+                    Err(err) => return Err(InstallError::Other(err.to_string())),
+                }
+            }
+            #[cfg(not(unix))]
+            match std::fs::create_dir_all(&dir) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    return download_dir();
+                }
+                Err(err) => return Err(InstallError::Other(err.to_string())),
+            }
+        }
+        Err(err) => return Err(InstallError::Other(err.to_string())),
+    }
+    Ok(dir)
+}
+
 /// Downloads `asset` into the update directory and checks its SHA-256.
 ///
 /// `on_progress(downloaded, total)` runs as bytes arrive. `total` is the
@@ -446,9 +485,13 @@ pub fn download_verified(
     let Some(name) = download_file_name(&asset.name) else {
         return Err(InstallError::Other("download name is empty".into()));
     };
-    let dir = std::env::temp_dir().join("navidog-update");
-    std::fs::create_dir_all(&dir).map_err(|e| InstallError::Other(e.to_string()))?;
+    let dir = download_dir()?;
     let path = dir.join(name);
+    // A stale file (or a symlink planted by another process) must not be
+    // followed or truncated; the private directory makes the window small.
+    if std::fs::symlink_metadata(&path).is_ok() {
+        std::fs::remove_file(&path).map_err(|e| InstallError::Other(e.to_string()))?;
+    }
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(300)))
         .build()
@@ -467,7 +510,11 @@ pub fn download_verified(
         .unwrap_or(asset.size);
     on_progress(0, total);
     let mut reader = response.body_mut().as_reader();
-    let mut file = std::fs::File::create(&path).map_err(|e| InstallError::Other(e.to_string()))?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|e| InstallError::Other(e.to_string()))?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
     let mut downloaded = 0u64;
@@ -498,6 +545,8 @@ pub fn download_verified(
         let _ = std::fs::remove_file(&path);
         return Err(InstallError::Cancelled);
     }
+    file.sync_all()
+        .map_err(|e| InstallError::Other(e.to_string()))?;
     let got = hex_encode(&hasher.finalize());
     if !got.eq_ignore_ascii_case(asset.sha256.trim()) {
         let _ = std::fs::remove_file(&path);
@@ -601,6 +650,32 @@ fn install_macos(dmg: &Path) -> Result<Delivery, String> {
     Ok(Delivery::HandedToOs)
 }
 
+/// `codesign` integrity check. Release CI can pin the expected Team ID in
+/// `NAVIDOG_TEAM_ID`; without it an ad-hoc signature still has to be valid.
+#[cfg(target_os = "macos")]
+fn verify_bundle(app: &Path) -> bool {
+    let verified = std::process::Command::new("codesign")
+        .args(["--verify", "--deep", "--strict"])
+        .arg(app)
+        .status()
+        .is_ok_and(|status| status.success());
+    if !verified {
+        return false;
+    }
+    let Some(expected) = option_env!("NAVIDOG_TEAM_ID") else {
+        return true;
+    };
+    let output = std::process::Command::new("codesign")
+        .args(["-dv", "--verbose=4"])
+        .arg(app)
+        .output();
+    output.is_ok_and(|out| {
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .any(|line| line.trim() == format!("TeamIdentifier={expected}"))
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn replace_bundle(app: &Path, dmg: &Path) -> Result<(), String> {
     let mount = std::env::temp_dir().join(format!("navidog-dmg-{}", std::process::id()));
@@ -638,7 +713,11 @@ fn replace_bundle(app: &Path, dmg: &Path) -> Result<(), String> {
         .arg(&mount)
         .status();
     match copied {
-        Ok(status) if status.success() => {}
+        Ok(status) if status.success() && verify_bundle(&staged) => {}
+        Ok(status) if status.success() => {
+            let _ = std::fs::remove_dir_all(&staged);
+            return Err("the downloaded app is not signed correctly".into());
+        }
         _ => {
             let _ = std::fs::remove_dir_all(&staged);
             return Err("could not copy the new app into place".into());

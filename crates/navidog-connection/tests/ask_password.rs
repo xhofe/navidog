@@ -48,7 +48,7 @@ fn a_failed_save_still_connects_once(cx: &mut TestAppContext) {
     });
     let path = config_dir().join("connections.json");
     let before = std::fs::read(&path).unwrap();
-    std::fs::create_dir(path.with_extension("tmp")).unwrap();
+    block_writes(&path, true);
 
     let hits = Rc::new(Cell::new(0usize));
     let password = Rc::new(RefCell::new(None));
@@ -99,4 +99,21 @@ fn a_failed_save_still_connects_once(cx: &mut TestAppContext) {
         assert!(conn.general.password.is_none());
     });
     assert_eq!(std::fs::read(&path).unwrap(), before);
+    block_writes(&path, false);
+}
+
+fn block_writes(path: &std::path::Path, block: bool) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = path.parent().unwrap();
+        let mode = if block { 0o500 } else { 0o700 };
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+    #[cfg(not(unix))]
+    {
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_readonly(block);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
 }

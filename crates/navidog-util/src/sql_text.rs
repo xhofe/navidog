@@ -88,6 +88,11 @@ pub fn find_params(sql: &str) -> Vec<Param> {
                     .find("*/")
                     .map_or(bytes.len(), |n| i + 2 + n + 2);
             }
+            b'$' => {
+                // PostgreSQL dollar-quoted strings: `$$…$$` or `$tag$…$tag$`.
+                // They may contain `[$name]` text that is not a parameter.
+                i = dollar_end(sql, i).unwrap_or(i + 1);
+            }
             b'[' if bytes.get(i + 1) == Some(&b'$') => match sql[i + 2..].find(']') {
                 Some(n) if n > 0 && !sql[i + 2..i + 2 + n].contains(['\n', '[']) => {
                     out.push(Param {
@@ -102,6 +107,26 @@ pub fn find_params(sql: &str) -> Vec<Param> {
         }
     }
     out
+}
+
+/// The end of a PostgreSQL dollar-quoted string starting at `start`, or `None`
+/// when `start` is not a valid opening tag (for example `$1`).
+fn dollar_end(sql: &str, start: usize) -> Option<usize> {
+    let rest = &sql[start + 1..];
+    let tag_len = rest.find('$')?;
+    let tag = &rest[..tag_len];
+    if !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        || tag.starts_with(|c: char| c.is_ascii_digit())
+    {
+        return None;
+    }
+    let delim = &sql[start..start + tag_len + 2];
+    let body = start + tag_len + 2;
+    Some(
+        sql[body..]
+            .find(delim)
+            .map_or(sql.len(), |n| body + n + delim.len()),
+    )
 }
 
 /// Distinct parameter names in order of first appearance.
@@ -183,6 +208,23 @@ mod tests {
         assert_eq!(strip_keyword("delimiter $$", "DELIMITER"), Some(" $$"));
         assert_eq!(strip_keyword("DELIMITER", "DELIMITER"), Some(""));
         assert_eq!(strip_keyword("delimiters", "DELIMITER"), None);
+    }
+
+    #[test]
+    fn parameters_inside_dollar_quotes_are_not_rewritten() {
+        let sql = "SELECT $$ [$x] $$, [$y]";
+        assert_eq!(
+            find_params(sql)
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["y"]
+        );
+        assert_eq!(
+            substitute_params(sql, |name| format!("'{name}'")),
+            "SELECT $$ [$x] $$, 'y'"
+        );
+        assert!(find_params("SELECT $tag$ [$x] $tag$, $1").is_empty());
     }
 
     #[test]

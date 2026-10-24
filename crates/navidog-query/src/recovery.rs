@@ -14,6 +14,7 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window, div,
 };
+use navidog_core::json_store::JsonStore;
 use navidog_core::settings::Settings;
 use navidog_ui::skin::{heading, truncated};
 use navidog_ui::{palette, tokens};
@@ -48,17 +49,12 @@ pub(crate) fn write(entry: &Autosave) {
 }
 
 fn write_in(dir: &std::path::Path, entry: &Autosave) {
-    let Ok(bytes) = serde_json::to_vec_pretty(entry) else {
-        return;
-    };
-    if let Err(e) = navidog_core::paths::write_atomic(&path_in(dir, &entry.id), &bytes) {
-        tracing::warn!("autosave failed: {e}");
-    }
+    JsonStore::new(path_in(dir, &entry.id)).save_lossy(entry);
 }
 
 #[cfg(test)]
 fn read_in(dir: &std::path::Path, id: &str) -> Option<Autosave> {
-    serde_json::from_slice(&std::fs::read(path_in(dir, id)).ok()?).ok()
+    JsonStore::new(path_in(dir, id)).load_optional()
 }
 
 /// Saved, closed without saving, or quit cleanly with no changes: the file goes.
@@ -76,7 +72,7 @@ pub(crate) fn all() -> Vec<Autosave> {
     };
     let mut out: Vec<Autosave> = entries
         .flatten()
-        .filter_map(|e| serde_json::from_slice(&std::fs::read(e.path()).ok()?).ok())
+        .filter_map(|e| JsonStore::new(e.path()).load_optional())
         .collect();
     out.sort_by(|a, b| a.saved_at.cmp(&b.saved_at));
     out

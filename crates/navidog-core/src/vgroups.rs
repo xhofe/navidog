@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global};
 use serde::{Deserialize, Serialize};
 
+use crate::json_store::JsonStore;
 use crate::object::{ObjectKind, ObjectRef, Scope};
 use crate::paths;
 
@@ -188,7 +189,7 @@ struct StoredFile {
 }
 
 fn file_path(root: &Path, connection: &str) -> PathBuf {
-    root.join("profiles").join(connection).join(".vgroups.json")
+    paths::profile_dir_in(root, connection).join(".vgroups.json")
 }
 
 fn load_all(root: &Path) -> (Vec<VirtualGroup>, HashSet<String>) {
@@ -201,15 +202,10 @@ fn load_all(root: &Path) -> (Vec<VirtualGroup>, HashSet<String>) {
         let Ok(id) = entry.file_name().into_string() else {
             continue;
         };
-        let Ok(bytes) = std::fs::read(entry.path().join(".vgroups.json")) else {
+        let Some(file) =
+            JsonStore::new(entry.path().join(".vgroups.json")).load_optional::<StoredFile>()
+        else {
             continue;
-        };
-        let file = match serde_json::from_slice::<StoredFile>(&bytes) {
-            Ok(file) => file,
-            Err(err) => {
-                tracing::error!("failed to read virtual groups for {id}: {err}");
-                continue;
-            }
         };
         written.insert(id.clone());
         for group in file.groups {
@@ -258,10 +254,7 @@ fn save_connections(
                 })
                 .collect(),
         };
-        let Ok(bytes) = serde_json::to_vec_pretty(&file) else {
-            continue;
-        };
-        if let Err(err) = paths::write_atomic(&file_path(root, id), &bytes) {
+        if let Err(err) = JsonStore::new(file_path(root, id)).save(&file) {
             tracing::error!("failed to save virtual groups: {err}");
         } else {
             written.insert(id.clone());

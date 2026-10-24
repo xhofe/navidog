@@ -90,7 +90,7 @@ impl BasePanel for InfoPanel {
 
 impl Panel for InfoPanel {
     fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        t!("info.general").to_string()
+        t!("info.title").to_string()
     }
     fn title_bar(&self, _: &App) -> bool {
         false
@@ -285,7 +285,7 @@ impl InfoPanel {
                 (t!("info.connection").to_string(), c.name.clone().into()),
                 (
                     t!("info.type").to_string(),
-                    crate::driver_name(&c.driver, cx),
+                    navidog_db::DriverRegistry::name(cx, &c.driver),
                 ),
             ];
             if !c.profiles.is_empty() {

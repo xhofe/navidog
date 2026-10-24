@@ -103,11 +103,14 @@ impl Global for GlobalSessions {}
 const CLOSED: ConnState = ConnState::Closed;
 
 fn closed() -> DbError {
-    DbError::msg("连接已关闭")
+    DbError::coded("navidog.session_closed", "The database session is closed.")
 }
 
 fn not_relational() -> DbError {
-    DbError::msg(rust_i18n::t!("database.not_relational").to_string())
+    DbError::coded(
+        "navidog.not_relational",
+        "This connection is not a relational database.",
+    )
 }
 
 impl Sessions {
@@ -165,10 +168,10 @@ impl Sessions {
             return;
         };
         let Some(driver) = DriverRegistry::get(cx, &conn.driver) else {
-            self.fail(id, format!("未知的驱动: {}", conn.driver), cx);
+            self.fail(id, format!("Unknown driver: {}", conn.driver), cx);
             return;
         };
-        let params = ConnectParams::from_connection(&conn, secrets);
+        let params = ConnectParams::from_connection(&conn, secrets, driver.info());
         let custom = conn.databases.clone();
         let keepalive = conn.advanced.keepalive_secs.filter(|s| *s > 0);
 
@@ -343,17 +346,6 @@ impl Sessions {
         Some(operations.run(driver, params, f))
     }
 
-    /// Compatibility entry point for callers of the original public operation API.
-    #[deprecated(note = "Use run_operation_rel instead.")]
-    pub fn run_once<T: Send + 'static>(
-        &self,
-        id: &str,
-        database: Option<&str>,
-        f: impl for<'a> FnOnce(&'a mut dyn Relational) -> BoxFuture<'a, DbResult<T>> + Send + 'static,
-    ) -> Option<JoinHandle<DbResult<T>>> {
-        self.run_operation_rel(id, database, f)
-    }
-
     /// Opens a separate session (table viewer, query editor); the caller holds and closes it.
     pub fn new_session(
         &self,
@@ -421,7 +413,7 @@ fn start_keepalive(session: SharedSession, secs: u32) -> JoinHandle<()> {
             let mut guard = session.lock().await;
             let Some(s) = guard.as_mut() else { return };
             if let Err(e) = s.ping().await {
-                tracing::warn!("保持连接失败: {e}");
+                tracing::warn!("keepalive ping failed: {e}");
             }
         }
     })

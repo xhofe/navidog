@@ -187,10 +187,6 @@ fn decode(s: &str) -> Option<String> {
                 out.push(u8::from_str_radix(hex, 16).ok()?);
                 i += 3;
             }
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
             b => {
                 out.push(b);
                 i += 1;
@@ -245,6 +241,9 @@ mod tests {
         let m = DatabaseUri::parse("mysql://root@[::1]/").unwrap();
         assert_eq!((m.host.as_str(), m.port, m.database), ("::1", None, None));
         assert!(DatabaseUri::parse("redis://x").is_none());
+        // RFC 3986: `+` is a literal in a URI; only form bodies mean space.
+        let plus = DatabaseUri::parse("mysql://u:p+q@h/db").unwrap();
+        assert_eq!(plus.password.as_deref(), Some("p+q"));
     }
 
     #[test]

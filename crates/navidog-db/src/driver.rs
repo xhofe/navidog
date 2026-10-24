@@ -86,6 +86,8 @@ pub struct DriverInfo {
     pub name: SharedString,
     pub family: Family,
     pub default_port: Option<u16>,
+    pub icon: &'static str,
+    pub dialect: Dialect,
     pub supports_ssl: bool,
     pub supports_ssh: bool,
     /// A session can access only one database (PostgreSQL); browsing another database needs
@@ -185,6 +187,55 @@ pub struct ForeignKey {
     pub schema: String,
     pub table: String,
     pub referenced: String,
+}
+
+/// Generates `execute`/`execute_read` for a session with `attempt`, `reconnect`,
+/// `remember`, `lost`, `recovery` and `cancellation`. Both network drivers differ
+/// only in how they decide a connection is lost, so keeping the recovery policy
+/// here prevents the two copies from drifting.
+#[macro_export]
+macro_rules! recovering_execute {
+    () => {
+        fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
+            async move {
+                self.recovery.observe(sql);
+                let result = self.attempt(sql).await.map_err(|e| {
+                    if self.lost(&e) {
+                        self.cancellation.clear();
+                        interrupted(e, true)
+                    } else {
+                        e
+                    }
+                });
+                if result.is_ok() {
+                    self.remember(sql);
+                }
+                result
+            }
+            .boxed()
+        }
+
+        fn execute_read<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
+            async move {
+                let result = match self.attempt(sql).await {
+                    Err(e) if self.lost(&e) && self.recovery.can_reconnect() => {
+                        self.reconnect().await?;
+                        self.attempt(sql).await
+                    }
+                    other => other,
+                };
+                result.map_err(|e| {
+                    if self.lost(&e) {
+                        self.cancellation.clear();
+                        interrupted(e, false)
+                    } else {
+                        e
+                    }
+                })
+            }
+            .boxed()
+        }
+    };
 }
 
 pub trait Relational: Send {
@@ -296,6 +347,22 @@ impl Global for DriverRegistry {}
 impl DriverRegistry {
     pub fn get(cx: &App, id: &str) -> Option<Arc<dyn Driver>> {
         cx.global::<Self>().0.get(id).cloned()
+    }
+
+    pub fn icon(cx: &App, id: &str) -> &'static str {
+        Self::get(cx, id)
+            .map(|driver| driver.info().icon)
+            .unwrap_or("icons/db/mysql.svg")
+    }
+
+    pub fn dialect(cx: &App, id: &str) -> Option<Dialect> {
+        Self::get(cx, id).map(|driver| driver.info().dialect)
+    }
+
+    pub fn name(cx: &App, id: &str) -> gpui_kit::SharedString {
+        Self::get(cx, id)
+            .map(|driver| driver.info().name.clone())
+            .unwrap_or_else(|| id.to_string().into())
     }
 
     pub fn all(cx: &App) -> Vec<Arc<dyn Driver>> {

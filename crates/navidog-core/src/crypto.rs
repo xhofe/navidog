@@ -231,33 +231,12 @@ pub(crate) fn read_or_create_key_file(path: &std::path::Path) -> Result<Key, Cry
     decode_key(&std::fs::read_to_string(path).map_err(|e| CryptoError::Io(e.to_string()))?)
 }
 
-/// Writes `encoded` as a new file with mode `0600`. The destination appears only
-/// after the bytes are on disk, so a crash cannot leave a 0-byte key.
+/// Writes `encoded` as a new file with mode `0600`. `write_atomic` uses a
+/// private temporary file, syncs it, and renames, so a crash cannot leave a
+/// 0-byte key and two processes cannot share a temporary file.
 #[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
 fn write_key_file(path: &std::path::Path, encoded: &str) -> Result<(), CryptoError> {
-    let tmp = path.with_extension("tmp");
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    let result = (|| {
-        use std::io::Write;
-        let mut file = opts
-            .open(&tmp)
-            .map_err(|e| CryptoError::Io(e.to_string()))?;
-        file.write_all(encoded.as_bytes())
-            .map_err(|e| CryptoError::Io(e.to_string()))?;
-        file.sync_all()
-            .map_err(|e| CryptoError::Io(e.to_string()))?;
-        std::fs::rename(&tmp, path).map_err(|e| CryptoError::Io(e.to_string()))
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
+    crate::paths::write_atomic(path, encoded.as_bytes()).map_err(|e| CryptoError::Io(e.to_string()))
 }
 
 #[cfg(test)]

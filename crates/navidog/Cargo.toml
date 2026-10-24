@@ -13,14 +13,12 @@ rust-i18n.workspace = true
 navidog-ui.workspace = true
 navidog-core.workspace = true
 navidog-db.workspace = true
-navidog-plugin.workspace = true
 navidog-connection.workspace = true
 navidog-navigator.workspace = true
 navidog-grid.workspace = true
 navidog-query.workspace = true
 navidog-designer.workspace = true
 navidog-util.workspace = true
-anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
@@ -35,6 +33,7 @@ mimalloc = { version = "0.1", optional = true }
 mimalloc = ["dep:mimalloc"]
 
 [dev-dependencies]
+navidog-test-support = { path = "../navidog-test-support" }
 gpui-kit = { workspace = true, features = ["test-support"] }
 
 # Needs Metal, so `cargo test` skips it. Run `cargo test -p navidog --test snapshot` by hand.

@@ -6,6 +6,7 @@ use std::sync::LazyLock;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global};
 use serde::{Deserialize, Serialize};
 
+use crate::json_store::JsonStore;
 use crate::paths;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -140,18 +141,12 @@ impl Snippets {
     }
 
     fn load(path: std::path::PathBuf) -> Self {
-        let custom = std::fs::read(&path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
+        let custom = JsonStore::new(&path).load();
         Self { custom, path }
     }
 
     fn save(&self) {
-        let bytes = serde_json::to_vec_pretty(&self.custom).expect("snippets serialize");
-        if let Err(e) = paths::write_atomic(&self.path, &bytes) {
-            tracing::error!("failed to save snippets.json: {e}");
-        }
+        JsonStore::new(self.path.clone()).save_lossy(&self.custom);
     }
 
     pub fn presets() -> &'static [Snippet] {
