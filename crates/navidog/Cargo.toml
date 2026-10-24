@@ -33,6 +33,7 @@ mimalloc = { version = "0.1", optional = true }
 mimalloc = ["dep:mimalloc"]
 
 [dev-dependencies]
+navidog-test-support = { path = "../navidog-test-support" }
 gpui-kit = { workspace = true, features = ["test-support"] }
 
 # Needs Metal, so `cargo test` skips it. Run `cargo test -p navidog --test snapshot` by hand.

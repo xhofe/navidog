@@ -280,12 +280,15 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 弹出窗口里的查询编辑器没有代码段和标识符页 | M3 | 无 |
 | MySQL 的“写入超时”仍只保存 | M3 | mysql_async 提供发送超时后接上 |
 
-## 5. 验证方式
+## 5. 验证
+
+整体审查修复的验收记录见 [pr/acceptance-overall-review.md](pr/acceptance-overall-review.md)。
 
 | 检查 | 命令 | 说明 |
 | --- | --- | --- |
 | 格式与静态检查 | `cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings` | CI 执行 |
 | 裸值检查 | `scripts/check-raw-px.sh` | CI 执行 |
+| i18n 检查 | `scripts/check-i18n.sh` | CI 执行 |
 | 依赖审计 | `cargo deny --all-features check`、`cargo audit` | CI 的 security-audit 工作流执行，配置在根目录 `deny.toml` 和 `.cargo/audit.toml`；只有直接依赖的 unmaintained 会失败，无补丁的 `RUSTSEC-2023-0071`（rsa）在两边都忽略 |
 | 单元测试与 headless UI 测试 | `cargo test --workspace` | CI 执行 |
 | 实库测试 | `docker compose up -d --wait && NAVIDOG_LIVE=1 cargo test -p navidog-db --lib --test live --locked` | CI 的 integration 工作流和本地都执行；`--lib` 包含操作写入完成后元数据断连恢复的三驱动回归，测完执行 `docker compose down` |

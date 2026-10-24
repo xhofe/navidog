@@ -8,3 +8,4 @@ publish = false
 
 [dependencies]
 gpui-kit.workspace = true
+navidog-db = { path = "../navidog-db" }

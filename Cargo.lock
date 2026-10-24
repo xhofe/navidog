@@ -5029,6 +5029,7 @@ dependencies = [
  "navidog-grid",
  "navidog-navigator",
  "navidog-query",
+ "navidog-test-support",
  "navidog-ui",
  "navidog-util",
  "rust-i18n",
@@ -5179,6 +5180,7 @@ name = "navidog-test-support"
 version = "0.0.1"
 dependencies = [
  "gpui-kit",
+ "navidog-db",
 ]
 
 [[package]]

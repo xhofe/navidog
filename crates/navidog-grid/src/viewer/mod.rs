@@ -2134,7 +2134,6 @@ mod ownership_tests {
     use navidog_core::{connection::Connection, crypto::Key, store::ConnectionStore};
     use navidog_db::{ConnectParams, Secrets, connect, sqlite::SqliteDriver};
     use std::sync::Arc;
-    use std::time::Duration;
 
     struct Host(Entity<TableViewer>);
     impl Render for Host {
@@ -2170,12 +2169,7 @@ mod ownership_tests {
     }
 
     fn wait(cx: &mut TestAppContext, done: impl Fn(&mut TestAppContext) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !done(cx) {
-            assert!(Instant::now() < deadline, "the viewer operation timed out");
-            cx.run_until_parked();
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        navidog_test_support::wait(cx, "the viewer operation", done);
     }
 
     fn discard_grid_changes(viewer: &mut TableViewer, cx: &mut Context<TableViewer>) {

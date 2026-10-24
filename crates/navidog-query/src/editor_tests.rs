@@ -1,6 +1,7 @@
 //! Headless query editor tests on a real SQLite file: running scripts, messages and summary,
 //! stopping at errors, result naming, parameters and editing a single-table result.
 
+use navidog_test_support::sql;
 use navidog_test_support::wait;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -32,25 +33,6 @@ impl Render for Host {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().size_full().child(self.editor.clone())
     }
-}
-
-fn sql(file: &std::path::Path, statements: &str) -> Vec<Vec<Option<String>>> {
-    runtime::runtime().block_on(async {
-        let params = ConnectParams {
-            file: Some(file.to_path_buf()),
-            create_new: !file.exists(),
-            ..Default::default()
-        };
-        let mut s = connect(Arc::new(SqliteDriver::default()), params)
-            .await
-            .unwrap();
-        let sets = s.relational().unwrap().execute(statements).await.unwrap();
-        s.close().await.unwrap();
-        sets.into_iter()
-            .last()
-            .map(|set| set.rows)
-            .unwrap_or_default()
-    })
 }
 
 fn live_sql(driver: &str, port: u16, database: &str, statements: &str) {
