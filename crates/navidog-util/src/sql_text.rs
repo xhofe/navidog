@@ -63,22 +63,7 @@ pub fn find_params(sql: &str) -> Vec<Param> {
     while i < bytes.len() {
         match bytes[i] {
             q @ (b'\'' | b'"' | b'`') => {
-                i += 1;
-                while i < bytes.len() {
-                    if bytes[i] == b'\\' && q == b'\'' {
-                        i += 2;
-                        continue;
-                    }
-                    if bytes[i] == q {
-                        if bytes.get(i + 1) == Some(&q) {
-                            i += 2;
-                            continue;
-                        }
-                        break;
-                    }
-                    i += 1;
-                }
-                i += 1;
+                i = skip_quoted(sql, i, q == b'\'');
             }
             b'-' if bytes.get(i + 1) == Some(&b'-') => {
                 i = sql[i..].find('\n').map_or(bytes.len(), |n| i + n);
@@ -109,8 +94,37 @@ pub fn find_params(sql: &str) -> Vec<Param> {
     out
 }
 
+/// Skips a quoted span whose opening quote is at `start`; a doubled quote escapes,
+/// and `escapes` also makes a backslash escape (except inside backticks). Returns the
+/// position after the closing quote, or the end of the string when it is unterminated.
+pub fn skip_quoted(sql: &str, start: usize, escapes: bool) -> usize {
+    let bytes = sql.as_bytes();
+    let Some(&quote) = bytes.get(start) else {
+        return bytes.len();
+    };
+    let mut i = start + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if escapes && quote != b'`' => i += 2,
+            b if b == quote => {
+                if bytes.get(i + 1) == Some(&quote) {
+                    i += 2;
+                } else {
+                    return i + 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    bytes.len()
+}
+
 /// The end of a PostgreSQL dollar-quoted string starting at `start`, or `None`
 /// when `start` is not a valid opening tag (for example `$1`).
+pub fn skip_dollar_quoted(sql: &str, start: usize) -> Option<usize> {
+    dollar_end(sql, start)
+}
+
 fn dollar_end(sql: &str, start: usize) -> Option<usize> {
     let rest = &sql[start + 1..];
     let tag_len = rest.find('$')?;

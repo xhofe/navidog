@@ -105,7 +105,7 @@ pub fn split_script(sql: &str, dialect: Dialect) -> Vec<Statement> {
             b'\'' | b'"' | b'`' => {
                 let escapes =
                     mysql || (dialect == Dialect::Postgres && c == b'\'' && e_prefix(bytes, i));
-                i = skip_quoted(bytes, i, c, escapes);
+                i = navidog_util::sql_text::skip_quoted(sql, i, escapes);
                 has_code = true;
                 continue;
             }
@@ -124,7 +124,7 @@ pub fn split_script(sql: &str, dialect: Dialect) -> Vec<Statement> {
                 continue;
             }
             b'$' if dialect == Dialect::Postgres => {
-                if let Some(end) = skip_dollar(sql, i) {
+                if let Some(end) = navidog_util::sql_text::skip_dollar_quoted(sql, i) {
                     i = end;
                     has_code = true;
                     continue;
@@ -223,45 +223,6 @@ fn is_routine(prefix: &str) -> bool {
         && ["TRIGGER", "FUNCTION", "PROCEDURE", "EVENT"]
             .iter()
             .any(|k| p.contains(k))
-}
-
-/// Skips a quoted span (a doubled quote escapes; with `escapes`, so does a backslash) and
-/// returns the position after the closing quote.
-fn skip_quoted(bytes: &[u8], start: usize, quote: u8, escapes: bool) -> usize {
-    let mut i = start + 1;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' if escapes && quote != b'`' => i += 2,
-            b if b == quote => {
-                if bytes.get(i + 1) == Some(&quote) {
-                    i += 2;
-                } else {
-                    return i + 1;
-                }
-            }
-            _ => i += 1,
-        }
-    }
-    bytes.len()
-}
-
-/// PostgreSQL `$tag$ … $tag$`; `None` when this is not a valid opening tag.
-fn skip_dollar(sql: &str, start: usize) -> Option<usize> {
-    let rest = &sql[start + 1..];
-    let tag_len = rest.find('$')?;
-    let tag = &rest[..tag_len];
-    if !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        || tag.starts_with(|c: char| c.is_ascii_digit())
-    {
-        return None;
-    }
-    let delim = &sql[start..start + tag_len + 2];
-    let body_start = start + tag_len + 2;
-    Some(
-        sql[body_start..]
-            .find(delim)
-            .map_or(sql.len(), |n| body_start + n + delim.len()),
-    )
 }
 
 #[cfg(test)]

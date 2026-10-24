@@ -477,7 +477,7 @@ fn split_joins(sql: &str, dialect: Dialect) -> Vec<(bool, String)> {
                 in_str = true;
                 i += 1;
             }
-            b'`' | b'"' => i = skip_quoted(sql, i),
+            b'`' | b'"' => i = navidog_util::sql_text::skip_quoted(sql, i, false),
             b'(' => {
                 depth += 1;
                 i += 1;
@@ -514,23 +514,6 @@ fn split_joins(sql: &str, dialect: Dialect) -> Vec<(bool, String)> {
     }
     parts.push((or_flag, sql[start..].to_string()));
     parts
-}
-
-fn skip_quoted(sql: &str, i: usize) -> usize {
-    let quote = sql.as_bytes()[i];
-    let mut i = i + 1;
-    let bytes = sql.as_bytes();
-    while i < bytes.len() {
-        if bytes[i] == quote {
-            if i + 1 < bytes.len() && bytes[i + 1] == quote {
-                i += 2;
-                continue;
-            }
-            return i + 1;
-        }
-        i += sql[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-    }
-    i
 }
 
 fn word_span(s: &str, kw: &str) -> Option<usize> {
