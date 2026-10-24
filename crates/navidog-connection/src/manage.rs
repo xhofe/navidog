@@ -79,7 +79,7 @@ impl Manage {
 fn cells(c: &Connection, group: Option<&str>, cx: &App) -> [String; 6] {
     [
         c.name.clone(),
-        crate::driver_name(&c.driver, cx).to_string(),
+        navidog_db::DriverRegistry::name(cx, &c.driver).to_string(),
         c.general
             .file
             .clone()

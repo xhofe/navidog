@@ -29,7 +29,7 @@ const REPO: &str = "https://github.com/xhofe/navidog";
 
 /// The app log goes to the log folder from the preferences; "diagnostic log" records debug
 /// messages too (F-PREF-010). A changed folder applies at the next start.
-fn init_logging() -> tracing_appender::non_blocking::WorkerGuard {
+fn init_logging() -> (Settings, tracing_appender::non_blocking::WorkerGuard) {
     let settings = Settings::load();
     let dir = settings.log_dir();
     navidog_db::log::set_dir(dir.clone());
@@ -48,16 +48,16 @@ fn init_logging() -> tracing_appender::non_blocking::WorkerGuard {
         .with_writer(writer)
         .with_ansi(false)
         .init();
-    guard
+    (settings, guard)
 }
 
 pub fn run() {
-    let _log_guard = init_logging();
+    let (settings, _log_guard) = init_logging();
     update::arm_smoke_watchdog();
     gpui_kit::application()
         .with_assets(NavidogAssets)
-        .run(|cx| {
-            init(cx);
+        .run(move |cx| {
+            init_with_settings(cx, settings);
             cx.set_app_identity("ci.nn.navidog", "Navidog");
             set_dock_icon();
             menus::bind_keys(cx);
@@ -68,8 +68,12 @@ pub fn run() {
                 .detach();
             register_app_actions(cx);
 
-            let state = AppState::load();
-            let (window, view) = open_main_window(state, cx);
+            let state = cx.global::<AppState>().clone();
+            let Some((window, view)) = open_main_window(state, cx) else {
+                tracing::error!("cannot open the main window");
+                cx.quit();
+                return;
+            };
             // The recovery dialog needs the window root, which exists only after open_window returns.
             let _ = window.update(cx, |_, window, cx| {
                 view.update(cx, |v, cx| v.check_recovery(window, cx));
@@ -89,10 +93,15 @@ pub fn run() {
 
 /// Initializes every layer (no platform UI such as the menu bar, so headless rendering uses it too).
 pub fn init(cx: &mut App) {
+    init_with_settings(cx, Settings::load());
+}
+
+/// Like [`init`], with settings already read by the caller.
+pub fn init_with_settings(cx: &mut App, settings: Settings) {
     use gpui_kit::component as gpui_component;
     rust_i18n::extend!(gpui_component);
     gpui_kit::init(cx);
-    navidog_core::init(cx);
+    navidog_core::init_with_settings(cx, settings);
     gpui_kit::component::set_locale(Settings::global(cx).language.locale());
     navidog_ui::theme::init(cx);
     navidog_ui::tabs::init(cx);
@@ -102,7 +111,6 @@ pub fn init(cx: &mut App) {
     navidog_grid::init(cx);
     navidog_query::init(cx);
     navidog_designer::init(cx);
-    navidog_plugin::init(cx);
     register_commands(cx);
     cx.set_global(AppState::load());
 }
@@ -160,7 +168,7 @@ pub fn main_window_options(state: &AppState, cx: &mut App) -> WindowOptions {
 fn open_main_window(
     state: AppState,
     cx: &mut App,
-) -> (gpui_kit::AnyWindowHandle, gpui_kit::Entity<MainWindow>) {
+) -> Option<(gpui_kit::AnyWindowHandle, gpui_kit::Entity<MainWindow>)> {
     let options = main_window_options(&state, cx);
     gpui_kit::open_window(options, cx, move |window, cx| {
         apply_theme(Some(window), cx);
@@ -175,7 +183,7 @@ fn open_main_window(
         view.update(cx, |v, cx| v.open_startup_tabs(window, cx));
         view
     })
-    .expect("无法打开主窗口")
+    .ok()
 }
 
 /// The key window, else the frontmost, else any window GPUI still has open.

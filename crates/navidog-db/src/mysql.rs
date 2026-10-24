@@ -38,6 +38,12 @@ impl MySqlDriver {
                 name: name.into(),
                 family: Family::Relational,
                 default_port: Some(3306),
+                icon: if id == "mariadb" {
+                    "icons/db/mariadb.svg"
+                } else {
+                    "icons/db/mysql.svg"
+                },
+                dialect: Dialect::MySql,
                 supports_ssl: true,
                 supports_ssh: true,
                 per_database_sessions: false,
@@ -119,7 +125,7 @@ impl Driver for MySqlDriver {
             let opts = build_opts(&params);
             let mut conn = tokio::time::timeout(params.timeout(), Conn::new(opts.clone()))
                 .await
-                .map_err(|_| DbError::msg("连接超时"))?
+                .map_err(|_| DbError::coded("navidog.timeout", "The connection timed out."))?
                 .map_err(err)?;
             let version: Option<String> =
                 conn.query_first("SELECT VERSION()").await.map_err(err)?;
@@ -165,7 +171,7 @@ impl MySqlSession {
         self.cancellation.clear();
         let conn = tokio::time::timeout(self.connect_timeout, Conn::new(self.opts.clone()))
             .await
-            .map_err(|_| DbError::msg("连接超时"))?
+            .map_err(|_| DbError::coded("navidog.timeout", "The connection timed out."))?
             .map_err(err)?;
         drop(std::mem::replace(&mut self.conn, conn));
         self.tag.session = self.conn.id() as u64;
@@ -208,7 +214,10 @@ impl MySqlSession {
                         tracing::warn!("KILL QUERY after the read timeout failed: {e}");
                     }
                     let _ = run.await;
-                    Err(DbError::msg(format!("读取超时（{} 秒）", limit.as_secs())))
+                    Err(DbError::coded(
+                        "navidog.read_timeout",
+                        format!("The query timed out after {} seconds.", limit.as_secs()),
+                    ))
                 }
             }
         };

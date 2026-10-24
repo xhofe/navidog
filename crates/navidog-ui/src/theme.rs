@@ -139,15 +139,15 @@ pub fn parse_hex(hex: &str) -> Option<gpui_kit::Hsla> {
     if digits.len() != 6 {
         return None;
     }
-    let v = u32::from_str_radix(digits, 16).ok()?;
+    let bytes = hex::decode(digits).ok()?;
     // raw-px: a color the user picked
-    Some(gpui_kit::rgb(v).into())
+    Some(gpui_kit::rgb(u32::from_be_bytes([0, bytes[0], bytes[1], bytes[2]])).into())
 }
 
 pub fn to_hex(color: gpui_kit::Hsla) -> String {
     let c = gpui_kit::Rgba::from(color);
     let byte = |f: f32| (f.clamp(0., 1.) * 255.).round() as u8;
-    format!("#{:02x}{:02x}{:02x}", byte(c.r), byte(c.g), byte(c.b))
+    format!("#{}", hex::encode([byte(c.r), byte(c.g), byte(c.b)]))
 }
 
 #[cfg(test)]

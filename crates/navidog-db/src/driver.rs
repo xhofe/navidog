@@ -86,6 +86,8 @@ pub struct DriverInfo {
     pub name: SharedString,
     pub family: Family,
     pub default_port: Option<u16>,
+    pub icon: &'static str,
+    pub dialect: Dialect,
     pub supports_ssl: bool,
     pub supports_ssh: bool,
     /// A session can access only one database (PostgreSQL); browsing another database needs
@@ -296,6 +298,22 @@ impl Global for DriverRegistry {}
 impl DriverRegistry {
     pub fn get(cx: &App, id: &str) -> Option<Arc<dyn Driver>> {
         cx.global::<Self>().0.get(id).cloned()
+    }
+
+    pub fn icon(cx: &App, id: &str) -> &'static str {
+        Self::get(cx, id)
+            .map(|driver| driver.info().icon)
+            .unwrap_or("icons/db/mysql.svg")
+    }
+
+    pub fn dialect(cx: &App, id: &str) -> Option<Dialect> {
+        Self::get(cx, id).map(|driver| driver.info().dialect)
+    }
+
+    pub fn name(cx: &App, id: &str) -> gpui_kit::SharedString {
+        Self::get(cx, id)
+            .map(|driver| driver.info().name.clone())
+            .unwrap_or_else(|| id.to_string().into())
     }
 
     pub fn all(cx: &App) -> Vec<Arc<dyn Driver>> {

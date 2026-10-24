@@ -1,6 +1,7 @@
 //! state.json: window position and size, Dock layout, visibility of each pane (10-shell.md §11).
 
 use gpui_kit::{Bounds, Global, Pixels, WindowBounds, point, px, size};
+use navidog_core::json_store::JsonStore;
 use navidog_core::paths;
 use serde::{Deserialize, Serialize};
 
@@ -73,17 +74,11 @@ impl AppState {
     }
 
     pub fn load() -> Self {
-        std::fs::read(Self::path())
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+        JsonStore::new(Self::path()).load()
     }
 
     pub fn save(&self) {
-        let bytes = serde_json::to_vec_pretty(self).expect("状态可序列化");
-        if let Err(e) = paths::write_atomic(&Self::path(), &bytes) {
-            tracing::error!("保存 state.json 失败: {e}");
-        }
+        JsonStore::new(Self::path()).save_lossy(self);
     }
 }
 

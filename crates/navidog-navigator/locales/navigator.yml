@@ -1,5 +1,8 @@
 _version: 2
 nav:
+  title:
+    en: Navigator
+    zh-CN: 导航器
   reopen_connection:
     en: Reopen connection…
     zh-CN: 重新打开连接…
@@ -391,6 +394,9 @@ col:
     en: Table
     zh-CN: 表
 info:
+  title:
+    en: Info
+    zh-CN: 信息
   general:
     en: General
     zh-CN: 常规

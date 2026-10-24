@@ -265,15 +265,12 @@ impl TableDesigner {
                 .read(cx)
                 .dialect(&saved.scope.connection)
                 .or_else(|| {
-                    navidog_core::store::ConnectionStore::global(cx)
+                    let driver = navidog_core::store::ConnectionStore::global(cx)
                         .read(cx)
-                        .get(&saved.scope.connection)
-                        .and_then(|c| match c.driver.as_str() {
-                            "mysql" | "mariadb" => Some(Dialect::MySql),
-                            "postgres" => Some(Dialect::Postgres),
-                            "sqlite" => Some(Dialect::Sqlite),
-                            _ => None,
-                        })
+                        .get(&saved.scope.connection)?
+                        .driver
+                        .clone();
+                    navidog_db::DriverRegistry::dialect(cx, &driver)
                 })
                 .unwrap_or(Dialect::Sqlite);
             let migration_error = if dialect == Dialect::Postgres {
@@ -668,7 +665,10 @@ impl TableDesigner {
                     let job = navidog_db::runtime::spawn(async move {
                         let result = async {
                             let r = session.relational().ok_or_else(|| {
-                                DbError::msg(t!("designer.not_relational").to_string())
+                                DbError::coded(
+                                    "navidog.not_relational",
+                                    "This connection is not a relational database.",
+                                )
                             })?;
                             table_design::sqlite_table_names(r, &scope).await
                         }
@@ -807,7 +807,10 @@ impl TableDesigner {
                 let job = navidog_db::runtime::spawn(async move {
                     let result = async {
                         let r = session.relational().ok_or_else(|| {
-                            DbError::msg(t!("designer.not_relational").to_string())
+                            DbError::coded(
+                                "navidog.not_relational",
+                                "This connection is not a relational database.",
+                            )
                         })?;
                         if r.dialect() == Dialect::MySql {
                             r.execute(&format!(

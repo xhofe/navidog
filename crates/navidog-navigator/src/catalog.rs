@@ -2,11 +2,12 @@
 //! node expands or the selection changes (never in render), and are invalidated when the
 //! connection closes or refreshes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
 use navidog_core::object::{ObjectKind, ObjectRef, Scope};
+use navidog_core::store::{ConnectionStore, StoreEvent};
 use navidog_core::workspace::{Workspace, WorkspaceEvent};
 use navidog_db::sessions::{Sessions, SessionsEvent};
 use navidog_db::{ColumnInfo, DbResult, ObjectInfo, TableChildren};
@@ -225,6 +226,20 @@ impl Catalog {
         self.load("children", key, |c| &mut c.children, job, force, cx);
     }
 
+    /// Drops caches for connections that no longer exist in the store.
+    pub fn retain_connections(&mut self, live: &HashSet<String>, cx: &mut Context<Self>) {
+        self.bump();
+        self.schemas.retain(|(c, _), _| live.contains(c));
+        self.objects
+            .retain(|(s, _), _| live.contains(&s.connection));
+        self.ddl.retain(|o, _| live.contains(&o.scope.connection));
+        self.columns
+            .retain(|(s, _), _| live.contains(&s.connection));
+        self.children
+            .retain(|(s, _), _| live.contains(&s.connection));
+        cx.notify();
+    }
+
     /// Drops everything cached for a connection (closed or refreshed).
     pub fn invalidate_connection(&mut self, conn: &str, cx: &mut Context<Self>) {
         self.bump();
@@ -348,6 +363,19 @@ pub(crate) fn init(cx: &mut App) {
                     }
                 }
                 WorkspaceEvent::SelectionChanged => {}
+            },
+        )
+        .detach();
+        cx.subscribe(
+            &ConnectionStore::global(cx),
+            |this, _, _: &StoreEvent, cx| {
+                let live: HashSet<String> = ConnectionStore::global(cx)
+                    .read(cx)
+                    .connections()
+                    .iter()
+                    .map(|connection| connection.id.clone())
+                    .collect();
+                this.retain_connections(&live, cx);
             },
         )
         .detach();

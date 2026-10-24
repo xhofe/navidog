@@ -207,10 +207,6 @@ pub struct TableViewer {
     /// Window this tab was last added to. A popped-out tab updates it in `on_added_to`.
     home: Option<gpui_kit::AnyWindowHandle>,
     form: bool,
-    /// Cell text is submitted as SQL (F-DATA-010)
-    raw_data: bool,
-    /// SQLite only: SELECT includes rowid as a read-only column
-    show_rowid: bool,
     form_inputs: Vec<Entity<InputState>>,
     form_for: Option<usize>,
     in_transaction: bool,
@@ -712,8 +708,6 @@ impl TableViewer {
                 close_after_commit: false,
                 home: None,
                 form: false,
-                raw_data: false,
-                show_rowid: false,
                 form_inputs: Vec::new(),
                 form_for: None,
                 in_transaction: false,
@@ -966,7 +960,7 @@ impl TableViewer {
             &order,
             self.limit,
             offset,
-            self.show_rowid,
+            self.grid.read(cx).show_rowid,
         );
         let count_sql = count.then(|| d.count(scope, table, &filter));
         let metadata = self.metadata_stale;
@@ -1500,9 +1494,8 @@ impl TableViewer {
     }
 
     fn toggle_raw(&mut self, cx: &mut Context<Self>) {
-        self.raw_data = !self.raw_data;
         self.form_for = None;
-        let raw = self.raw_data;
+        let raw = !self.grid.read(cx).raw_mode();
         self.grid.update(cx, |g, cx| g.set_raw_mode(raw, cx));
         cx.notify();
     }
@@ -1546,9 +1539,8 @@ impl TableViewer {
         if self.dialect != Some(Dialect::Sqlite) {
             return;
         }
-        self.show_rowid = !self.show_rowid;
-        let on = self.show_rowid;
-        self.grid.update(cx, |g, _| g.show_rowid = on);
+        let on = !self.grid.read(cx).show_rowid;
+        self.grid.update(cx, |g, cx| g.set_show_rowid(on, cx));
         self.reload_committed(false, window, cx);
     }
 
@@ -1653,7 +1645,7 @@ impl TableViewer {
                     .small()
                     .icon(lucide("square-function"))
                     .tooltip(t!("viewer.raw_data").to_string())
-                    .selected(self.raw_data)
+                    .selected(self.grid.read(cx).raw_mode())
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_raw(cx))),
             )
             .child(

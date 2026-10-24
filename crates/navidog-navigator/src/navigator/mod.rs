@@ -31,7 +31,7 @@ use navidog_core::vgroups::VirtualGroups;
 use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::dialect::Dialect;
 use navidog_db::sessions::{ConnState, Sessions, SessionsEvent};
-use navidog_ui::assets::{driver_icon, lucide};
+use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
 use navidog_ui::{palette, tabs, tokens};
 use rust_i18n::t;
@@ -306,23 +306,27 @@ impl DraggedConnections {
 
 impl Render for DraggedConnections {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
         let n = self.ids(cx).len();
         let label = if n > 1 {
             t!("nav.n_connections", n = n).to_string()
         } else {
             self.name.to_string()
         };
-        div()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(p.window_bg)
-            .border_1()
-            .border_color(p.separator)
-            .text_color(p.label)
-            .child(label)
+        drag_chip(label, cx)
     }
+}
+
+fn drag_chip(label: String, cx: &App) -> impl IntoElement {
+    let p = palette(cx);
+    div()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .bg(p.window_bg)
+        .border_1()
+        .border_color(p.separator)
+        .text_color(p.label)
+        .child(label)
 }
 
 fn move_connections(ids: &[String], group: Option<String>, window: &mut Window, cx: &mut App) {
@@ -359,22 +363,13 @@ impl DraggedObjects {
 
 impl Render for DraggedObjects {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
         let n = self.objects(cx).len();
         let label = if n > 1 {
             t!("nav.n_objects", n = n).to_string()
         } else {
             self.name.to_string()
         };
-        div()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(p.window_bg)
-            .border_1()
-            .border_color(p.separator)
-            .text_color(p.label)
-            .child(label)
+        drag_chip(label, cx)
     }
 }
 
@@ -462,14 +457,14 @@ impl BasePanel for NavigatorPanel {
 
 impl Panel for NavigatorPanel {
     fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        t!("nav.refresh").to_string()
+        t!("nav.title").to_string()
     }
     fn title_bar(&self, _: &App) -> bool {
         false
     }
 }
 
-fn kind_label(kind: ObjectKind) -> String {
+pub(crate) fn kind_label(kind: ObjectKind) -> String {
     t!(format!("kind.{}", kind.key())).to_string()
 }
 

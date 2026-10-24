@@ -124,6 +124,9 @@ const TOOLBAR: &[(&str, &str, &str, Option<&str>)] = &[
 
 impl MainWindow {
     pub fn new(state: AppState, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // One owner: the window holds the live state and the global is its
+        // published copy for menu callbacks. Every save republishes it.
+        cx.set_global(state.clone());
         let (dock, skin) = DockSkin::dock_area("main-dock", Some(DOCK_VERSION), window, cx);
         skin.set_close_button_visible(true, cx);
         let info = InfoPanel::shared(window, cx);
@@ -461,6 +464,7 @@ impl MainWindow {
         self.state.window = Some(Frame::from_bounds(window.window_bounds()));
         self.state.dock = serde_json::to_value(self.dock.read(cx).dump(cx)).ok();
         self.state.save();
+        cx.set_global(self.state.clone());
     }
 
     fn toggle(
@@ -471,7 +475,6 @@ impl MainWindow {
     ) {
         f(&mut self.state);
         navidog_navigator::set_view_options(self.state.view, cx);
-        cx.set_global(self.state.clone());
         crate::menus::set_menus(cx);
         self.save_state(window, cx);
         cx.notify();

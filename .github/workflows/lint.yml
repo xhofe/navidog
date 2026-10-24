@@ -77,6 +77,9 @@ jobs:
       - name: raw pixel check
         if: matrix.target == 'aarch64-apple-darwin'
         run: scripts/check-raw-px.sh
+      - name: i18n check
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: scripts/check-i18n.sh
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test

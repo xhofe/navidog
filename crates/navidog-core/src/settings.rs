@@ -138,20 +138,9 @@ fn system_prefers_chinese(lang: &str) -> bool {
     if lang.starts_with("zh") {
         return true;
     }
-    // GUI apps usually start without LANG; read macOS's preferred languages
-    #[cfg(target_os = "macos")]
-    if lang.is_empty()
-        && let Ok(out) = std::process::Command::new("defaults")
-            .args(["read", "-g", "AppleLanguages"])
-            .output()
-    {
-        let text = String::from_utf8_lossy(&out.stdout);
-        let first = text
-            .split(['(', ',', '"', '\n', ' ', ')'])
-            .find(|s| !s.is_empty());
-        return first.is_some_and(|s| s.starts_with("zh"));
-    }
-    false
+    // GUI apps usually start without LANG; `sys-locale` reads the platform's
+    // preferred languages on macOS and Windows and LANG/LC_ALL elsewhere.
+    sys_locale::get_locale().is_some_and(|locale| locale.starts_with("zh"))
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -377,8 +366,8 @@ impl Settings {
     }
 }
 
-pub(crate) fn init(cx: &mut App) {
-    cx.set_global(Settings::load());
+pub(crate) fn init_with(cx: &mut App, settings: Settings) {
+    cx.set_global(settings);
 }
 
 #[cfg(test)]

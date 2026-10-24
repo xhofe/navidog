@@ -330,6 +330,17 @@ impl ResultGrid {
         });
     }
 
+    pub fn raw_mode(&self) -> bool {
+        self.raw
+    }
+
+    /// SQLite ROWID column. Reloads are the caller's job; the menu state is
+    /// notified here so the checkmark follows the field.
+    pub fn set_show_rowid(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_rowid = show;
+        cx.notify();
+    }
+
     /// Raw data mode: string cells gain SQL quotes, and later edits are expressions.
     pub fn set_raw_mode(&mut self, raw: bool, cx: &mut Context<Self>) {
         self.raw = raw;

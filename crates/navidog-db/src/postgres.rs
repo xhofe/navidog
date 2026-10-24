@@ -36,6 +36,8 @@ impl Default for PostgresDriver {
                 name: "PostgreSQL".into(),
                 family: Family::Relational,
                 default_port: Some(5432),
+                icon: "icons/db/postgresql.svg",
+                dialect: Dialect::Postgres,
                 supports_ssl: true,
                 supports_ssh: true,
                 per_database_sessions: true,
@@ -72,9 +74,12 @@ fn base_config(p: &ConnectParams) -> DbResult<Config> {
     let mut cfg: Config = if p.params.trim().is_empty() {
         Config::new()
     } else {
-        p.params
-            .parse()
-            .map_err(|e| DbError::msg(format!("连接参数无效: {e}")))?
+        p.params.parse().map_err(|e| {
+            DbError::coded(
+                "navidog.bad_params",
+                format!("Invalid connection parameters: {e}"),
+            )
+        })?
     };
     cfg.host(&p.host)
         .port(p.port)
@@ -185,7 +190,7 @@ async fn establish(
 ) -> DbResult<(Client, Option<MakeTlsConnector>, String, u64)> {
     let (client, tls) = tokio::time::timeout(params.timeout(), connect(params, notices))
         .await
-        .map_err(|_| DbError::msg("连接超时"))??;
+        .map_err(|_| DbError::coded("navidog.timeout", "The connection timed out."))??;
     for q in crate::sql::split_statements(&params.initial_queries, Dialect::Postgres) {
         client.batch_execute(&q).await.map_err(err)?;
     }

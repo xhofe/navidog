@@ -1,8 +1,6 @@
 //! History log viewer (31-query-results.md §6, F-QRY-012): every statement sent this session,
 //! live. New records follow at the end unless the user scrolled up; "Pause" holds them back.
 
-use std::time::Duration;
-
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, TabGroup, panel_handle,
@@ -134,12 +132,13 @@ impl HistoryLog {
             e.set_value(text, window, cx);
         });
         cx.new(|cx: &mut Context<Self>| {
-            // ponytail: polls the log four times a second; a channel from the log would avoid it
+            // The log broadcasts on every record; no timer wakes an idle panel.
             let poll = cx.spawn_in(window, async move |this, cx| {
+                let mut updates = navidog_db::log::subscribe();
                 loop {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(250))
-                        .await;
+                    if updates.recv().await.is_err() {
+                        return;
+                    }
                     if this
                         .update_in(cx, |this, window, cx| this.pull(window, cx))
                         .is_err()
@@ -355,6 +354,7 @@ pub(crate) fn scroll_to_end(e: &mut EditorState, cx: &mut Context<EditorState>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn only_errors_keeps_failed_statements() {

@@ -329,6 +329,21 @@ mod tests {
 
     use super::*;
 
+    fn set_dir_read_only(dir: &std::path::Path, read_only: bool) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = if read_only { 0o500 } else { 0o700 };
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+        #[cfg(not(unix))]
+        {
+            let mut permissions = std::fs::metadata(dir).unwrap().permissions();
+            permissions.set_readonly(read_only);
+            std::fs::set_permissions(dir, permissions).unwrap();
+        }
+    }
+
     struct Host;
 
     impl Render for Host {
@@ -368,7 +383,7 @@ mod tests {
             let disk = serde_json::to_vec(&file).unwrap();
             std::fs::write(&path, &disk).unwrap();
             if !locked {
-                std::fs::create_dir(path.with_extension("tmp")).unwrap();
+                set_dir_read_only(&home, true);
             }
             cx.update(|cx| {
                 navidog_core::init(cx);
@@ -448,7 +463,7 @@ mod tests {
             });
             assert!(std::fs::read(&path).unwrap() == disk);
             if !locked {
-                std::fs::remove_dir(path.with_extension("tmp")).unwrap();
+                set_dir_read_only(&home, false);
             }
         }
         let _ = std::fs::remove_dir_all(&home);

@@ -407,6 +407,8 @@ pub struct Ssh {
     pub private_key: Option<String>,
     pub save_passphrase: bool,
     pub passphrase: Option<Secret>,
+    /// Verify the SSH server key against `~/.ssh/known_hosts` (trust on first use).
+    pub verify_host_key: bool,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -424,6 +426,7 @@ impl Default for Ssh {
             private_key: None,
             save_passphrase: true,
             passphrase: None,
+            verify_host_key: true,
             extra: Map::new(),
         }
     }

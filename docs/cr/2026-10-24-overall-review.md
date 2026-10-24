@@ -10,63 +10,63 @@
 
 | 编号 | 摘要 | 计划 | 状态 |
 | --- | --- | --- | --- |
-| R-01 | 手写 UUID/RNG | P0 | 待修 |
-| R-02 | 手写日历与 UTC 今天 | P1 | 待修 |
-| R-03 | percent/URI 两套与 + 解码 | P0 | 待修 |
+| R-01 | 手写 UUID/RNG | P0 | 已修 |
+| R-02 | 手写日历与 UTC 今天 | P1 | 已修 |
+| R-03 | percent/URI 两套与 + 解码 | P0 | 已修 |
 | R-04 | 六处 SQL 扫描/解析 | P1 | 待修 |
-| R-05 | 两套 hex 编码 | P1 | 待修 |
-| R-06 | 平台目录/家目录展开 | P1 | 待修 |
-| R-07 | 原子写不一致 | P1 | 待修 |
+| R-05 | 两套 hex 编码 | P1 | 已修 |
+| R-06 | 平台目录/家目录展开 | P1 | 已修 |
+| R-07 | 原子写不一致 | P1 | 已修 |
 | R-08 | 手写 objc_msgSend | P2 | 待修 |
-| R-09 | defaults 读系统语言 | P2 | 待修 |
+| R-09 | defaults 读系统语言 | P2 | 已修 |
 | R-10 | enum key 手写映射 | P2 | 待修 |
 | D-01 | 6 个错误文案包装与重复测试 | P1 | 待修 |
-| D-02 | 9 处 JSON 持久化 | P1 | 待修 |
+| D-02 | 9 处 JSON 持久化 | P1 | 进行中 |
 | D-03 | MySQL/PG 生命周期复制 | P1 | 待修 |
 | D-04 | 网格/查询提交与关闭复制 | P1 | 待修 |
 | D-05 | SQL 扫描重复 | P1 | 待修 |
 | D-06 | 对话框 footer 复制 | P2 | 待修 |
-| D-07 | driver_name/db_text/kind_label 等 | P1 | 待修 |
+| D-07 | driver_name/db_text/kind_label 等 | P1 | 已修 |
 | D-08 | Catalog 与 OutlineCache 双缓存 | P2 | 待修 |
-| D-09 | nav.* locale 死块 | P0 | 待修 |
+| D-09 | nav.* locale 死块 | P0 | 已修 |
 | D-10 | 测试 helper 复制 | P2 | 待修 |
 | D-11 | 更新清单 Rust/CI 双份 | P1 | 待修 |
-| D-12 | 状态栏重建对象列表 | P1 | 待修 |
-| S-01 | 中文注释/文案与 DbError 本地化 | P0 | 待修 |
-| S-02 | 未使用依赖 | P0 | 待修 |
-| S-03 | 保存失败策略不一致 | P1 | 待修 |
-| S-04 | AppState/raw/Settings 多份 | P1 | 待修 |
-| S-05 | 命名与弃用 API | P1 | 待修 |
-| S-06 | gpui-kit 版本文档漂移 | P0 | 待修 |
+| D-12 | 状态栏重建对象列表 | P1 | 已修 |
+| S-01 | 中文注释/文案与 DbError 本地化 | P0 | 已修 |
+| S-02 | 未使用依赖 | P0 | 已修 |
+| S-03 | 保存失败策略不一致 | P1 | 进行中 |
+| S-04 | AppState/raw/Settings 多份 | P1 | 已修 |
+| S-05 | 命名与弃用 API | P1 | 已修 |
+| S-06 | gpui-kit 版本文档漂移 | P0 | 已修 |
 | S-07 | 每 crate i18n 后端导致的复制 | P2 | 待修 |
-| S-08 | 面板标题错误 | P2 | 待修 |
-| S-09 | designer i18n 顺序 | P2 | 待修 |
+| S-08 | 面板标题错误 | P2 | 已修 |
+| S-09 | designer i18n 顺序 | P2 | 已修 |
 | A-01 | core god crate | P2 | 待修 |
 | A-02 | core/db 依赖 gpui-kit | P2 | 待修 |
 | A-03 | db 职责超出驱动 | P2 | 待修 |
-| A-04 | 驱动元数据散落 | P1 | 待修 |
+| A-04 | 驱动元数据散落 | P1 | 进行中 |
 | A-05 | 提交逻辑在 grid | P1 | 待修 |
 | A-06 | 缓存/选择状态复制与倒挂 | P2 | 待修 |
 | A-07 | god object/超长文件 | P2 | 待修 |
-| A-08 | 提前抽象与死代码 | P1 | 待修 |
+| A-08 | 提前抽象与死代码 | P1 | 已修 |
 | A-09 | 测试架构 | P2 | 待修 |
 | A-10 | Connection 配置文件交换模型 | P2 | 待修 |
-| B-01 | 连接表单静默丢配置 | P0 | 待修 |
-| B-02 | SSH 主机密钥 | P1 | 待修 |
-| B-03 | 更新包临时路径/TOCTOU | P1 | 待修 |
-| B-04 | profile 路径未校验 id | P0 | 待修 |
-| B-05 | $tag$ 参数替换 | P0 | 待修 |
-| B-06 | TSV 不转义 | P1 | 待修 |
-| B-07 | 排序语义/性能 | P2 | 待修 |
+| B-01 | 连接表单静默丢配置 | P0 | 已修 |
+| B-02 | SSH 主机密钥 | P1 | 已修 |
+| B-03 | 更新包临时路径/TOCTOU | P1 | 进行中 |
+| B-04 | profile 路径未校验 id | P0 | 已修 |
+| B-05 | $tag$ 参数替换 | P0 | 已修 |
+| B-06 | TSV 不转义 | P1 | 已修 |
+| B-07 | 排序语义/性能 | P2 | 已修 |
 | B-08 | 每格解析与 refit 分配 | P2 | 待修 |
-| B-09 | 状态栏每帧构建 | P1 | 待修 |
-| B-10 | Catalog 无界增长 | P2 | 待修 |
-| B-11 | Windows 非法文件名字符 | P1 | 待修 |
-| B-12 | 表单初始焦点 | P2 | 待修 |
-| B-13 | UI 路径 panic | P2 | 待修 |
-| B-14 | 历史日志轮询 | P2 | 待修 |
-| B-15 | write_atomic 无 fsync | P1 | 待修 |
-| B-16 | 查找 ASCII-only | P2 | 待修 |
+| B-09 | 状态栏每帧构建 | P1 | 已修 |
+| B-10 | Catalog 无界增长 | P2 | 已修 |
+| B-11 | Windows 非法文件名字符 | P1 | 已修 |
+| B-12 | 表单初始焦点 | P2 | 已修 |
+| B-13 | UI 路径 panic | P2 | 进行中 |
+| B-14 | 历史日志轮询 | P2 | 已修 |
+| B-15 | write_atomic 无 fsync | P1 | 已修 |
+| B-16 | 查找 ASCII-only | P2 | 已修 |
 
 ## 0. 结论
 
@@ -168,7 +168,7 @@
 | 编号 | 严重度 | 问题 | 证据 | 建议 |
 | --- | --- | --- | --- | --- |
 | S-01 | 重要 | 生产代码里仍有中文注释和用户可见中文；`DbError` 把本地化文案烘焙进 `message` | 注释：`core/registry.rs:1-111`（整文件）、`core/paths.rs:3,36,41`、`db/runtime.rs:1-2`、`db/ssh.rs:1,18,27`、`plugin/lib.rs:1-8`；文案：`db/metadata.rs:15,96`、`db/sqlite.rs:95,99`、`db/sessions.rs:106,168`、`db/mysql.rs:122,168,211`、`db/postgres.rs:77,188`、`db/ssh.rs:72`、`db/runtime.rs:16`、`app/lib.rs:178`、`app/state.rs:83,85` | 注释按 AGENTS 改英文；文案全部进 `locales/*.yml`。`DbError` 增加 `kind`（AppClosed/NotRelational/…），只在 UI 边界用 `t!` 渲染；服务器消息保持原文 |
-| S-02 | 一般 | 未使用的依赖 | `anyhow` 在 6 个 manifest 中声明，源码只有 `query/completion.rs:13` 一处；`navidog-connection` 的 `tokio` 无使用、`serde_json` 仅测试；`navidog-navigator` 的 `chrono` 仅测试（`catalog.rs:317`） | 删除 5 个未使用的 `anyhow` 和 connection 的 `tokio`；测试专用依赖移到 `dev-dependencies`；把 `udeps` 从每周改到 PR/每次推送 |
+| S-02 | 一般 | 未使用的依赖 | `anyhow` 在 6 个 manifest 中声明，源码只有 `query/completion.rs:13` 一处；`navidog-connection` 的 `tokio` 无使用、`serde_json` 仅测试 | 删除 5 个未使用的 `anyhow` 和 connection 的 `tokio`；测试专用依赖移到 `dev-dependencies`；把 `udeps` 从每周改到 PR/每次推送 |
 | S-03 | 一般 | 配置保存失败的处理不一致 | `store.rs:486` 返回 `Result` 并弹通知；`settings.rs:333`、`favorites.rs:55`、`snippets.rs:150`、`column_widths.rs:58`、`state.rs:82` 只记日志；`favorites`/`snippets`/`state` 解析失败不备份 | 统一为 `JsonStore::save -> Result`；调用方弹一次“配置无法保存”；用户数据（收藏/代码段）保留 `.bak` |
 | S-04 | 一般 | 同一状态有多份 | `AppState` 全局 + `MainWindow.state`（`app/lib.rs:71,107`、`main_window.rs:41,474`）；raw 标志三份（`viewer/mod.rs:211`、`grid/mod.rs:170`、`delegate.rs:20`）；`Settings` 启动读两次（`app/lib.rs:33`、`core/settings.rs:381`） | 一份为唯一所有者；`AppState` 只留全局或只留 window，另一个用借用；raw 只留 `ResultGrid` 并向 delegate 同步 |
 | S-05 | 建议 | 命名/生命周期约定不一致 | `Tab_`（`connection/form.rs:82`，为避开 `Tab` 导入）；`run_once` 已弃用但仍公开（`db/sessions.rs:348`），只被 `tests/error_api.rs:16` 用；`store_error_message` 弃用转发（`connection/lib.rs:319`）；`StoreError::localized_message` 与自由函数 `error_message` 重复（`core/store.rs:15,195`）；`hex_encode` vs `encode_hex` | 统一命名；删除兼容入口前先改测试；一个错误一个本地化入口 |

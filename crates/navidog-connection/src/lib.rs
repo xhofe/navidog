@@ -20,7 +20,7 @@ use gpui_kit::{App, InteractiveElement, SharedString, Window};
 use navidog_core::actions::*;
 use navidog_core::connection::SecretField;
 use navidog_core::registry::{CommandInfo, CommandRegistry, Source};
-use navidog_core::store::{ConnectionStore, StoreError};
+use navidog_core::store::ConnectionStore;
 use navidog_core::workspace::{Selection, Workspace};
 use navidog_db::sessions::Sessions;
 use rust_i18n::t;
@@ -315,12 +315,6 @@ fn confirm_delete_group(window: &mut Window, cx: &mut App) {
     });
 }
 
-/// A store or key error in the interface language. `Display` remains suitable for logs.
-#[deprecated(note = "Use navidog_core::store::StoreError::localized_message instead")]
-pub fn store_error_message(error: &StoreError) -> String {
-    error.localized_message()
-}
-
 pub(crate) fn show_error(
     title: SharedString,
     message: SharedString,
@@ -334,12 +328,6 @@ pub(crate) fn show_error(
             .description(message.clone())
             .ok_text(t!("conn.ok").to_string())
     });
-}
-
-pub(crate) fn driver_name(driver: &str, cx: &App) -> SharedString {
-    navidog_db::DriverRegistry::get(cx, driver)
-        .map(|d| d.info().name.clone())
-        .unwrap_or_else(|| driver.to_string().into())
 }
 
 pub(crate) fn drivers(cx: &App) -> Vec<Arc<dyn navidog_db::Driver>> {

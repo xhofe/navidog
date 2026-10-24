@@ -12,6 +12,7 @@ navidog-ui.workspace = true
 navidog-core.workspace = true
 navidog-util.workspace = true
 navidog-db.workspace = true
+chrono.workspace = true
 gpui-kit = { workspace = true, features = ["tree-sitter-sql"] }
 rust-i18n.workspace = true
 tracing.workspace = true

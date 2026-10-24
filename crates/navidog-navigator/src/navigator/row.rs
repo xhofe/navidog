@@ -45,7 +45,7 @@ impl NavigatorPanel {
                     .and_then(|c| c.color.as_deref())
                     .and_then(|n| tokens::connection_color(n, cx));
                 (
-                    img(driver_icon(&driver))
+                    img(navidog_db::DriverRegistry::icon(cx, &driver))
                         .size(size)
                         .when(!open, |i| i.grayscale(true).opacity(0.6))
                         .into_any_element(),

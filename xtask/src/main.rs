@@ -1,8 +1,8 @@
-//! 开发工具，不随产品发布。
+//! Development tools; not shipped with the product.
 //!
-//! `cargo xtask nib-dump [Navicat.app] [输出目录]`：把 Navicat 编译后的 nib 导出为 JSON 视图树。
-//! `cargo xtask help-index [Navicat.app] [输出文件]`：整理 Navicat 自带帮助页的文件名与标题。
-//! `cargo xtask nib-tree <nib 名称>`：以紧凑树形打印已导出的 nib（类名、frame、文案、字体），写规格时用。
+//! `cargo xtask nib-dump [Navicat.app] [output dir]`: export compiled Navicat nibs as JSON view trees.
+//! `cargo xtask help-index [Navicat.app] [output file]`: collect help-page names and titles.
+//! `cargo xtask nib-tree <nib name>`: print an exported nib as a compact tree (class, frame, text, font) for specs.
 
 use std::{collections::HashSet, fs, path::PathBuf};
 
@@ -19,7 +19,7 @@ fn main() {
         Some("help-index") => help_index(&app, args.get(2).map(PathBuf::from)),
         Some("nib-tree") if args.len() > 1 => nib_tree(&args[1]),
         _ => Err(
-            "用法：cargo xtask <nib-dump|help-index> [Navicat.app] [输出路径] | nib-tree <名称>"
+            "usage: cargo xtask <nib-dump|help-index> [Navicat.app] [output path] | nib-tree <name>"
                 .into(),
         ),
     };
@@ -52,16 +52,16 @@ fn nib_dump(app: &std::path::Path, out: Option<PathBuf>) -> Result<()> {
                 ok += 1;
             }
             Err(err) => {
-                eprintln!("跳过 {name}: {err:?}");
+                eprintln!("skipping {name}: {err:?}");
                 failed += 1;
             }
         }
     }
-    println!("导出 {ok} 个 nib 到 {}，失败 {failed} 个", out.display());
+    println!("exported {ok} nibs to {}, {failed} failed", out.display());
     Ok(())
 }
 
-/// 不在视图属性里展开的键：父子/响应链等反向引用会造成环或噪音。
+/// Keys not expanded in view attributes: parent/child and responder links create cycles or noise.
 const SKIP_KEYS: &[&str] = &[
     "NSSubviews",
     "NSSuperview",
@@ -104,7 +104,7 @@ impl<'a> Nib<'a> {
             .map(|(_, v)| v)
     }
 
-    /// 字符串类对象（NSString 及其变体）直接还原为文本。
+    /// String objects (NSString and variants) become plain text.
     fn as_string(&self, ix: usize) -> Option<String> {
         if !self.class(ix).contains("String") {
             return None;
@@ -147,7 +147,7 @@ impl<'a> Nib<'a> {
         }
     }
 
-    /// 按深度展开对象引用，视图本身不在属性里展开（由视图树负责）。
+    /// Expand object references by depth; the view itself is not expanded here (the tree does that).
     fn resolve(&self, ix: usize, depth: usize, seen: &mut HashSet<usize>) -> Json {
         if let Some(s) = self.as_string(ix) {
             return json!(s);
@@ -320,14 +320,14 @@ fn help_index(app: &std::path::Path, out: Option<PathBuf>) -> Result<()> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     fs::write(&out, serde_json::to_string_pretty(&list).unwrap()).map_err(|e| e.to_string())?;
-    println!("整理 {} 个帮助页到 {}", list.len(), out.display());
+    println!("collected {} help pages into {}", list.len(), out.display());
     Ok(())
 }
 
 fn nib_tree(name: &str) -> Result<()> {
     let path = PathBuf::from(format!("reference/nib/{name}.json"));
     let text = fs::read_to_string(&path)
-        .map_err(|e| format!("{}: {e}（先运行 cargo xtask nib-dump）", path.display()))?;
+        .map_err(|e| format!("{}: {e} (run cargo xtask nib-dump first)", path.display()))?;
     let doc: Json = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     for w in doc["windows"].as_array().into_iter().flatten() {
         println!(

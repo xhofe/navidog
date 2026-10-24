@@ -12,7 +12,7 @@ use crate::paths;
 use rust_i18n::t;
 
 /// A store or key error in the interface language. `StoreError`'s own text stays English, for logs.
-pub fn error_message(e: &StoreError) -> String {
+fn error_message(e: &StoreError) -> String {
     match e {
         StoreError::Locked => t!("core.store_locked").to_string(),
         StoreError::NotFound => t!("core.not_found").to_string(),
@@ -532,11 +532,26 @@ mod tests {
         }
 
         fn block_write(&self) {
-            std::fs::create_dir(self.path.with_extension("tmp")).unwrap();
+            set_dir_read_only(self.path.parent().unwrap(), true);
         }
 
         fn unblock_write(&self) {
-            std::fs::remove_dir(self.path.with_extension("tmp")).unwrap();
+            set_dir_read_only(self.path.parent().unwrap(), false);
+        }
+    }
+
+    fn set_dir_read_only(dir: &std::path::Path, read_only: bool) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = if read_only { 0o500 } else { 0o700 };
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+        #[cfg(not(unix))]
+        {
+            let mut permissions = std::fs::metadata(dir).unwrap().permissions();
+            permissions.set_readonly(read_only);
+            std::fs::set_permissions(dir, permissions).unwrap();
         }
     }
 

@@ -1,22 +1,11 @@
 use navidog_db::DbError;
 
-use std::sync::Arc;
-
 use futures::FutureExt as _;
 use futures::future::BoxFuture;
-use navidog_db::{CancelHandle, DbResult, Session, sessions};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
-#[test]
-#[allow(deprecated)]
-fn legacy_operation_entry_point_remains_callable_from_another_crate() {
-    let sessions = navidog_db::sessions::Sessions::default();
-    assert!(
-        sessions
-            .run_once("closed", None, |_| Box::pin(async { Ok(()) }))
-            .is_none()
-    );
-}
+use navidog_db::{CancelHandle, DbResult, Session, sessions};
 
 #[test]
 fn error_record_supports_external_literals_and_exhaustive_destructuring() {
@@ -66,27 +55,22 @@ impl Session for NonRelationalSession {
 }
 
 #[test]
-fn non_relational_session_error_uses_the_interface_language() {
-    let previous = rust_i18n::locale().to_string();
+fn non_relational_session_error_has_a_stable_code() {
     navidog_db::runtime::runtime().block_on(async {
-        for (locale, expected) in [
-            ("en", "This connection is not a relational database."),
-            ("zh-CN", "该连接不是关系型数据库。"),
-        ] {
-            rust_i18n::set_locale(locale);
-            let session: sessions::SharedSession =
-                Arc::new(Mutex::new(Some(Box::new(NonRelationalSession))));
-            let error = sessions::run_on::<()>(session, |_| {
-                async { panic!("a non-relational session must not invoke the operation") }.boxed()
-            })
-            .await
-            .unwrap()
-            .unwrap_err();
-            assert_eq!(error.message, expected);
-            assert_eq!(error.code, None);
-            assert!(!error.is_session_lost());
-            assert!(!error.is_outcome_unknown());
-        }
+        let session: sessions::SharedSession =
+            Arc::new(Mutex::new(Some(Box::new(NonRelationalSession))));
+        let error = sessions::run_on::<()>(session, |_| {
+            async { panic!("a non-relational session must not invoke the operation") }.boxed()
+        })
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert_eq!(error.code.as_deref(), Some("navidog.not_relational"));
+        assert_eq!(
+            error.message,
+            "This connection is not a relational database."
+        );
+        assert!(!error.is_session_lost());
+        assert!(!error.is_outcome_unknown());
     });
-    rust_i18n::set_locale(&previous);
 }

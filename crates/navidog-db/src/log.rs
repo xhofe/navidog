@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex, mpsc};
 use std::time::{Duration, Instant};
+use tokio::sync::broadcast;
 
 use crate::driver::DbResult;
 
@@ -101,6 +102,12 @@ static RING: LazyLock<Mutex<Ring>> = LazyLock::new(|| {
     })
 });
 static NEXT: AtomicU64 = AtomicU64::new(0);
+static NOTIFY: LazyLock<broadcast::Sender<u64>> = LazyLock::new(|| broadcast::channel(64).0);
+
+/// Wakes the history viewer instead of polling the ring every 250 ms.
+pub fn subscribe() -> broadcast::Receiver<u64> {
+    NOTIFY.subscribe()
+}
 
 enum Msg {
     Entry(Box<LogEntry>),
@@ -153,7 +160,8 @@ pub fn record(entry: LogEntry) {
         ring.entries.pop_front();
         ring.first += 1;
     }
-    NEXT.fetch_add(1, Ordering::Release);
+    let revision = NEXT.fetch_add(1, Ordering::Release) + 1;
+    let _ = NOTIFY.send(revision);
 }
 
 /// Sequence number the next entry gets; it changes whenever an entry is recorded.
@@ -244,6 +252,16 @@ mod tests {
             "[23:49:01.000][sakila 本地][MYSQL][0.002s]\nSELECT * FROM nope\n\n\
              [23:49:01.000][sakila 本地][MYSQL][0.002s]\n1146 - Table doesn't exist\n\n"
         );
+    }
+
+    #[test]
+    fn record_wakes_a_subscriber_without_polling() {
+        let mut updates = subscribe();
+        record(entry("SELECT notify", None));
+        let revision = crate::runtime::runtime()
+            .block_on(updates.recv())
+            .expect("the history channel stays open");
+        assert!(revision > 0);
     }
 
     #[test]

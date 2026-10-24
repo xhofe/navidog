@@ -6,7 +6,7 @@ use std::ops::RangeInclusive;
 
 use gpui_kit::SharedString;
 use navidog_db::dialect::{ChangeSet, Dialect, RowKey, RowUpdate, Writes, Written};
-use navidog_util::sql_type::is_string_type;
+use navidog_util::sql_type::{TypeKind, is_string_type, type_kind};
 
 /// A cell value; `None` inside the `Option` is NULL, and a missing cell is an unfilled new row.
 pub type Cell = Option<SharedString>;
@@ -109,6 +109,10 @@ impl GridModel {
         if self.has_changes() || col >= self.columns.len() {
             return;
         }
+        let numeric = self
+            .columns
+            .get(col)
+            .is_some_and(|column| matches!(type_kind(&column.type_name), TypeKind::Number));
         let mut order: Vec<_> = (0..self.rows.len()).collect();
         order.sort_by(|&a, &b| {
             let value = |ix: usize| self.rows[ix].get(col).and_then(Option::as_deref);
@@ -116,10 +120,11 @@ impl GridModel {
                 (None, None) => std::cmp::Ordering::Equal,
                 (None, Some(_)) => std::cmp::Ordering::Less,
                 (Some(_), None) => std::cmp::Ordering::Greater,
-                (Some(a), Some(b)) => match (a.parse::<f64>(), b.parse::<f64>()) {
+                (Some(a), Some(b)) if numeric => match (a.parse::<f64>(), b.parse::<f64>()) {
                     (Ok(a), Ok(b)) => a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal),
                     _ => a.cmp(b),
                 },
+                (Some(a), Some(b)) => a.cmp(b),
             };
             if asc { ord } else { ord.reverse() }
         });
@@ -637,21 +642,33 @@ impl GridModel {
     /// The selection as tab-separated text; NULL is copied as an empty string. `header` adds a name row.
     /// `raw` is the dialect in raw data mode: values are copied as the grid shows them (strings as
     /// quoted literals), so pasting them back in raw data mode, where text is SQL, writes the same values.
-    // ponytail: tabs and newlines inside a value are not escaped, so pasting back mis-aligns; quote the
-    // TSV if a round trip is needed
+    /// Cells containing a tab, a newline or a quote use quoted TSV (RFC 4180 with a tab delimiter),
+    /// so a copy/paste round trip keeps one value in one cell.
     pub fn selected_tsv(&self, header: bool, data: bool, raw: Option<Dialect>) -> String {
         let mut lines = Vec::new();
         if header {
-            lines.push(self.selected_columns().join("\t"));
+            lines.push(
+                self.selected_columns()
+                    .iter()
+                    .map(|name| tsv_field(name))
+                    .collect::<Vec<_>>()
+                    .join("\t"),
+            );
         }
         if data {
             let (rows, cols) = self.selection();
             for r in rows.filter(|&r| r < self.row_count()) {
-                let cells: Vec<SharedString> = cols
+                let cells: Vec<String> = cols
                     .clone()
                     .map(|c| match raw {
-                        Some(dialect) => self.shown_text(r, c, true, dialect),
-                        None => self.value(r, c).cloned().flatten().unwrap_or_default(),
+                        Some(dialect) => tsv_field(&self.shown_text(r, c, true, dialect)),
+                        None => tsv_field(
+                            self.value(r, c)
+                                .cloned()
+                                .flatten()
+                                .unwrap_or_default()
+                                .as_ref(),
+                        ),
                     })
                     .collect();
                 lines.push(cells.join("\t"));
@@ -777,21 +794,21 @@ impl GridModel {
     }
 
     /// Writes tab-separated text starting at the selection's top left, appending rows past the end.
+    /// Quoted TSV is accepted, matching [`selected_tsv`](Self::selected_tsv).
     pub fn paste(&mut self, text: &str, raw: bool) {
         if self.locked {
             return;
         }
         let (rows, cols) = self.selection();
         let (r0, c0) = (*rows.start(), *cols.start());
-        let lines: Vec<&str> = text.trim_end_matches(['\n', '\r']).split('\n').collect();
-        for (i, line) in lines.iter().enumerate() {
+        for (i, line) in parse_tsv(text).into_iter().enumerate() {
             let r = r0 + i;
             while r >= self.row_count() {
                 self.new_rows.push(vec![None; self.columns.len()]);
             }
-            for (j, v) in line.trim_end_matches('\r').split('\t').enumerate() {
+            for (j, v) in line.into_iter().enumerate() {
                 if c0 + j < self.columns.len() {
-                    let cell = Some(v.to_string().into());
+                    let cell = Some(v.into());
                     if raw {
                         self.set_raw(r, c0 + j, cell);
                     } else {
@@ -978,6 +995,54 @@ fn rewrite(slots: &mut [SharedString], order: &[SharedString]) {
             *slot = next.clone();
         }
     }
+}
+
+fn tsv_field(value: &str) -> String {
+    if value.contains(['\t', '\n', '\r', '"']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+/// Rows of quoted-or-plain TSV. A quoted field may contain tabs, newlines and
+/// doubled quotes; CRLF input is accepted.
+fn parse_tsv(text: &str) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' if quoted => {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    field.push('"');
+                } else {
+                    quoted = false;
+                }
+            }
+            '"' if field.is_empty() => quoted = true,
+            '\t' if !quoted => row.push(std::mem::take(&mut field)),
+            '\n' if !quoted => {
+                if field.ends_with('\r') {
+                    field.pop();
+                }
+                row.push(std::mem::take(&mut field));
+                rows.push(std::mem::take(&mut row));
+            }
+            other => field.push(other),
+        }
+    }
+    if !field.is_empty() || !row.is_empty() {
+        if field.ends_with('\r') {
+            field.pop();
+        }
+        row.push(field);
+        rows.push(row);
+    }
+    rows
 }
 
 fn contains(hay: &str, needle: &str, case_sensitive: bool) -> bool {
@@ -1262,8 +1327,26 @@ mod tests {
     }
 
     #[test]
+    fn sorting_uses_the_column_type_and_unicode_find_ignores_case() {
+        let mut m = model(true);
+        m.columns[0].type_name = "int".into();
+        m.set_data(
+            vec![m.columns[0].clone()],
+            vec![vec![Some("10".into())], vec![Some("9".into())]],
+        );
+        m.sort_rows(0, true);
+        assert_eq!(m.value(0, 0), Some(&Some("9".into())));
+        m.columns[0].type_name = "varchar".into();
+        m.sort_rows(0, true);
+        assert_eq!(m.value(0, 0), Some(&Some("10".into())));
+        m.set_data(vec![m.columns[0].clone()], vec![vec![Some("Ärger".into())]]);
+        assert_eq!(m.find_cell("ärger", (0, 0), false, false), Some((0, 0)));
+    }
+
+    #[test]
     fn local_sort_puts_null_first_and_numbers_by_value() {
         let mut m = model(false);
+        m.columns[0].type_name = "int".into();
         m.set_data(
             vec![m.columns[0].clone()],
             vec![vec![Some("10".into())], vec![None], vec![Some("9".into())]],
@@ -1340,6 +1423,19 @@ mod tests {
         assert_eq!(m.row_count(), 3);
         assert_eq!(m.value(2, 1), Some(&Some("y".into())));
         assert_eq!(m.value(2, 0), None);
+    }
+
+    #[test]
+    fn tsv_quotes_round_trip_tabs_newlines_and_quotes() {
+        let mut m = model(true);
+        m.set_value(0, 1, Some("a\tb\nc\"d".into()));
+        m.select((0, 1), false);
+        let text = m.selected_tsv(false, true, None);
+        assert_eq!(text, "\"a\tb\nc\"\"d\"");
+        let mut out = model(true);
+        out.select((0, 1), false);
+        out.paste(&text, false);
+        assert_eq!(out.value(0, 1), Some(&Some("a\tb\nc\"d".into())));
     }
 
     #[test]

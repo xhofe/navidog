@@ -12,7 +12,6 @@ use gpui_kit::{
     div, img,
 };
 use navidog_db::Family;
-use navidog_ui::assets::driver_icon;
 use navidog_ui::skin::{confirm_with, heading};
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
@@ -150,7 +149,10 @@ impl Render for Picker {
                     .gap_1()
                     .rounded_md()
                     .when(selected, |d| d.bg(p.selection_inactive))
-                    .child(img(driver_icon(&id)).size(tokens::conn_type::TILE_ICON.rems()))
+                    .child(
+                        img(navidog_db::DriverRegistry::icon(cx, &id))
+                            .size(tokens::conn_type::TILE_ICON.rems()),
+                    )
                     .child(info.name.clone())
                     .on_click(
                         cx.listener(move |this, e: &gpui_kit::ClickEvent, window, cx| {

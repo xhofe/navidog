@@ -91,6 +91,8 @@ impl CountingDriver {
                 name: "Counting".into(),
                 family: Family::Relational,
                 default_port: None,
+                icon: "icons/db/mysql.svg",
+                dialect: crate::dialect::Dialect::MySql,
                 supports_ssl: false,
                 supports_ssh: false,
                 per_database_sessions: false,

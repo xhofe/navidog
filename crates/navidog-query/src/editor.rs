@@ -356,7 +356,14 @@ impl QueryEditor {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        Self::with_id(uuid_v4(), source, target, text, window, cx)
+        Self::with_id(
+            uuid::Uuid::new_v4().simple().to_string(),
+            source,
+            target,
+            text,
+            window,
+            cx,
+        )
     }
 
     fn with_id(
@@ -643,11 +650,7 @@ impl QueryEditor {
         let id = self.target.connection.as_deref()?;
         Sessions::global(cx).read(cx).dialect(id).or_else(|| {
             let driver = ConnectionStore::global(cx).read(cx).get(id)?.driver.clone();
-            Some(match driver.as_str() {
-                "postgres" => Dialect::Postgres,
-                "sqlite" => Dialect::Sqlite,
-                _ => Dialect::MySql,
-            })
+            navidog_db::DriverRegistry::dialect(cx, &driver)
         })
     }
 
@@ -1367,26 +1370,6 @@ pub(crate) fn language_for(s: &Settings, len: usize) -> &'static str {
     } else {
         "sql"
     }
-}
-
-fn uuid_v4() -> String {
-    format!(
-        "{:016x}{:016x}",
-        rand_u64(),
-        rand_u64() ^ std::process::id() as u64
-    )
-}
-
-fn rand_u64() -> u64 {
-    use std::hash::{BuildHasher, Hasher};
-    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-    h.write_u128(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos(),
-    );
-    h.finish()
 }
 
 impl Render for QueryEditor {
