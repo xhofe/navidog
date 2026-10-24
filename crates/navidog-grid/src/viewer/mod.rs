@@ -30,7 +30,7 @@ use gpui_kit::{
 };
 use navidog_core::object::{ObjectKind, ObjectRef, Scope};
 use navidog_core::settings::Settings;
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::dialect::Dialect;
 use navidog_db::sessions::{ConnState, Sessions, SessionsEvent, SharedSession, run_on};
 use navidog_db::{CancelHandle, ColumnInfo, ResultSet};
@@ -48,6 +48,7 @@ use crate::grid::{GridEvent, GridTarget, HideColumn, ResultGrid, ToggleRawData, 
 use crate::model::{Cell, GridColumn};
 
 mod cell_editor;
+mod external_refresh;
 mod filter_pane;
 mod find;
 mod fk_picker;
@@ -68,7 +69,6 @@ actions!(
         BeginTransaction,
         CommitTransaction,
         RollbackTransaction,
-        DesignTable,
         QueryTable,
         ApplyFilterSort,
         ClearFilterSort,
@@ -128,7 +128,11 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("cmd-.", StopLoad, Some(CONTEXT)),
         KeyBinding::new("ctrl-r", ApplyFilterSort, Some(CONTEXT)),
         KeyBinding::new("shift-cmd-y", QueryTable, Some(CONTEXT)),
-        KeyBinding::new("cmd-d", DesignTable, Some(CONTEXT)),
+        KeyBinding::new(
+            "secondary-d",
+            navidog_core::actions::DesignTable { object: None },
+            Some(CONTEXT),
+        ),
     ]);
     register_panel(cx, PANEL, |ctx, window, cx| {
         let object = match ctx.info() {
@@ -167,6 +171,8 @@ pub struct TableViewer {
     json_input: Entity<EditorState>,
     /// Row and column the editor text was loaded from.
     editor_cell: Option<(usize, usize)>,
+    /// Exact text loaded into the field editor, before a user applies it.
+    editor_baseline: String,
     editor_note: SharedString,
     /// Preview of a loaded image. Binary files are not written into the cell.
     image: Option<Arc<Image>>,
@@ -208,7 +214,13 @@ pub struct TableViewer {
     form_inputs: Vec<Entity<InputState>>,
     form_for: Option<usize>,
     in_transaction: bool,
+    transaction_pending: bool,
     busy: bool,
+    /// Database notifications received during an operation collapse into one follow-up load.
+    external_refresh_pending: bool,
+    /// A blocked notification must still refresh catalog data on the next explicit reload.
+    metadata_stale: bool,
+    catalog_revision: u64,
     /// Refresh icon keeps turning until this instant, even if the load finished sooner.
     spin_until: Option<Instant>,
     /// The most recently executed SQL or error
@@ -612,6 +624,14 @@ impl TableViewer {
                         }
                     },
                 ),
+                cx.subscribe(&Workspace::global(cx), |this, _, event, cx| {
+                    if let WorkspaceEvent::DatabaseChanged(connection) = event
+                        && connection == &this.object.scope.connection
+                    {
+                        this.catalog_revision = this.catalog_revision.wrapping_add(1);
+                        this.refresh_after_external_sql(cx);
+                    }
+                }),
                 cx.subscribe(
                     &Sessions::global(cx),
                     |this, _, e: &SessionsEvent, cx| match e {
@@ -628,6 +648,8 @@ impl TableViewer {
                             }
                             this.task = None;
                             this.cancel = None;
+                            this.external_refresh_pending = false;
+                            this.transaction_pending = false;
                             this.set_busy(false, cx);
                             this.add_after_commit = false;
                             this.reload_after_commit = false;
@@ -661,6 +683,7 @@ impl TableViewer {
                 editor: None,
                 cell_editor_px: None,
                 editor_cell: None,
+                editor_baseline: String::new(),
                 editor_note: SharedString::default(),
                 image: None,
                 show_find: false,
@@ -694,7 +717,11 @@ impl TableViewer {
                 form_inputs: Vec::new(),
                 form_for: None,
                 in_transaction: false,
+                transaction_pending: false,
                 busy: false,
+                external_refresh_pending: false,
+                metadata_stale: false,
+                catalog_revision: 0,
                 spin_until: None,
                 status: SharedString::default(),
                 task: None,
@@ -828,7 +855,8 @@ impl TableViewer {
         };
         let generation = self.session_generation;
         let (scope, table) = (self.object.scope.clone(), self.object.name.clone());
-        let job = run_on(session, move |rel| {
+        let revision = self.catalog_revision;
+        let job = run_on(session.clone(), move |rel| {
             Box::pin(async move { rel.foreign_keys(&scope, &table).await })
         });
         cx.spawn(async move |this, cx| {
@@ -840,6 +868,14 @@ impl TableViewer {
                 let Ok(Ok(keys)) = result else {
                     return;
                 };
+                if this.catalog_revision != revision
+                    || !this
+                        .session
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &session))
+                {
+                    return;
+                }
                 let names = keys.iter().map(|key| key.column.clone()).collect();
                 this.foreign_keys = keys;
                 this.grid
@@ -863,6 +899,16 @@ impl TableViewer {
         if busy {
             self.spin_until = Some(Instant::now() + REFRESH_SPIN);
             return;
+        }
+        if self.external_refresh_pending {
+            let viewer = cx.entity().downgrade();
+            cx.defer(move |cx| {
+                let _ = viewer.update(cx, |this, cx| {
+                    if this.external_refresh_pending && !this.busy {
+                        this.refresh_after_external_sql(cx);
+                    }
+                });
+            });
         }
         let Some(until) = self.spin_until else {
             return;
@@ -923,11 +969,23 @@ impl TableViewer {
             self.show_rowid,
         );
         let count_sql = count.then(|| d.count(scope, table, &filter));
+        let metadata = self.metadata_stale;
+        let (scope, table) = (scope.clone(), table.clone());
         self.status = sql.clone().into();
         self.set_busy(true, cx);
         cx.notify();
         let page = run_on(session.clone(), move |rel| {
-            Box::pin(async move { rel.execute(&sql).await })
+            Box::pin(async move {
+                let catalog = if metadata {
+                    Some((
+                        rel.table_columns(&scope, &table).await?,
+                        rel.foreign_keys(&scope, &table).await?,
+                    ))
+                } else {
+                    None
+                };
+                Ok((catalog, rel.execute(&sql).await?))
+            })
         });
         let total = count_sql.map(|sql| {
             run_on(session, move |rel| {
@@ -939,25 +997,36 @@ impl TableViewer {
                 .await
                 .map_err(|e| e.to_string())
                 .and_then(|r| r.map_err(|e| error_message(&e)));
+            let total = if let Some(total) = total {
+                Some(
+                    total
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok())
+                        .and_then(|sets| first_cell(&sets)),
+                )
+            } else {
+                None
+            };
             let pending_close = this
-                .update(cx, |this, cx| this.apply_page(generation, result, cx))
+                .update(cx, |this, cx| {
+                    if !this.generation_matches(generation, cx) {
+                        return false;
+                    }
+                    if let Some(total) = total {
+                        this.total = total;
+                    }
+                    let result = result.map(|(catalog, page)| {
+                        if let Some((columns, foreign_keys)) = catalog {
+                            this.accept_catalog(columns, foreign_keys, cx);
+                        }
+                        page
+                    });
+                    this.apply_page(generation, result, cx)
+                })
                 .unwrap_or(false);
             if pending_close {
                 cx.update(|cx| TableViewer::resume_close(this.clone(), cx));
-                return;
-            }
-            if let Some(total) = total {
-                let n = total
-                    .await
-                    .ok()
-                    .and_then(|r| r.ok())
-                    .and_then(|sets| first_cell(&sets));
-                let _ = this.update(cx, |this, cx| {
-                    if this.generation_matches(generation, cx) {
-                        this.total = n;
-                        cx.notify();
-                    }
-                });
             }
         }));
     }
@@ -1182,7 +1251,8 @@ impl TableViewer {
             return;
         };
         let generation = self.session_generation;
-        let job = run_on(session, move |rel| {
+        self.transaction_pending = true;
+        let job = run_on(session.clone(), move |rel| {
             Box::pin(async move { rel.execute(sql).await })
         });
         // Not in `self.task`: replacing that drops the page load in flight (opening a table with
@@ -1193,9 +1263,15 @@ impl TableViewer {
                 .map_err(|e| e.to_string())
                 .and_then(|r| r.map_err(|e| error_message(&e)));
             let _ = this.update(cx, |this, cx| {
-                if !this.generation_matches(generation, cx) {
+                if !this.generation_matches(generation, cx)
+                    || !this
+                        .session
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &session))
+                {
                     return;
                 }
+                this.transaction_pending = false;
                 match result {
                     Ok(_) => after(this, cx),
                     Err(e) => this.status = e.into(),
@@ -1582,6 +1658,7 @@ impl TableViewer {
             )
             .child(
                 Button::new("viewer-form")
+                    .disabled(self.busy)
                     .ghost()
                     .small()
                     .icon(lucide("list"))
@@ -1927,7 +2004,20 @@ impl Render for TableViewer {
             }))
             .on_action(cx.listener(|this, _: &RollbackTransaction, _, cx| this.rollback(cx)))
             .on_action(cx.listener(|this, _: &QueryTable, window, cx| this.query_table(window, cx)))
-            .on_action(|_: &DesignTable, _, _| {})
+            .on_action(cx.listener(
+                |this, action: &navidog_core::actions::DesignTable, window, cx| {
+                    if action.object.is_none() {
+                        window.dispatch_action(
+                            Box::new(navidog_core::actions::DesignTable {
+                                object: Some(this.object.clone()),
+                            }),
+                            cx,
+                        );
+                    } else {
+                        cx.propagate();
+                    }
+                },
+            ))
             .on_action(
                 cx.listener(|this, _: &ApplyFilterSort, window, cx| this.apply_filter(window, cx)),
             )
@@ -2094,6 +2184,21 @@ mod ownership_tests {
             cx.run_until_parked();
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    fn discard_grid_changes(viewer: &mut TableViewer, cx: &mut Context<TableViewer>) {
+        viewer.grid.update(cx, |grid, cx| {
+            grid.update_model(cx, |model| model.discard())
+        });
+    }
+
+    fn notify_database_changed(cx: &mut TestAppContext, connection: &str) {
+        cx.update(|cx| {
+            Workspace::global(cx).update(cx, |workspace, cx| {
+                workspace.database_changed(connection.to_string(), cx);
+            });
+        });
+        cx.run_until_parked();
     }
 
     #[gpui_kit::test]
@@ -2533,6 +2638,427 @@ mod ownership_tests {
             assert_eq!(model.value(0, 1), Some(&Some("newer pending".into())));
             assert_eq!(model.row_state(2), crate::model::RowState::Inserted);
             assert!(model.has_changes());
+        });
+
+        // Reset the fixture after lifecycle checks, then exercise main's external SQL refresh
+        // scenarios on the same test context so NAVIDOG_HOME has only one owner.
+        sql(
+            &file,
+            "DROP TABLE t; CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT); INSERT INTO t VALUES(1, 'z'), (3, 'c')",
+        );
+        cx.update_window(handle, |_, window, cx| {
+            Settings::update(cx, |settings| {
+                settings.sync_record = false;
+                settings.auto_begin_transaction = false;
+            });
+            viewer.update(cx, |v, cx| {
+                discard_grid_changes(v, cx);
+                v.metadata_stale = true;
+                v.filter
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                v.order
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                v.page = 0;
+                v.reload(true, cx);
+            });
+        })
+        .unwrap();
+        wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
+
+        // Start with a clean page. Notifications for other connections must not reload it.
+        cx.update(|cx| {
+            viewer.update(cx, |v, cx| {
+                v.grid
+                    .update(cx, |g, cx| g.update_model(cx, |m| m.discard()));
+            })
+        });
+        sql(&file, "UPDATE t SET name='elsewhere' WHERE id=1");
+        notify_database_changed(cx, "another-connection");
+        cx.update(|cx| {
+            let v = viewer.read(cx);
+            assert!(!v.busy);
+            assert_eq!(
+                v.grid.read(cx).model(cx).value(0, 1),
+                Some(&Some("z".into()))
+            );
+        });
+        notify_database_changed(cx, &id);
+        wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
+        cx.update(|cx| {
+            let v = viewer.read(cx);
+            assert_eq!(v.total, Some(2));
+            assert_eq!(
+                v.grid.read(cx).model(cx).value(0, 1),
+                Some(&Some("elsewhere".into()))
+            );
+        });
+
+        // Keep a page request in flight while three notifications arrive. One pending refresh
+        // must reread both rows and metadata after the operation releases the owned session.
+        let session = cx.update(|cx| viewer.read(cx).session.clone().unwrap());
+        let held = session.clone().try_lock_owned().unwrap();
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                v.filter
+                    .update(cx, |input, cx| input.set_value("id >= 1", window, cx));
+                v.order
+                    .update(cx, |input, cx| input.set_value("id DESC", window, cx));
+                v.limit = Some(1);
+                v.page = 1;
+                v.reload(true, cx);
+            })
+        })
+        .unwrap();
+        for _ in 0..3 {
+            notify_database_changed(cx, &id);
+        }
+        cx.update(|cx| {
+            let v = viewer.read(cx);
+            assert!(v.busy);
+            assert!(v.external_refresh_pending);
+        });
+        sql(
+            &file,
+            "CREATE TABLE parent(id INTEGER PRIMARY KEY); \
+            ALTER TABLE t ADD COLUMN parent_id INTEGER REFERENCES parent(id); \
+            INSERT INTO t(id,name) VALUES(4,'new row'); UPDATE t SET name='queued' WHERE id=3",
+        );
+        drop(held);
+        wait(cx, |cx| {
+            cx.update(|cx| {
+                let v = viewer.read(cx);
+                !v.busy && !v.external_refresh_pending && v.columns.len() == 3
+            })
+        });
+        cx.update(|cx| {
+            let v = viewer.read(cx);
+            assert!(Arc::ptr_eq(v.session.as_ref().unwrap(), &session));
+            assert_eq!(v.total, Some(3));
+            assert_eq!(v.limit, Some(1));
+            assert_eq!(v.page, 1);
+            assert_eq!(v.filter.read(cx).value().as_ref(), "id >= 1");
+            assert_eq!(v.order.read(cx).value().as_ref(), "id DESC");
+            assert_eq!(
+                v.grid.read(cx).model(cx).value(0, 1),
+                Some(&Some("queued".into()))
+            );
+            assert_eq!(v.foreign_keys.len(), 1);
+            assert_eq!(v.foreign_keys[0].column, "parent_id");
+        });
+
+        // An untouched inline editor is still input owned by the user. No notification may
+        // settle that editor, send a write, or replace the loaded page.
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                v.grid.update(cx, |g, cx| g.start_edit((0, 1), window, cx));
+                assert!(v.grid.read(cx).is_editing(cx));
+            })
+        })
+        .unwrap();
+        sql(&file, "UPDATE t SET name='latest' WHERE id=3");
+        notify_database_changed(cx, &id);
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                assert!(!v.busy);
+                assert!(v.grid.read(cx).is_editing(cx));
+                assert_eq!(
+                    v.grid.read(cx).model(cx).value(0, 1),
+                    Some(&Some("queued".into()))
+                );
+                assert_eq!(v.status, t!("viewer.external_refresh_pending").to_string());
+                v.grid.update(cx, |g, cx| g.commit_edit(window, cx));
+                discard_grid_changes(v, cx);
+            })
+        })
+        .unwrap();
+
+        // Dirty rows and completely blank inserted rows both prevent an external reload.
+        for blank in [false, true] {
+            cx.update(|cx| {
+                viewer.update(cx, |v, cx| {
+                    v.grid.update(cx, |g, cx| {
+                        g.update_model(cx, |m| {
+                            if blank {
+                                m.insert_row();
+                            } else {
+                                m.set_value(0, 1, Some("local".into()));
+                            }
+                        })
+                    });
+                })
+            });
+            notify_database_changed(cx, &id);
+            cx.update(|cx| {
+                viewer.update(cx, |v, cx| {
+                    assert!(!v.busy);
+                    assert!(v.grid.read(cx).model(cx).has_changes());
+                    if blank {
+                        assert_eq!(v.grid.read(cx).model(cx).row_count(), 2);
+                        assert!(v.grid.read(cx).model(cx).change_set().inserts.is_empty());
+                    } else {
+                        assert_eq!(
+                            v.grid.read(cx).model(cx).value(0, 1),
+                            Some(&Some("local".into()))
+                        );
+                    }
+                    discard_grid_changes(v, cx);
+                })
+            });
+        }
+        assert_eq!(
+            sql(&file, "SELECT name FROM t WHERE id=3"),
+            [vec![Some("latest".into())]]
+        );
+
+        // Inputs not yet written back to the model need the same protection as model changes.
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                v.form = true;
+                v.sync_form(window, cx);
+                v.form_inputs[1].update(cx, |input, cx| input.set_value("form draft", window, cx));
+            })
+        })
+        .unwrap();
+        notify_database_changed(cx, &id);
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                assert!(!v.busy);
+                assert_eq!(v.form_inputs[1].read(cx).value().as_ref(), "form draft");
+                assert!(!v.grid.read(cx).model(cx).has_changes());
+                v.form = false;
+                v.form_for = None;
+                v.form_inputs.clear();
+                v.open_editor(Kind::Text, window, cx);
+                v.editor_input
+                    .update(cx, |input, cx| input.set_value("field draft", window, cx));
+            })
+        })
+        .unwrap();
+        notify_database_changed(cx, &id);
+        cx.update(|cx| {
+            viewer.update(cx, |v, cx| {
+                assert!(!v.busy);
+                assert_eq!(v.editor_input.read(cx).value().as_ref(), "field draft");
+                assert!(!v.grid.read(cx).model(cx).has_changes());
+                v.editor = None;
+            })
+        });
+
+        // A blocked catalog change is not forgotten: the user's later explicit refresh must
+        // read the new field definitions as well as rows, using the same owned session.
+        sql(&file, "ALTER TABLE t ADD COLUMN note TEXT");
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                v.open_editor(Kind::Text, window, cx);
+                v.editor_input
+                    .update(cx, |input, cx| input.set_value("unapplied", window, cx));
+            })
+        })
+        .unwrap();
+        notify_database_changed(cx, &id);
+        cx.update(|cx| {
+            viewer.update(cx, |v, cx| {
+                assert!(v.metadata_stale);
+                assert_eq!(v.columns.len(), 3);
+                v.editor = None;
+                v.reload(true, cx);
+            })
+        });
+        wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
+        cx.update(|cx| {
+            let v = viewer.read(cx);
+            assert!(!v.metadata_stale);
+            assert_eq!(v.columns.len(), 4);
+            assert_eq!(v.columns[3].name, "note");
+            assert_eq!(v.foreign_keys.len(), 1);
+        });
+
+        // Input can arrive after an automatic refresh has begun. Apply must not mark a field
+        // draft as accepted while the locked grid would reject the write.
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                v.grid.update(cx, |grid, cx| {
+                    grid.update_model(cx, |model| model.select((0, 1), false))
+                });
+                v.open_editor(Kind::Text, window, cx);
+            })
+        })
+        .unwrap();
+        let held = session.clone().try_lock_owned().unwrap();
+        notify_database_changed(cx, &id);
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                assert!(v.busy);
+                assert_eq!(v.editor_baseline, "latest");
+                v.editor_input.update(cx, |input, cx| {
+                    input.set_value("during refresh", window, cx)
+                });
+                v.apply_editor(window, cx);
+                assert_eq!(v.editor_baseline, "latest");
+                assert!(!v.grid.read(cx).model(cx).has_changes());
+            });
+            window.render_frame(cx);
+            assert_eq!(window.find("editor-update").disabled(), Some(true));
+            window.click("editor-update", cx);
+        })
+        .unwrap();
+        drop(held);
+        wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
+        cx.update(|cx| {
+            viewer.update(cx, |v, cx| {
+                assert_eq!(v.editor_input.read(cx).value().as_ref(), "during refresh");
+                assert_eq!(v.editor_baseline, "latest");
+                assert_eq!(
+                    v.grid.read(cx).model(cx).value(0, 1),
+                    Some(&Some("latest".into()))
+                );
+                assert!(!v.grid.read(cx).model(cx).has_changes());
+                v.editor = None;
+            })
+        });
+
+        // Form navigation likewise cannot flush into a locked model and then replace the
+        // input entities. The refresh completion must retain the text entered in flight.
+        cx.update(|cx| {
+            viewer.update(cx, |v, cx| {
+                v.limit = Some(2);
+                v.page = 0;
+                v.reload(true, cx);
+            })
+        });
+        wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                v.form = true;
+                v.sync_form(window, cx);
+            })
+        })
+        .unwrap();
+        let held = session.clone().try_lock_owned().unwrap();
+        notify_database_changed(cx, &id);
+        cx.update_window(handle, |_, window, cx| {
+            viewer.update(cx, |v, cx| {
+                assert!(v.busy);
+                let row = v.form_for;
+                v.form_inputs[1].update(cx, |input, cx| {
+                    input.set_value("form during refresh", window, cx)
+                });
+                v.form_step(1, cx);
+                assert_eq!(v.form_for, row);
+                assert!(!v.grid.read(cx).model(cx).has_changes());
+            });
+            window.render_frame(cx);
+            assert_eq!(window.find("form-next").disabled(), Some(true));
+            assert_eq!(window.find("form-prev").disabled(), Some(true));
+            assert_eq!(window.find("viewer-form").disabled(), Some(true));
+            window.click("form-next", cx);
+        })
+        .unwrap();
+        drop(held);
+        wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
+        cx.update(|cx| {
+            viewer.update(cx, |v, cx| {
+                assert_eq!(
+                    v.form_inputs[1].read(cx).value().as_ref(),
+                    "form during refresh"
+                );
+                assert!(!v.grid.read(cx).model(cx).has_changes());
+                v.form = false;
+                v.form_for = None;
+                v.form_inputs.clear();
+                v.limit = Some(1);
+                v.page = 1;
+                v.reload(true, cx);
+            })
+        });
+        wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
+
+        // An owned transaction, including writes already accepted into its session, remains
+        // open and rollbackable after another panel announces a database change.
+        cx.update(|cx| viewer.update(cx, |v, cx| v.begin_transaction(cx)));
+        wait(cx, |cx| cx.update(|cx| viewer.read(cx).in_transaction));
+        navidog_db::runtime::runtime().block_on(async {
+            run_on(session.clone(), |rel| {
+                Box::pin(async move {
+                    rel.execute("UPDATE t SET name='transaction' WHERE id=3")
+                        .await
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        });
+        notify_database_changed(cx, &id);
+        cx.update(|cx| {
+            let v = viewer.read(cx);
+            assert!(v.in_transaction);
+            assert!(!v.busy);
+            assert!(Arc::ptr_eq(v.session.as_ref().unwrap(), &session));
+        });
+        navidog_db::runtime::runtime().block_on(async {
+            run_on(session, |rel| {
+                Box::pin(async move {
+                    let inside = rel.execute("SELECT name FROM t WHERE id=3").await?;
+                    assert_eq!(inside[0].rows, [vec![Some("transaction".into())]]);
+                    rel.execute("ROLLBACK").await
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        });
+        cx.update(|cx| viewer.update(cx, |v, cx| v.set_in_transaction(false, cx)));
+        assert_eq!(
+            sql(&file, "SELECT name FROM t WHERE id=3"),
+            [vec![Some("latest".into())]]
+        );
+        notify_database_changed(cx, &id);
+        wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
+        cx.update(|cx| {
+            assert_eq!(
+                viewer.read(cx).grid.read(cx).model(cx).value(0, 1),
+                Some(&Some("latest".into()))
+            )
+        });
+
+        // Retire a session with an external refresh already queued on its lock. Its late
+        // result must not replace the page, status, or busy state of the reopened viewer.
+        let (retired_generation, retired_session) = cx.update(|cx| {
+            let viewer = viewer.read(cx);
+            (viewer.session_generation, viewer.session.clone().unwrap())
+        });
+        let held = navidog_db::runtime::runtime().block_on(retired_session.lock());
+        notify_database_changed(cx, &id);
+        cx.update(|cx| assert!(viewer.read(cx).busy));
+        sql(&file, "UPDATE t SET name='after reopen' WHERE id=3");
+        cx.update(|cx| {
+            Sessions::global(cx).update(cx, |sessions, cx| {
+                sessions.close_for_reopen(&id, cx);
+                sessions.open(id.clone(), Secrets::default(), cx);
+            });
+        });
+        drop(held);
+        wait(cx, |cx| {
+            cx.update(|cx| {
+                let viewer = viewer.read(cx);
+                viewer.session_generation != retired_generation
+                    && viewer.session.is_some()
+                    && !viewer.busy
+            })
+        });
+        cx.update(|cx| {
+            let viewer = viewer.read(cx);
+            assert!(!Arc::ptr_eq(
+                viewer.session.as_ref().unwrap(),
+                &retired_session
+            ));
+            assert!(!viewer.external_refresh_pending);
+            assert!(!viewer.grid.read(cx).model(cx).locked);
+            assert_eq!(
+                viewer.grid.read(cx).model(cx).value(0, 1),
+                Some(&Some("after reopen".into()))
+            );
+            assert!(viewer.status.starts_with("SELECT"));
         });
     }
 }
