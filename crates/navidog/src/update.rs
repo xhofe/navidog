@@ -663,6 +663,32 @@ fn install_macos(dmg: &Path) -> Result<Delivery, String> {
 }
 
 #[cfg(target_os = "macos")]
+/// `codesign` integrity check. Release CI can pin the expected Team ID in
+/// `NAVIDOG_TEAM_ID`; without it an ad-hoc signature still has to be valid.
+#[cfg(target_os = "macos")]
+fn verify_bundle(app: &Path) -> bool {
+    let verified = std::process::Command::new("codesign")
+        .args(["--verify", "--deep", "--strict"])
+        .arg(app)
+        .status()
+        .is_ok_and(|status| status.success());
+    if !verified {
+        return false;
+    }
+    let Some(expected) = option_env!("NAVIDOG_TEAM_ID") else {
+        return true;
+    };
+    let output = std::process::Command::new("codesign")
+        .args(["-dv", "--verbose=4"])
+        .arg(app)
+        .output();
+    output.is_ok_and(|out| {
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .any(|line| line.trim() == format!("TeamIdentifier={expected}"))
+    })
+}
+
 fn replace_bundle(app: &Path, dmg: &Path) -> Result<(), String> {
     let mount = std::env::temp_dir().join(format!("navidog-dmg-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&mount);
@@ -699,7 +725,11 @@ fn replace_bundle(app: &Path, dmg: &Path) -> Result<(), String> {
         .arg(&mount)
         .status();
     match copied {
-        Ok(status) if status.success() => {}
+        Ok(status) if status.success() && verify_bundle(&staged) => {}
+        Ok(status) if status.success() => {
+            let _ = std::fs::remove_dir_all(&staged);
+            return Err("the downloaded app is not signed correctly".into());
+        }
         _ => {
             let _ = std::fs::remove_dir_all(&staged);
             return Err("could not copy the new app into place".into());
