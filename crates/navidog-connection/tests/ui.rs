@@ -170,7 +170,7 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
 
     // A failed profile save leaves the form and current live session available for retry.
     let original = std::fs::read(home.join("connections.json")).unwrap();
-    set_dir_read_only(&home, true);
+    block_writes(&home.join("connections.json"), true);
     let reconnects = std::rc::Rc::new(std::cell::Cell::new(0));
     let seen = reconnects.clone();
     let _subscription = cx.update(|cx| {
@@ -212,7 +212,7 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
     );
     assert!(cx.update(|cx| Sessions::global(cx).read(cx).state(&id).is_open()));
     assert!(std::fs::read(home.join("connections.json")).unwrap() == original);
-    set_dir_read_only(&home, false);
+    block_writes(&home.join("connections.json"), false);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("ok", cx);
@@ -265,17 +265,18 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
     let _ = std::fs::remove_dir_all(home);
 }
 
-fn set_dir_read_only(dir: &std::path::Path, read_only: bool) {
+fn block_writes(path: &std::path::Path, block: bool) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = if read_only { 0o500 } else { 0o700 };
+        let dir = path.parent().unwrap();
+        let mode = if block { 0o500 } else { 0o700 };
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
     }
     #[cfg(not(unix))]
     {
-        let mut permissions = std::fs::metadata(dir).unwrap().permissions();
-        permissions.set_readonly(read_only);
-        std::fs::set_permissions(dir, permissions).unwrap();
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_readonly(block);
+        std::fs::set_permissions(path, permissions).unwrap();
     }
 }
