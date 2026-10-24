@@ -5,6 +5,7 @@ rust_i18n::i18n!("locales", fallback = "en");
 // Track locale edits in Cargo as well as the translation proc-macro.
 const _: &str = include_str!("../locales/database.yml");
 
+pub mod commit;
 pub mod dialect;
 pub mod driver;
 mod execution;

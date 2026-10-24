@@ -55,6 +55,9 @@ ui:
   app_database_missing:
     en: The database file does not exist.
     zh-CN: 数据库文件不存在。
+  app_row_not_found:
+    en: The row was changed or deleted. Refresh and try again.
+    zh-CN: 该行已被修改或删除，请刷新后重试。
   outcome_unknown:
     en: The execution outcome may be unknown. Reopen the connection before continuing.
     zh-CN: 执行结果可能未知。继续之前请重新打开连接。

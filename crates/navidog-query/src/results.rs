@@ -20,10 +20,10 @@ use gpui_kit::{
 };
 use navidog_core::object::Scope;
 use navidog_core::settings::{ResultsPosition, Settings, ShowAfterRun};
+use navidog_db::commit::{Commit, apply};
 use navidog_db::dialect::{ChangeSet, Dialect, RowKey, Values, Writes};
 use navidog_db::sessions::{Sessions, prepare_database, run_on};
 use navidog_db::{Column, ResultSet};
-use navidog_grid::commit::{Commit, apply};
 use navidog_grid::{Cell, GridColumn, GridEvent, GridTarget, ResultGrid};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;

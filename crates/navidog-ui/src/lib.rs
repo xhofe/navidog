@@ -31,6 +31,7 @@ pub fn app_error_text(code: &str) -> Option<String> {
         "navidog.ssh_auth" => "ui.app_ssh_auth",
         "navidog.no_database_file" => "ui.app_no_database_file",
         "navidog.database_missing" => "ui.app_database_missing",
+        "navidog.row_not_found" => "ui.app_row_not_found",
         _ => return None,
     };
     Some(t!(key).to_string())
