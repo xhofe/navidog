@@ -35,7 +35,7 @@ impl Default for PostgresDriver {
                 id: "postgres".into(),
                 name: "PostgreSQL".into(),
                 family: Family::Relational,
-                default_port: Some(5432),
+                default_port: navidog_core::connection::driver_defaults("postgres").port,
                 icon: "icons/db/postgresql.svg",
                 dialect: Dialect::Postgres,
                 supports_ssl: true,
@@ -500,45 +500,7 @@ impl Relational for PgSession {
         Dialect::Postgres
     }
 
-    fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
-        async move {
-            self.recovery.observe(sql);
-            let result = self.attempt(sql).await.map_err(|e| {
-                if self.lost(&e) {
-                    self.cancellation.clear();
-                    interrupted(e, true)
-                } else {
-                    e
-                }
-            });
-            if result.is_ok() {
-                self.remember(sql);
-            }
-            result
-        }
-        .boxed()
-    }
-
-    fn execute_read<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
-        async move {
-            let result = match self.attempt(sql).await {
-                Err(e) if self.lost(&e) && self.recovery.can_reconnect() => {
-                    self.reconnect().await?;
-                    self.attempt(sql).await
-                }
-                other => other,
-            };
-            result.map_err(|e| {
-                if self.lost(&e) {
-                    self.cancellation.clear();
-                    interrupted(e, false)
-                } else {
-                    e
-                }
-            })
-        }
-        .boxed()
-    }
+    crate::recovering_execute!();
 
     fn execute_statement<'a>(
         &'a mut self,

@@ -189,6 +189,55 @@ pub struct ForeignKey {
     pub referenced: String,
 }
 
+/// Generates `execute`/`execute_read` for a session with `attempt`, `reconnect`,
+/// `remember`, `lost`, `recovery` and `cancellation`. Both network drivers differ
+/// only in how they decide a connection is lost, so keeping the recovery policy
+/// here prevents the two copies from drifting.
+#[macro_export]
+macro_rules! recovering_execute {
+    () => {
+        fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
+            async move {
+                self.recovery.observe(sql);
+                let result = self.attempt(sql).await.map_err(|e| {
+                    if self.lost(&e) {
+                        self.cancellation.clear();
+                        interrupted(e, true)
+                    } else {
+                        e
+                    }
+                });
+                if result.is_ok() {
+                    self.remember(sql);
+                }
+                result
+            }
+            .boxed()
+        }
+
+        fn execute_read<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
+            async move {
+                let result = match self.attempt(sql).await {
+                    Err(e) if self.lost(&e) && self.recovery.can_reconnect() => {
+                        self.reconnect().await?;
+                        self.attempt(sql).await
+                    }
+                    other => other,
+                };
+                result.map_err(|e| {
+                    if self.lost(&e) {
+                        self.cancellation.clear();
+                        interrupted(e, false)
+                    } else {
+                        e
+                    }
+                })
+            }
+            .boxed()
+        }
+    };
+}
+
 pub trait Relational: Send {
     fn dialect(&self) -> Dialect;
     /// Execute once on the current physical session. Transport failures never replay the SQL.

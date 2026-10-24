@@ -37,7 +37,7 @@ impl MySqlDriver {
                 id: id.into(),
                 name: name.into(),
                 family: Family::Relational,
-                default_port: Some(3306),
+                default_port: navidog_core::connection::driver_defaults(id).port,
                 icon: if id == "mariadb" {
                     "icons/db/mariadb.svg"
                 } else {
@@ -183,6 +183,10 @@ impl MySqlSession {
         Ok(())
     }
 
+    fn lost(&self, e: &DbError) -> bool {
+        e.disconnected
+    }
+
     fn remember(&mut self, sql: &str) {
         if let Some(setup) = crate::sql::session_setup(sql) {
             self.setup = Some(setup);
@@ -285,45 +289,7 @@ impl Relational for MySqlSession {
         Dialect::MySql
     }
 
-    fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
-        async move {
-            self.recovery.observe(sql);
-            let result = self.attempt(sql).await.map_err(|e| {
-                if e.disconnected {
-                    self.cancellation.clear();
-                    interrupted(e, true)
-                } else {
-                    e
-                }
-            });
-            if result.is_ok() {
-                self.remember(sql);
-            }
-            result
-        }
-        .boxed()
-    }
-
-    fn execute_read<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
-        async move {
-            let result = match self.attempt(sql).await {
-                Err(e) if e.disconnected && self.recovery.can_reconnect() => {
-                    self.reconnect().await?;
-                    self.attempt(sql).await
-                }
-                other => other,
-            };
-            result.map_err(|e| {
-                if e.disconnected {
-                    self.cancellation.clear();
-                    interrupted(e, false)
-                } else {
-                    e
-                }
-            })
-        }
-        .boxed()
-    }
+    crate::recovering_execute!();
 }
 
 async fn query(conn: &mut Conn, sql: &str) -> DbResult<Vec<ResultSet>> {
