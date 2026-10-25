@@ -527,7 +527,6 @@ impl NavigatorPanel {
                     if !matches!(e, WorkspaceEvent::SelectionChanged) {
                         return;
                     }
-                    this.marked = Self::selected_ids(cx).into_iter().collect();
                     // A selection made elsewhere (objects tab, editor tab) starts a new range
                     let anchor = this
                         .anchor
@@ -795,6 +794,9 @@ fn step_offset(y: f32, max: f32, step: f32, down: bool) -> Option<f32> {
 
 impl Render for NavigatorPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Derive the multi-selection snapshot from the workspace on every frame
+        // instead of caching it through a subscription that can lag behind clicks.
+        self.marked = Self::selected_ids(cx).into_iter().collect();
         // Other panes read the catalog while they render, so gpui skips its
         // observers and only redraws those panes. This tree is a snapshot, and
         // would keep showing "Loading…" until the next click. Reading the
