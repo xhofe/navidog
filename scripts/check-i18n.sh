@@ -46,9 +46,26 @@ def parse(path):
     return keys
 
 definitions = {}
+by_crate = {}
 for path in glob.glob('crates/*/locales/*.yml'):
+    crate = path.split('/')[1]
+    crate_keys = by_crate.setdefault(crate, set())
     for key, (source, value) in parse(path).items():
         definitions.setdefault(key, []).append((source, value))
+        crate_keys.add(key)
+
+# A feature crate's backend only loads its own locale files, so a literal
+# `t!("…")` key must be defined there. Cross-crate UI keys resolve through
+# explicit helpers, not through another backend.
+for source in glob.glob('crates/*/src/**/*.rs', recursive=True):
+    crate = source.split('/')[1]
+    text = open(source, encoding='utf-8').read()
+    for number, line in enumerate(text.splitlines(), 1):
+        for match in re.finditer(r't!\("([A-Za-z0-9_.-]+)"', line):
+            key = match.group(1)
+            if key not in by_crate.get(crate, set()):
+                print(f'{source}:{number}: `{key}` is not defined in {crate} locales')
+                FAIL = True
 
 for key, entries in sorted(definitions.items()):
     values = {value for _, value in entries}

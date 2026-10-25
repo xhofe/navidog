@@ -38,7 +38,7 @@
 | S-04 | AppState/raw/Settings 多份 | P1 | 已修 |
 | S-05 | 命名与弃用 API | P1 | 已修 |
 | S-06 | gpui-kit 版本文档漂移 | P0 | 已修 |
-| S-07 | 每 crate i18n 后端导致的复制 | P2 | 暂缓 |
+| S-07 | 每 crate i18n 后端导致的复制 | P2 | 已修 |
 | S-08 | 面板标题错误 | P2 | 已修 |
 | S-09 | designer i18n 顺序 | P2 | 已修 |
 | A-01 | core god crate | P2 | 暂缓 |
@@ -75,7 +75,7 @@
 - **R-04 / D-05（SQL 扫描统一，进行中）**：引号与 `$tag$` 跳过已收拢到 `navidog_util::sql_text`；`find_params`、分句器、筛选解析的完整词法层仍需语法级重构和三种方言的回归。
 
 - **D-08（Catalog/OutlineCache，进行中）**：`Load<T>` 与 `ScopeCache<T>` 已引入，OutlineCache 已迁移；Catalog 的五类不同 key/失效代际仍需继续迁移。
-- **S-07（每 crate i18n 后端）**：统一后端要在构建期合并 locales，并验证加载顺序，另立 PR。
+- **S-07（每 crate i18n 后端）**：明确契约为 crate-local：`scripts/check-i18n.sh` 校验每个字面量 `t!` key 都在本 crate locales 中；跨 crate 文案必须走 `navidog_ui::db_error_text` 这类显式 helper。统一后端仍可后续合并。
 - **A-01/A-02/A-03（core/db 分层）**：`navidog-core` 的 UI 状态、`navidog-db` 的元数据/设计器职责需要跨 crate 迁移，属于架构 epic。
 - **A-06（缓存/选择，进行中）**：navigator 的多选快照改为每帧从 Workspace 派生；`Catalog::refresh_connection` 不再调用 `Sessions::refresh`，由 shell 处理数据库切换。`ScopeCache<T>` 和 `Catalog::require()` 仍是缓存层重构。
 - **A-07（god object，进行中）**：`app/update.rs` 的安装/替换逻辑已拆到 `update/install.rs`；viewer/results/editor/form/model 的拆分仍是纯搬家工作。
