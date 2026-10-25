@@ -1,0 +1,13 @@
+[package]
+name = "navidog-sql-log"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "In-memory and on-disk SQL history shared by the drivers and the query panel."
+
+[dependencies]
+chrono.workspace = true
+tokio.workspace = true
+tracing.workspace = true

@@ -9,6 +9,7 @@ description = "MySQL, MariaDB, PostgreSQL, and SQLite drivers for navidog."
 
 [dependencies]
 navidog-core.workspace = true
+navidog-sql-log = { path = "../navidog-sql-log" }
 navidog-util.workspace = true
 gpui-kit.workspace = true
 rust-i18n.workspace = true

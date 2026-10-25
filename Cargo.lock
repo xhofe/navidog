@@ -5091,6 +5091,7 @@ dependencies = [
  "mysql_async",
  "native-tls",
  "navidog-core",
+ "navidog-sql-log",
  "navidog-util",
  "postgres-native-tls",
  "rusqlite",
@@ -5176,6 +5177,15 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "navidog-sql-log"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
