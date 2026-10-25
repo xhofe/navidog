@@ -9,7 +9,7 @@ use gpui_kit::{
     Styled as _, Window,
 };
 use navidog_core::store::ConnectionStore;
-use navidog_db::sessions::Sessions;
+use navidog_session::sessions::Sessions;
 use navidog_ui::skin::{FormRow, confirm_with, heading};
 use navidog_ui::tokens;
 use rust_i18n::t;

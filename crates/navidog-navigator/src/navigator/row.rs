@@ -45,7 +45,7 @@ impl NavigatorPanel {
                     .and_then(|c| c.color.as_deref())
                     .and_then(|n| tokens::connection_color(n, cx));
                 (
-                    img(navidog_db::DriverRegistry::icon(cx, &driver))
+                    img(navidog_session::DriverRegistry::icon(cx, &driver))
                         .size(size)
                         .when(!open, |i| i.grayscale(true).opacity(0.6))
                         .into_any_element(),
@@ -316,7 +316,7 @@ impl NavigatorPanel {
                     if !this.focus_handle.contains_focused(window, cx) {
                         window.focus(&this.focus_handle, cx);
                     }
-                    let menu = navidog_db::DriverRegistry::all(cx).into_iter().fold(
+                    let menu = navidog_session::DriverRegistry::all(cx).into_iter().fold(
                         NativeMenu::new()
                             .menu(
                                 t!("nav.filter_all_types").to_string(),
@@ -328,7 +328,7 @@ impl NavigatorPanel {
                             m.menu(
                                 info.name.clone(),
                                 Box::new(FilterByType {
-                                    driver: Some(info.id.clone()),
+                                    driver: Some(info.id.clone().into()),
                                 }),
                             )
                         },

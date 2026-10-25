@@ -13,9 +13,9 @@ use navidog_core::connection::Connection;
 use navidog_core::crypto::Key;
 use navidog_core::object::{ObjectKind, ObjectRef, Scope};
 use navidog_core::store::ConnectionStore;
-use navidog_db::sessions::Sessions;
 use navidog_db::sqlite::SqliteDriver;
 use navidog_db::{ConnectParams, Secrets, connect, runtime};
+use navidog_session::sessions::Sessions;
 use navidog_ui::tabs::{self, CloseTab};
 use navidog_ui::tokens;
 

@@ -14,8 +14,8 @@ use navidog_core::crypto::Key;
 use navidog_core::snippets::Snippets;
 use navidog_core::store::ConnectionStore;
 use navidog_core::workspace::{QueryContext, Workspace};
-use navidog_db::sessions::Sessions;
 use navidog_db::{ConnectParams, Secrets, connect, runtime, sqlite::SqliteDriver};
+use navidog_session::sessions::Sessions;
 
 use crate::info::{InfoPanel, Page};
 
@@ -56,7 +56,7 @@ fn query_pages_follow_the_editor(cx: &mut TestAppContext) {
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         crate::init(cx);
         // Keep dialog hit regions fixed between the frame sampled by click and its dispatch.
         cx.set_reduce_motion(true);
@@ -157,7 +157,7 @@ fn query_pages_follow_the_editor(cx: &mut TestAppContext) {
     let scope = navidog_core::object::Scope::new(id.clone(), "main", None);
     wait(cx, "the identifiers", |cx| {
         cx.update(|cx| {
-            navidog_db::outline::OutlineCache::global(cx)
+            navidog_session::outline::OutlineCache::global(cx)
                 .read(cx)
                 .ready(&scope)
                 .is_some_and(|o| o.table("film").is_some_and(|t| t.columns.len() == 2))

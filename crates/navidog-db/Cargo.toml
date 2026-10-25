@@ -11,7 +11,6 @@ description = "MySQL, MariaDB, PostgreSQL, and SQLite drivers for navidog."
 navidog-core.workspace = true
 navidog-sql-log = { path = "../navidog-sql-log" }
 navidog-util.workspace = true
-gpui-kit.workspace = true
 rust-i18n.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
@@ -29,5 +28,5 @@ rusqlite = { version = "0.40", features = ["bundled", "column_decltype", "column
 russh = { version = "0.64", default-features = false, features = ["flate2", "ring", "rsa"] }
 
 [dev-dependencies]
-gpui-kit = { workspace = true, features = ["test-support"] }
+navidog-session = { path = "../navidog-session" }
 tempfile = "3"

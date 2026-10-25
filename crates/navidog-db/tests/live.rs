@@ -676,7 +676,7 @@ fn a_separate_write_leaves_the_metadata_session_recoverable() {
     }
     runtime::runtime().block_on(async {
         for (driver, mut params) in network_drivers() {
-            if driver.info().id.as_ref() != "postgres" {
+            if driver.info().id.as_str() != "postgres" {
                 params.database = Some("sakila".into());
             }
             let mut metadata = connect(driver.clone(), params.clone()).await.unwrap();
@@ -794,7 +794,7 @@ fn uncertain_writes_are_never_replayed() {
     }
     runtime::runtime().block_on(async {
         for (driver, mut params) in network_drivers() {
-            if driver.info().id.as_ref() != "postgres" {
+            if driver.info().id.as_str() != "postgres" {
                 params.database = Some("sakila".into());
             }
             for statement_api in [false, true] {

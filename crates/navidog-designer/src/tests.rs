@@ -33,7 +33,7 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         crate::init(cx);
     });
     let (handle, panel) = cx.update(|cx| {
@@ -266,7 +266,8 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
 fn saves_only_after_preview_and_keeps_failed_draft(cx: &mut TestAppContext) {
     let (_guard, home) = isolate_home("save");
     use navidog_core::{connection::Connection, crypto::Key, store::ConnectionStore};
-    use navidog_db::{ConnectParams, Secrets, sessions::Sessions};
+    use navidog_db::{ConnectParams, Secrets};
+    use navidog_session::sessions::Sessions;
     use std::sync::Arc;
     cx.executor().allow_parking();
     cx.update(|cx| cx.set_reduce_motion(true));
@@ -300,7 +301,7 @@ fn saves_only_after_preview_and_keeps_failed_draft(cx: &mut TestAppContext) {
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         crate::init(cx);
         ConnectionStore::global(cx).update(cx, |store, cx| {
             store.set_key(Key::random());
@@ -441,7 +442,8 @@ fn saves_only_after_preview_and_keeps_failed_draft(cx: &mut TestAppContext) {
 fn cascades_real_reference_metadata_and_preserves_drafts(cx: &mut TestAppContext) {
     use crate::panel::ChooseValue;
     use navidog_core::{connection::Connection, crypto::Key, store::ConnectionStore};
-    use navidog_db::{ConnectParams, Secrets, sessions::Sessions};
+    use navidog_db::{ConnectParams, Secrets};
+    use navidog_session::sessions::Sessions;
     use std::sync::Arc;
     let (_guard, home) = isolate_home("references");
     cx.executor().allow_parking();
@@ -462,7 +464,7 @@ fn cascades_real_reference_metadata_and_preserves_drafts(cx: &mut TestAppContext
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         crate::init(cx);
         ConnectionStore::global(cx).update(cx, |store, cx| {
             store.set_key(Key::random());
@@ -635,7 +637,7 @@ fn option_forms_use_saved_dialect_and_guard_invalid_previews(cx: &mut TestAppCon
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         crate::init(cx);
         ConnectionStore::global(cx).update(cx, |store, _| store.set_key(Key::random()));
     });
@@ -730,7 +732,7 @@ fn postgres_comments_edit_in_the_grid_preview_and_restore(cx: &mut TestAppContex
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         crate::init(cx);
         ConnectionStore::global(cx).update(cx, |store, cx| {
             store.set_key(Key::random());
@@ -862,7 +864,7 @@ fn reload_rebuilds_entry_forms_and_clears_validation(cx: &mut TestAppContext) {
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         crate::init(cx);
     });
     let (handle, panel) = cx.update(|cx| {
@@ -957,7 +959,7 @@ fn reload_while_previewing_replaces_stale_sql(cx: &mut TestAppContext) {
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         crate::init(cx);
     });
     let (handle, panel) = cx.update(|cx| {

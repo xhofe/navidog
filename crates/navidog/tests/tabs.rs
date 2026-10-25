@@ -140,14 +140,15 @@ fn close_tabs(cx: &mut TestAppContext) {
 
     // Reopening with new settings (a profile switch) keeps the editor tabs
     cx.update(|cx| {
-        navidog_db::sessions::Sessions::global(cx).update(cx, |s, cx| s.close_for_reopen("c", cx));
+        navidog_session::sessions::Sessions::global(cx)
+            .update(cx, |s, cx| s.close_for_reopen("c", cx));
     });
     cx.run_until_parked();
     assert_eq!(tab_count(cx), 2);
 
     // Closing the connection closes its editor tabs and leaves the objects tab
     cx.update(|cx| {
-        navidog_db::sessions::Sessions::global(cx).update(cx, |s, cx| s.close("c", cx));
+        navidog_session::sessions::Sessions::global(cx).update(cx, |s, cx| s.close("c", cx));
     });
     cx.run_until_parked();
     assert_eq!(tab_count(cx), 1);
@@ -228,7 +229,7 @@ fn close_tabs(cx: &mut TestAppContext) {
     assert_eq!(tab_count(cx), 2, "popped designer is reused");
     assert_eq!(cx.update(|cx| cx.windows().len()), windows + 1);
     cx.update(|cx| {
-        navidog_db::sessions::Sessions::global(cx).update(cx, |s, cx| s.close("c", cx));
+        navidog_session::sessions::Sessions::global(cx).update(cx, |s, cx| s.close("c", cx));
     });
     cx.run_until_parked();
     assert_eq!(

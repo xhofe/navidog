@@ -17,8 +17,8 @@ use gpui_kit::{
 };
 use navidog_core::store::ConnectionStore;
 use navidog_db::dialect::Dialect;
-use navidog_db::sessions::{Sessions, SessionsEvent, SharedSession, run_on};
 use navidog_db::{CancelHandle, DbError, ResultSet};
+use navidog_session::sessions::{Sessions, SessionsEvent, SharedSession, run_on};
 use navidog_ui::assets::lucide;
 use navidog_ui::{palette, tabs, tokens};
 use navidog_util::console as fmt;

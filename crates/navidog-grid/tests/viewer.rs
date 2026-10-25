@@ -16,8 +16,8 @@ use navidog_core::object::{ObjectKind, ObjectRef, Scope};
 use navidog_core::settings::Settings;
 use navidog_core::store::ConnectionStore;
 use navidog_db::Secrets;
-use navidog_db::sessions::Sessions;
 use navidog_grid::TableViewer;
+use navidog_session::sessions::Sessions;
 use navidog_ui::tokens;
 
 fn fit(rem: gpui_kit::Pixels, header: &str, values: &[&str]) -> gpui_kit::Pixels {
@@ -86,7 +86,7 @@ fn paging_commits_first_and_auto_transaction_still_loads(cx: &mut TestAppContext
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_grid::init(cx);
         Settings::update(cx, |s| {
             s.limit_records = true;

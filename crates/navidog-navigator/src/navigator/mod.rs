@@ -30,7 +30,7 @@ use navidog_core::store::ConnectionStore;
 use navidog_core::vgroups::VirtualGroups;
 use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::dialect::Dialect;
-use navidog_db::sessions::{ConnState, Sessions, SessionsEvent};
+use navidog_session::sessions::{ConnState, Sessions, SessionsEvent};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
 use navidog_ui::{palette, tabs, tokens};

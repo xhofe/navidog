@@ -70,7 +70,7 @@ pub fn init(cx: &mut App) {
 /// Scope the category buttons act on: the database for MySQL / SQLite; PostgreSQL needs a schema.
 fn category_scope(cx: &App) -> Option<navidog_core::object::Scope> {
     let scope = Workspace::global(cx).read(cx).selection().scope()?;
-    let dialect = navidog_db::sessions::Sessions::global(cx)
+    let dialect = navidog_session::sessions::Sessions::global(cx)
         .read(cx)
         .dialect(&scope.connection)?;
     (!dialect.has_schemas() || scope.schema.is_some()).then_some(scope)
@@ -84,7 +84,7 @@ fn category_enabled(cx: &App, kind: ObjectKind) -> bool {
     }
     category_scope(cx)
         .and_then(|s| {
-            navidog_db::sessions::Sessions::global(cx)
+            navidog_session::sessions::Sessions::global(cx)
                 .read(cx)
                 .dialect(&s.connection)
         })
@@ -184,14 +184,14 @@ pub fn status_text(cx: &App) -> SharedString {
     {
         Some(c) if c.supports_network() => format!(
             "{}  {}:{}",
-            navidog_db::DriverRegistry::name(cx, &c.driver),
+            navidog_session::DriverRegistry::name(cx, &c.driver),
             c.general.host,
             c.general.port.unwrap_or_default()
         )
         .into(),
         Some(c) => format!(
             "{}  {}",
-            navidog_db::DriverRegistry::name(cx, &c.driver),
+            navidog_session::DriverRegistry::name(cx, &c.driver),
             c.general.file.clone().unwrap_or_default()
         )
         .into(),

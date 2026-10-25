@@ -13,7 +13,7 @@ use navidog_core::actions::{
 };
 use navidog_core::crypto::Key;
 use navidog_core::store::ConnectionStore;
-use navidog_db::sessions::{ConnState, Sessions};
+use navidog_session::sessions::{ConnState, Sessions};
 
 struct Host {
     focus: FocusHandle,
@@ -55,7 +55,7 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_connection::init(cx);
         // Keep away from the keychain
         ConnectionStore::global(cx).update(cx, |s, _| s.set_key(Key::random()));
@@ -176,8 +176,11 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
     let _subscription = cx.update(|cx| {
         cx.subscribe(
             &Sessions::global(cx),
-            move |_, event: &navidog_db::sessions::SessionsEvent, _| {
-                if matches!(event, navidog_db::sessions::SessionsEvent::Reopening(_)) {
+            move |_, event: &navidog_session::sessions::SessionsEvent, _| {
+                if matches!(
+                    event,
+                    navidog_session::sessions::SessionsEvent::Reopening(_)
+                ) {
                     seen.set(seen.get() + 1);
                 }
             },

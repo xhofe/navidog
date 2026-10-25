@@ -13,7 +13,7 @@ use gpui_kit::{
 };
 use navidog_core::object::ObjectRef;
 use navidog_core::workspace::{Selection, Workspace};
-use navidog_db::sessions::{Sessions, SessionsEvent};
+use navidog_session::sessions::{Sessions, SessionsEvent};
 use navidog_ui::assets::lucide;
 use navidog_ui::{palette, tabs};
 

@@ -17,7 +17,7 @@ use navidog_core::object::{ObjectKind, ObjectRef};
 use navidog_core::store::ConnectionStore;
 use navidog_core::workspace::{Selection, Workspace};
 use navidog_db::ColumnInfo;
-use navidog_db::sessions::{ConnState, Sessions};
+use navidog_session::sessions::{ConnState, Sessions};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::{heading, truncated};
 use navidog_ui::{palette, tokens};
@@ -142,7 +142,7 @@ impl InfoPanel {
                     cx.notify()
                 }),
                 cx.observe(
-                    &navidog_db::outline::OutlineCache::global(cx),
+                    &navidog_session::outline::OutlineCache::global(cx),
                     |_, _, cx| cx.notify(),
                 ),
                 cx.observe(&snippets.search, |_, _, cx| cx.notify()),
@@ -285,7 +285,7 @@ impl InfoPanel {
                 (t!("info.connection").to_string(), c.name.clone().into()),
                 (
                     t!("info.type").to_string(),
-                    navidog_db::DriverRegistry::name(cx, &c.driver),
+                    navidog_session::DriverRegistry::name(cx, &c.driver),
                 ),
             ];
             if !c.profiles.is_empty() {

@@ -4,7 +4,7 @@
 
 pub use navidog_db::commit::{Commit, apply, matched_a_row};
 
-use navidog_db::sessions::SharedSession;
+use navidog_session::sessions::SharedSession;
 
 /// Formats driver details and localized recovery guidance at the grid UI boundary.
 /// The database layer retains the original code and message for diagnostics.

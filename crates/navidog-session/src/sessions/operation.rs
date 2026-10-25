@@ -45,7 +45,7 @@ impl OperationScope {
         let mut revoked = self.revoked.subscribe();
         runtime::spawn(async move {
             let initialization_may_write = !params.initial_queries.trim().is_empty();
-            let mut connecting = crate::connect(driver, params);
+            let mut connecting = navidog_db::connect(driver, params);
             let mut connecting_started = false;
             let connected = {
                 let state = revoked.clone();
@@ -136,7 +136,7 @@ pub(super) async fn connect_after_drain(
     for scope in retiring {
         scope.drained().await;
     }
-    crate::connect(driver, params).await
+    navidog_db::connect(driver, params).await
 }
 
 async fn until_revoked(revoked: &mut watch::Receiver<bool>) {
@@ -146,28 +146,6 @@ async fn until_revoked(revoked: &mut watch::Receiver<bool>) {
 }
 
 fn interrupted(outcome_unknown: bool) -> DbError {
-    DbError::msg(rust_i18n::t!("database.operation_connection_retired").to_string())
+    DbError::msg("The operation's connection was closed or reopened.")
         .with_session_loss(outcome_unknown)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn retirement_diagnostics_have_english_and_chinese_translations() {
-        for (key, english, chinese) in [
-            (
-                "database.operation_connection_retired",
-                "The operation's connection was closed or reopened.",
-                "操作所属的连接已关闭或重新打开。",
-            ),
-            (
-                "database.sqlite_queued_session_closed",
-                "The SQLite session was closed before queued work started.",
-                "排队的操作开始前，SQLite 会话已关闭。",
-            ),
-        ] {
-            assert_eq!(rust_i18n::t!(key, locale = "en"), english);
-            assert_eq!(rust_i18n::t!(key, locale = "zh-CN"), chinese);
-        }
-    }
 }

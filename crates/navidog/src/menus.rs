@@ -240,14 +240,14 @@ pub fn set_menus(cx: &mut App) {
         .cloned()
         .unwrap_or_default();
     let settings = cx.try_global::<Settings>().cloned().unwrap_or_default();
-    let drivers = navidog_db::DriverRegistry::all(cx);
+    let drivers = navidog_session::DriverRegistry::all(cx);
     let new_connection =
         Menu::new(t!("menu.connection").to_string()).items(drivers.iter().map(|d| {
             let info = d.info();
             MenuItem::action(
                 info.name.clone(),
                 NewConnectionOf {
-                    driver: info.id.clone(),
+                    driver: info.id.clone().into(),
                 },
             )
         }));

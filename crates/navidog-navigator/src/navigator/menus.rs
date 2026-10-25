@@ -5,14 +5,14 @@ use super::*;
 impl NavigatorPanel {
     pub(crate) fn context_menu(node: Option<&Node>, cx: &App) -> NativeMenu {
         let new_conn =
-            navidog_db::DriverRegistry::all(cx)
+            navidog_session::DriverRegistry::all(cx)
                 .into_iter()
                 .fold(NativeMenu::new(), |m, d| {
                     let info = d.info();
                     m.menu(
-                        info.name.clone(),
+                        gpui_kit::SharedString::from(info.name.clone()),
                         Box::new(NewConnectionOf {
-                            driver: info.id.clone(),
+                            driver: info.id.clone().into(),
                         }),
                     )
                 });

@@ -6,9 +6,7 @@
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
-use gpui_kit::{App, Global, SharedString};
 use navidog_core::object::{ObjectKind, Scope};
-use navidog_core::registry::Registry;
 
 use crate::dialect::Dialect;
 use crate::params::ConnectParams;
@@ -63,7 +61,7 @@ impl DbError {
         self.outcome_unknown
     }
 
-    pub(crate) fn with_session_loss(mut self, outcome_unknown: bool) -> Self {
+    pub fn with_session_loss(mut self, outcome_unknown: bool) -> Self {
         self.disconnected = true;
         self.outcome_unknown = outcome_unknown;
         self
@@ -82,8 +80,8 @@ pub enum Family {
 #[derive(Clone, Debug)]
 pub struct DriverInfo {
     /// Registry key, also the `driver` field in connections.json
-    pub id: SharedString,
-    pub name: SharedString,
+    pub id: String,
+    pub name: String,
     pub family: Family,
     pub default_port: Option<u16>,
     pub icon: &'static str,
@@ -365,40 +363,4 @@ pub trait KeyValue: Send {
         count: u32,
     ) -> BoxFuture<'a, DbResult<(u64, Vec<String>)>>;
     fn get<'a>(&'a mut self, db: u32, key: &'a str) -> BoxFuture<'a, DbResult<Option<String>>>;
-}
-
-/// Registered drivers, shared by built-in drivers and plugin JS drivers (M5).
-#[derive(Default)]
-pub struct DriverRegistry(pub Registry<Arc<dyn Driver>>);
-
-impl Global for DriverRegistry {}
-
-impl DriverRegistry {
-    pub fn get(cx: &App, id: &str) -> Option<Arc<dyn Driver>> {
-        cx.global::<Self>().0.get(id).cloned()
-    }
-
-    pub fn icon(cx: &App, id: &str) -> &'static str {
-        Self::get(cx, id)
-            .map(|driver| driver.info().icon)
-            .unwrap_or("icons/db/mysql.svg")
-    }
-
-    pub fn dialect(cx: &App, id: &str) -> Option<Dialect> {
-        Self::get(cx, id).map(|driver| driver.info().dialect)
-    }
-
-    pub fn name(cx: &App, id: &str) -> gpui_kit::SharedString {
-        Self::get(cx, id)
-            .map(|driver| driver.info().name.clone())
-            .unwrap_or_else(|| id.to_string().into())
-    }
-
-    pub fn all(cx: &App) -> Vec<Arc<dyn Driver>> {
-        cx.global::<Self>()
-            .0
-            .iter()
-            .map(|(_, _, d)| d.clone())
-            .collect()
-    }
 }

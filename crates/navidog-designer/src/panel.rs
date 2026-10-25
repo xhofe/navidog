@@ -22,9 +22,9 @@ use navidog_db::table_design::{
 use navidog_db::{
     DbError, DbResult,
     dialect::Dialect,
-    sessions::Sessions,
     table_design::{self, DesignColumn, TableDesign, TableSnapshot},
 };
+use navidog_session::sessions::Sessions;
 use navidog_ui::{
     assets::lucide,
     palette,
@@ -270,7 +270,7 @@ impl TableDesigner {
                         .get(&saved.scope.connection)?
                         .driver
                         .clone();
-                    navidog_db::DriverRegistry::dialect(cx, &driver)
+                    navidog_session::DriverRegistry::dialect(cx, &driver)
                 })
                 .unwrap_or(Dialect::Sqlite);
             let migration_error = if dialect == Dialect::Postgres {

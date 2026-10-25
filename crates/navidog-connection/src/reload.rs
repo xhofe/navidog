@@ -7,7 +7,8 @@ use gpui_kit::component::v_flex;
 use gpui_kit::{
     App, AppContext as _, Context, IntoElement, ParentElement as _, Render, Styled as _, Window,
 };
-use navidog_db::{DbError, sessions::Sessions};
+use navidog_db::DbError;
+use navidog_session::sessions::Sessions;
 use navidog_ui::skin::{FormRow, confirm_with, heading};
 use navidog_ui::tokens;
 use rust_i18n::t;

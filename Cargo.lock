@@ -5029,6 +5029,7 @@ dependencies = [
  "navidog-grid",
  "navidog-navigator",
  "navidog-query",
+ "navidog-session",
  "navidog-test-support",
  "navidog-ui",
  "navidog-util",
@@ -5053,6 +5054,7 @@ dependencies = [
  "gpui-kit",
  "navidog-core",
  "navidog-db",
+ "navidog-session",
  "navidog-ui",
  "rust-i18n",
  "serde_json",
@@ -5088,10 +5090,10 @@ version = "0.0.1"
 dependencies = [
  "chrono",
  "futures",
- "gpui-kit",
  "mysql_async",
  "native-tls",
  "navidog-core",
+ "navidog-session",
  "navidog-sql-log",
  "navidog-util",
  "postgres-native-tls",
@@ -5114,6 +5116,7 @@ dependencies = [
  "gpui-kit",
  "navidog-core",
  "navidog-db",
+ "navidog-session",
  "navidog-ui",
  "navidog-util",
  "rust-i18n",
@@ -5129,6 +5132,7 @@ dependencies = [
  "gpui-kit",
  "navidog-core",
  "navidog-db",
+ "navidog-session",
  "navidog-test-support",
  "navidog-ui",
  "navidog-util",
@@ -5165,6 +5169,7 @@ dependencies = [
  "gpui-kit",
  "navidog-core",
  "navidog-db",
+ "navidog-session",
  "navidog-test-support",
  "navidog-ui",
  "navidog-util",
@@ -5187,6 +5192,7 @@ dependencies = [
  "navidog-core",
  "navidog-db",
  "navidog-grid",
+ "navidog-session",
  "navidog-test-support",
  "navidog-ui",
  "navidog-util",
@@ -5197,6 +5203,21 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "navidog-session"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "futures",
+ "gpui-kit",
+ "navidog-core",
+ "navidog-db",
+ "serde",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

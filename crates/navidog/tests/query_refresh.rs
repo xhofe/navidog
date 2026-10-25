@@ -14,11 +14,11 @@ use navidog_core::crypto::Key;
 use navidog_core::object::{ObjectKind, ObjectRef, Scope};
 use navidog_core::settings::Settings;
 use navidog_core::store::ConnectionStore;
-use navidog_db::sessions::Sessions;
 use navidog_db::{ConnectParams, Secrets, connect, runtime, sqlite::SqliteDriver};
 use navidog_grid::TableViewer;
 use navidog_navigator::DdlPanel;
 use navidog_query::{QueryEditor, Target};
+use navidog_session::sessions::Sessions;
 use navidog_ui::tokens;
 
 fn wait(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {

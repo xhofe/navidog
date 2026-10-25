@@ -105,7 +105,7 @@ pub fn init_with_settings(cx: &mut App, settings: Settings) {
     gpui_kit::component::set_locale(Settings::global(cx).language.locale());
     navidog_ui::theme::init(cx);
     navidog_ui::tabs::init(cx);
-    navidog_db::init(cx);
+    navidog_session::init(cx);
     navidog_connection::init(cx);
     navidog_navigator::init(cx);
     navidog_grid::init(cx);
@@ -215,7 +215,7 @@ pub fn register_app_actions(cx: &mut App) {
     cx.on_action(|a: &navidog_core::actions::TableStructureChanged, cx| {
         navidog_navigator::catalog::Catalog::global(cx)
             .update(cx, |catalog, cx| catalog.refresh_scope(&a.scope, cx));
-        navidog_db::outline::OutlineCache::global(cx)
+        navidog_session::outline::OutlineCache::global(cx)
             .update(cx, |cache, cx| cache.ensure(&a.scope, true, cx));
     });
     cx.on_action(|_: &Quit, cx| cx.quit());

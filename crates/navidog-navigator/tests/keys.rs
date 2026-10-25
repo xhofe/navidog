@@ -16,11 +16,11 @@ use navidog_core::crypto::Key;
 use navidog_core::object::{ObjectKind, ObjectRef, Scope};
 use navidog_core::store::ConnectionStore;
 use navidog_core::workspace::{Selection, Workspace};
-use navidog_db::sessions::Sessions;
 use navidog_db::sqlite::SqliteDriver;
 use navidog_db::{ConnectParams, Secrets, connect, runtime};
 use navidog_navigator::NavigatorPanel;
 use navidog_navigator::catalog::{Catalog, Load};
+use navidog_session::sessions::Sessions;
 
 struct Host {
     focus: FocusHandle,
@@ -71,7 +71,7 @@ fn arrow_keys_walk_through_the_rows_under_a_table(cx: &mut TestAppContext) {
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_navigator::init(cx);
         ConnectionStore::global(cx).update(cx, |s, cx| {
             s.set_key(Key::random());

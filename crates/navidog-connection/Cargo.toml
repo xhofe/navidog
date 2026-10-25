@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Connection manager for navidog."
 
 [dependencies]
+navidog-session = { path = "../navidog-session" }
 navidog-ui.workspace = true
 navidog-core.workspace = true
 navidog-db.workspace = true

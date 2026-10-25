@@ -17,8 +17,6 @@ pub mod outline;
 pub mod params;
 pub mod postgres;
 pub mod runtime;
-pub mod scope_cache;
-pub mod sessions;
 pub mod sql;
 pub mod sqlite;
 pub mod ssh;
@@ -28,41 +26,16 @@ use std::sync::Arc;
 
 use futures::FutureExt as _;
 use futures::future::BoxFuture;
-use gpui_kit::App;
-use navidog_core::registry::Source;
 
 pub use driver::*;
 pub use metadata::referenced_values_sql;
 pub use params::{ConnectParams, Secrets};
 
-/// Tests that set `NAVIDOG_HOME` share this lock. The variable is process-global,
-/// and a lock inside one module does not cover the other tests in this crate.
-#[cfg(test)]
-pub(crate) fn lock_config_home() -> std::sync::MutexGuard<'static, ()> {
+/// Serializes tests that mutate the process-global `NAVIDOG_HOME`; shared with
+/// the session-crate tests that also write config directories.
+pub fn lock_config_home() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     LOCK.lock().unwrap_or_else(|p| p.into_inner())
-}
-
-/// Register the built-in drivers.
-pub fn init(cx: &mut App) {
-    let _ = _rust_i18n_backend();
-    let mut registry = DriverRegistry::default();
-    let builtin: [Arc<dyn Driver>; 4] = [
-        Arc::new(mysql::MySqlDriver::mysql()),
-        Arc::new(mysql::MySqlDriver::mariadb()),
-        Arc::new(postgres::PostgresDriver::default()),
-        Arc::new(sqlite::SqliteDriver::default()),
-    ];
-    for d in builtin {
-        let id = d.info().id.clone();
-        registry
-            .0
-            .register(id, Source::Builtin, d)
-            .expect("built-in driver IDs are unique");
-    }
-    cx.set_global(registry);
-    sessions::init(cx);
-    outline::init(cx);
 }
 
 /// Open a session. With SSH, open the tunnel first and connect the driver to its local port.

@@ -14,10 +14,10 @@ use navidog_core::store::ConnectionStore;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use crate::dialect::Dialect;
-use crate::{
-    ConnectParams, DbError, DbResult, Driver, DriverRegistry, Relational, Secrets, Session, runtime,
-};
+use navidog_db::dialect::Dialect;
+use navidog_db::{ConnectParams, DbError, DbResult, Driver, Relational, Secrets, Session, runtime};
+
+use crate::registry::DriverRegistry;
 use operation::OperationScope;
 
 mod operation;
@@ -318,8 +318,9 @@ impl Sessions {
                         Some(s) => s.clone(),
                         None => {
                             params.database = Some(db.clone());
-                            let s =
-                                Arc::new(Mutex::new(Some(crate::connect(driver, params).await?)));
+                            let s = Arc::new(Mutex::new(Some(
+                                navidog_db::connect(driver, params).await?,
+                            )));
                             map.insert(db, s.clone());
                             s
                         }
@@ -353,7 +354,7 @@ impl Sessions {
         database: Option<&str>,
     ) -> Option<JoinHandle<DbResult<Box<dyn Session>>>> {
         let (driver, params) = self.session_target(id, database)?;
-        Some(runtime::spawn(crate::connect(driver, params)))
+        Some(runtime::spawn(navidog_db::connect(driver, params)))
     }
 
     fn session_target(

@@ -30,7 +30,7 @@ use navidog_core::settings::{ResultsPosition, Settings, ShowAfterRun};
 use navidog_core::store::ConnectionStore;
 use navidog_core::workspace::{Selection, Workspace};
 use navidog_db::dialect::Dialect;
-use navidog_db::sessions::{ConnState, Sessions, SessionsEvent};
+use navidog_session::sessions::{ConnState, Sessions, SessionsEvent};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
 use navidog_ui::{palette, tabs, tokens};
@@ -650,7 +650,7 @@ impl QueryEditor {
         let id = self.target.connection.as_deref()?;
         Sessions::global(cx).read(cx).dialect(id).or_else(|| {
             let driver = ConnectionStore::global(cx).read(cx).get(id)?.driver.clone();
-            navidog_db::DriverRegistry::dialect(cx, &driver)
+            navidog_session::DriverRegistry::dialect(cx, &driver)
         })
     }
 

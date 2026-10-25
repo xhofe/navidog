@@ -22,7 +22,7 @@ use navidog_core::connection::SecretField;
 use navidog_core::registry::{CommandInfo, CommandRegistry, Source};
 use navidog_core::store::ConnectionStore;
 use navidog_core::workspace::{Selection, Workspace};
-use navidog_db::sessions::Sessions;
+use navidog_session::sessions::Sessions;
 use rust_i18n::t;
 
 pub fn init(cx: &mut App) {
@@ -271,7 +271,7 @@ fn confirm_delete_connection(window: &mut Window, cx: &mut App) {
                 }
                 Sessions::global(cx).update(cx, |s, cx| s.close(&id, cx));
                 navidog_core::vgroups::VirtualGroups::drop_connection(&id, cx);
-                navidog_db::outline::OutlineCache::drop_connection(&id, cx);
+                navidog_session::outline::OutlineCache::drop_connection(&id, cx);
                 let _ = std::fs::remove_dir_all(navidog_core::paths::profile_dir(&id));
                 Workspace::global(cx).update(cx, |w, cx| w.select(Selection::None, cx));
                 true
@@ -331,7 +331,7 @@ pub(crate) fn show_error(
 }
 
 pub(crate) fn drivers(cx: &App) -> Vec<Arc<dyn navidog_db::Driver>> {
-    navidog_db::DriverRegistry::all(cx)
+    navidog_session::DriverRegistry::all(cx)
 }
 
 pub(crate) fn secret_label(field: SecretField) -> String {

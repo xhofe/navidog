@@ -27,7 +27,7 @@ use navidog_core::vgroups::VirtualGroups;
 use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::ObjectInfo;
 use navidog_db::dialect::Dialect;
-use navidog_db::sessions::{ConnState, Sessions};
+use navidog_session::sessions::{ConnState, Sessions};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
 use navidog_ui::{palette, tabs, tokens};
@@ -706,7 +706,7 @@ impl ObjectsPanel {
                         let row = &rows[ix];
                         let selected = row.target == selection;
                         let icon = match &row.icon {
-                            RowIcon::Driver(d) => img(navidog_db::DriverRegistry::icon(cx, d))
+                            RowIcon::Driver(d) => img(navidog_session::DriverRegistry::icon(cx, d))
                                 .size(tokens::navigator::ROW_ICON.rems())
                                 .into_any_element(),
                             RowIcon::Folder => lucide("folder")

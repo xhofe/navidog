@@ -19,12 +19,13 @@ use navidog_core::connection::{
 };
 use navidog_core::store::ConnectionStore;
 use navidog_core::workspace::{Selection, Workspace};
-use navidog_db::{ConnectParams, DriverRegistry, Secrets, runtime};
+use navidog_db::{ConnectParams, Secrets, runtime};
+use navidog_session::DriverRegistry;
 use navidog_ui::skin::{FormRow, confirm_with, form_note};
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
 
-use navidog_db::sessions::Sessions;
+use navidog_session::sessions::Sessions;
 
 pub fn open_new(driver: SharedString, window: &mut Window, cx: &mut App) {
     let mut conn = Connection::new(&driver);
@@ -1385,7 +1386,7 @@ impl Render for ConnectionForm {
         let title = if self.is_new {
             t!(
                 "conn.new_connection_of",
-                driver = navidog_db::DriverRegistry::name(cx, &self.draft.driver)
+                driver = navidog_session::DriverRegistry::name(cx, &self.draft.driver)
             )
             .to_string()
         } else {

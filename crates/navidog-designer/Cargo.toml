@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Table structure designer for navidog."
 
 [dependencies]
+navidog-session = { path = "../navidog-session" }
 navidog-ui.workspace = true
 navidog-util.workspace = true
 navidog-core.workspace = true

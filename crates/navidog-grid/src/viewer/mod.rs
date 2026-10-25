@@ -32,8 +32,8 @@ use navidog_core::object::{ObjectKind, ObjectRef, Scope};
 use navidog_core::settings::Settings;
 use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::dialect::Dialect;
-use navidog_db::sessions::{ConnState, Sessions, SessionsEvent, SharedSession, run_on};
 use navidog_db::{CancelHandle, ColumnInfo, ResultSet};
+use navidog_session::sessions::{ConnState, Sessions, SessionsEvent, SharedSession, run_on};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::{FormRow, confirm_with, truncated};
 use navidog_ui::{palette, tabs, tokens};
@@ -2039,7 +2039,7 @@ mod ownership_tests {
             gpui_kit::init(cx);
             navidog_core::init(cx);
             navidog_ui::theme::init(cx);
-            navidog_db::init(cx);
+            navidog_session::init(cx);
             crate::init(cx);
             Settings::update(cx, |s| {
                 s.sync_record = false;

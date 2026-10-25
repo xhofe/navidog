@@ -25,7 +25,7 @@ mod macos {
     use navidog_core::settings::Settings;
     use navidog_core::store::ConnectionStore;
     use navidog_core::workspace::{Selection, Workspace};
-    use navidog_db::sessions::Sessions;
+    use navidog_session::sessions::Sessions;
     use navidog_ui::NavidogAssets;
 
     pub fn run() {

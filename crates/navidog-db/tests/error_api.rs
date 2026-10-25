@@ -5,7 +5,8 @@ use futures::future::BoxFuture;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use navidog_db::{CancelHandle, DbResult, Session, sessions};
+use navidog_db::{CancelHandle, DbResult, Session};
+use navidog_session::sessions;
 
 #[test]
 fn error_record_supports_external_literals_and_exhaustive_destructuring() {

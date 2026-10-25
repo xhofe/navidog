@@ -139,7 +139,7 @@ impl Render for Picker {
             .p_2()
             .children(drivers.into_iter().map(|info| {
                 let id = info.id.clone();
-                let selected = self.selected.as_ref() == Some(&id);
+                let selected = self.selected.as_deref() == Some(id.as_str());
                 v_flex()
                     .id(SharedString::from(format!("driver-{id}")))
                     .w(tokens::conn_type::TILE_SIZE.rems())
@@ -150,13 +150,13 @@ impl Render for Picker {
                     .rounded_md()
                     .when(selected, |d| d.bg(p.selection_inactive))
                     .child(
-                        img(navidog_db::DriverRegistry::icon(cx, &id))
+                        img(navidog_session::DriverRegistry::icon(cx, &id))
                             .size(tokens::conn_type::TILE_ICON.rems()),
                     )
                     .child(info.name.clone())
                     .on_click(
                         cx.listener(move |this, e: &gpui_kit::ClickEvent, window, cx| {
-                            this.selected = Some(id.clone());
+                            this.selected = Some(id.clone().into());
                             if e.click_count() >= 2 {
                                 this.next(window, cx);
                             }

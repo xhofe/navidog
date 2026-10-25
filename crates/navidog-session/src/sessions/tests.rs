@@ -6,13 +6,13 @@ use tokio::sync::Semaphore;
 use futures::FutureExt as _;
 
 use super::*;
-use crate::{CancelHandle, DriverInfo, Family, ResultSet};
+use navidog_db::{CancelHandle, DriverInfo, Family, ResultSet};
 
 async fn sessions_with_metadata(
     driver: Arc<dyn Driver>,
     params: ConnectParams,
 ) -> (Sessions, SharedSession) {
-    let mut session = crate::connect(driver.clone(), params.clone())
+    let mut session = navidog_db::connect(driver.clone(), params.clone())
         .await
         .unwrap();
     let dialect = session.relational().map(|rel| rel.dialect());
@@ -92,7 +92,7 @@ impl CountingDriver {
                 family: Family::Relational,
                 default_port: None,
                 icon: "icons/db/mysql.svg",
-                dialect: crate::dialect::Dialect::MySql,
+                dialect: navidog_db::dialect::Dialect::MySql,
                 supports_ssl: false,
                 supports_ssh: false,
                 per_database_sessions: false,
@@ -194,10 +194,7 @@ fn operation_cleanup_preserves_success_and_failure_without_replaying() {
         for expected in [
             Ok(7),
             Err(DbError::coded("WRITE", "original write error")),
-            Err(crate::execution::interrupted(
-                DbError::coded("08006", "write response lost"),
-                true,
-            )),
+            Err(DbError::coded("08006", "write response lost").with_session_loss(true)),
         ] {
             let outcome = expected.clone();
             let result = sessions
@@ -436,19 +433,19 @@ fn reopening_waits_for_retired_cleanup_and_preserves_its_known_result() {
 fn network_drivers() -> Vec<(Arc<dyn Driver>, ConnectParams)> {
     [
         (
-            Arc::new(crate::mysql::MySqlDriver::mysql()) as Arc<dyn Driver>,
+            Arc::new(navidog_db::mysql::MySqlDriver::mysql()) as Arc<dyn Driver>,
             13306,
             "root",
             "sakila",
         ),
         (
-            Arc::new(crate::mysql::MySqlDriver::mariadb()),
+            Arc::new(navidog_db::mysql::MySqlDriver::mariadb()),
             13307,
             "root",
             "sakila",
         ),
         (
-            Arc::new(crate::postgres::PostgresDriver::default()),
+            Arc::new(navidog_db::postgres::PostgresDriver::default()),
             15432,
             "postgres",
             "pagila",
@@ -478,7 +475,7 @@ fn completed_operation_does_not_pin_or_replay_on_metadata_recovery() {
     }
     runtime::runtime().block_on(async {
         for (driver, params) in network_drivers() {
-            let mut observer = crate::connect(driver.clone(), params.clone())
+            let mut observer = navidog_db::connect(driver.clone(), params.clone())
                 .await
                 .unwrap();
             let dialect = observer.relational().unwrap().dialect();
@@ -554,7 +551,7 @@ fn retired_network_operation_keeps_committed_write_and_stops_remaining_batch() {
     }
     runtime::runtime().block_on(async {
         for (driver, params) in network_drivers() {
-            let mut observer = crate::connect(driver.clone(), params.clone())
+            let mut observer = navidog_db::connect(driver.clone(), params.clone())
                 .await
                 .unwrap();
             let dialect = observer.relational().unwrap().dialect();

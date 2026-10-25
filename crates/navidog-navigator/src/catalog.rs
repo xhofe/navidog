@@ -9,11 +9,11 @@ use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use navidog_core::object::{ObjectKind, ObjectRef, Scope};
 use navidog_core::store::{ConnectionStore, StoreEvent};
 use navidog_core::workspace::{Workspace, WorkspaceEvent};
-use navidog_db::sessions::{Sessions, SessionsEvent};
 use navidog_db::{ColumnInfo, DbResult, ObjectInfo, TableChildren};
+use navidog_session::sessions::{Sessions, SessionsEvent};
 use tokio::task::JoinHandle;
 
-pub use navidog_db::scope_cache::Load;
+pub use navidog_session::scope_cache::Load;
 
 #[derive(Default)]
 pub struct Catalog {

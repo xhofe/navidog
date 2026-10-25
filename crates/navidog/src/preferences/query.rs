@@ -325,7 +325,7 @@ impl Preferences {
                             .small()
                             .label(t!("prefs.clear_outline").to_string())
                             .on_click(|_, _, cx| {
-                                navidog_db::outline::OutlineCache::global(cx)
+                                navidog_session::outline::OutlineCache::global(cx)
                                     .update(cx, |c, cx| c.clear_all(cx))
                             }),
                     ),
