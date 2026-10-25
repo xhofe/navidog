@@ -2,7 +2,7 @@
 //! Windows, and hand the AppImage to the desktop elsewhere. UI lives in the
 //! parent module.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub enum Delivery {
     /// The running `.app` was replaced. Restart to use it.
@@ -22,7 +22,7 @@ pub(super) fn cleanup_download(path: &Path) {
 }
 
 #[cfg(any(test, target_os = "macos"))]
-pub fn bundle_from_exe(path: &Path) -> Option<PathBuf> {
+pub fn bundle_from_exe(path: &Path) -> Option<std::path::PathBuf> {
     let mut cursor = path.to_path_buf();
     loop {
         if cursor.extension().is_some_and(|ext| ext == "app") {
@@ -237,7 +237,7 @@ pub(super) fn install_other(path: &Path) -> Result<Delivery, String> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(super) fn extract_appimage(archive: &Path) -> Result<PathBuf, String> {
+pub(super) fn extract_appimage(archive: &Path) -> Result<std::path::PathBuf, String> {
     let dir = archive.with_extension("").with_extension("");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let status = std::process::Command::new("tar")
