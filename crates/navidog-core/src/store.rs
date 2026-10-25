@@ -103,28 +103,29 @@ impl ConnectionsFile {
     fn reencrypt(conn: &mut Connection, old_id: &str, old: &Key, new: &Key) -> bool {
         let mut cleared = false;
         for ix in 0..=conn.profiles.len() {
-            // Inactive profiles are swapped into the active slots so the field helpers reach them
-            if ix > 0 {
-                conn.swap_profile(ix - 1);
-            }
-            for field in SecretField::ALL {
-                let opened = field
-                    .slot(conn)
-                    .as_ref()
-                    .map(|s| old.decrypt(&aad(old_id, field), s))
-                    .transpose();
-                match opened {
-                    Ok(plain) => Self::set_secret(conn, field, plain.as_deref(), new),
-                    Err(_) => {
-                        *field.slot_mut(conn) = None;
-                        *field.saved_mut(conn) = false;
-                        cleared = true;
+            // Inactive profiles are swapped into the active slots so the field
+            // helpers reach them; the guard restores the active profile even
+            // when a field helper panics.
+            let profile_cleared = conn.with_active_profile(ix, |conn| {
+                let mut cleared = false;
+                for field in SecretField::ALL {
+                    let opened = field
+                        .slot(conn)
+                        .as_ref()
+                        .map(|s| old.decrypt(&aad(old_id, field), s))
+                        .transpose();
+                    match opened {
+                        Ok(plain) => Self::set_secret(conn, field, plain.as_deref(), new),
+                        Err(_) => {
+                            *field.slot_mut(conn) = None;
+                            *field.saved_mut(conn) = false;
+                            cleared = true;
+                        }
                     }
                 }
-            }
-            if ix > 0 {
-                conn.swap_profile(ix - 1);
-            }
+                cleared
+            });
+            cleared |= profile_cleared;
         }
         cleared
     }

@@ -50,7 +50,7 @@
 | A-07 | god object/超长文件 | P2 | 进行中 |
 | A-08 | 提前抽象与死代码 | P1 | 已修 |
 | A-09 | 测试架构 | P2 | 已修 |
-| A-10 | Connection 配置文件交换模型 | P2 | 暂缓 |
+| A-10 | Connection 配置文件交换模型 | P2 | 进行中 |
 | B-01 | 连接表单静默丢配置 | P0 | 已修 |
 | B-02 | SSH 主机密钥 | P1 | 已修 |
 | B-03 | 更新包临时路径/TOCTOU | P1 | 已修 |
@@ -79,7 +79,7 @@
 - **A-01/A-02/A-03（core/db 分层）**：`navidog-core` 的 UI 状态、`navidog-db` 的元数据/设计器职责需要跨 crate 迁移，属于架构 epic。
 - **A-06（缓存/选择，进行中）**：navigator 的多选快照改为每帧从 Workspace 派生；`Catalog::refresh_connection` 不再调用 `Sessions::refresh`，由 shell 处理数据库切换。`ScopeCache<T>` 和 `Catalog::require()` 仍是缓存层重构。
 - **A-07（god object，进行中）**：`app/update.rs` 的安装/替换逻辑已拆到 `update/install.rs`；viewer/results/editor/form/model 的拆分仍是纯搬家工作。
-- **A-10**：profile 交换模型会改变公开行为或大量测试；按主题另立 PR。
+- **A-10（profile 交换模型，进行中）**：新增 `with_active_profile` 的 Drop 守卫，reencrypt 在 panic 时也会恢复激活配置；`profiles + active` 的 schema 迁移仍未做，需兼容旧 `connections.json`。
 
 ## 0. 结论
 

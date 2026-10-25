@@ -119,6 +119,36 @@ impl Connection {
         std::mem::swap(&mut self.ssh, &mut p.ssh);
     }
 
+    /// Runs `f` with profile `ix` swapped into the active fields (0 is the
+    /// active profile). The swap back also runs during unwinding, so a panic
+    /// cannot leave the active fields pointing at another profile.
+    pub(crate) fn with_active_profile<R>(
+        &mut self,
+        ix: usize,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if ix == 0 {
+            return f(self);
+        }
+        let profile = ix - 1;
+        self.swap_profile(profile);
+        struct Restore<'a> {
+            connection: &'a mut Connection,
+            profile: usize,
+        }
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.connection.swap_profile(self.profile);
+            }
+        }
+        let restore = Restore {
+            connection: self,
+            profile,
+        };
+        let connection = &mut *restore.connection;
+        f(connection)
+    }
+
     pub fn switch_profile(&mut self, name: &str) -> bool {
         let Some(ix) = self.profiles.iter().position(|p| p.name == name) else {
             return false;
@@ -526,6 +556,18 @@ mod tests {
         lite.general.file = Some("/tmp/app.db".into());
         assert_eq!(lite.suggested_name(), "app");
         assert!(!lite.supports_network());
+    }
+
+    #[test]
+    fn profile_swap_is_restored_when_the_operation_panics() {
+        let mut connection = Connection::new("mysql");
+        connection.add_profile("other".into());
+        let before = connection.clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            connection.with_active_profile(1, |_| panic!("fixture"));
+        }));
+        assert!(result.is_err());
+        assert_eq!(connection, before);
     }
 
     #[test]
