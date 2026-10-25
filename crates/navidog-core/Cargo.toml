@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Domain model, settings, encrypted storage, and cross-feature actions for navidog."
 
 [dependencies]
+navidog-model = { path = "../navidog-model" }
 gpui-kit.workspace = true
 rust-i18n.workspace = true
 thiserror.workspace = true

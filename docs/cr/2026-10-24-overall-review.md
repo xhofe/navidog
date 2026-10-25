@@ -41,7 +41,7 @@
 | S-07 | 每 crate i18n 后端导致的复制 | P2 | 已修 |
 | S-08 | 面板标题错误 | P2 | 已修 |
 | S-09 | designer i18n 顺序 | P2 | 已修 |
-| A-01 | core god crate | P2 | 暂缓 |
+| A-01 | core god crate | P2 | 进行中 |
 | A-02 | core/db 依赖 gpui-kit | P2 | 暂缓 |
 | A-03 | db 职责超出驱动 | P2 | 进行中 |
 | A-04 | 驱动元数据散落 | P1 | 已修 |
@@ -76,7 +76,7 @@
 
 - **D-08（Catalog/OutlineCache，进行中）**：`Load<T>` 与 `ScopeCache<T>` 已引入，OutlineCache 已迁移；Catalog 的五类不同 key/失效代际仍需继续迁移。
 - **S-07（每 crate i18n 后端）**：明确契约为 crate-local：`scripts/check-i18n.sh` 校验每个字面量 `t!` key 都在本 crate locales 中；跨 crate 文案必须走 `navidog_ui::db_error_text` 这类显式 helper。统一后端仍可后续合并。
-- **A-01/A-02（core/db 分层）**：A-03 的 SQL 历史已拆到 `navidog-sql-log`。A-01 建议先抽 `navidog-model`（connection/object/crypto/paths/queries 等纯数据）与 `navidog-app-state`（Global/Entity/actions/Workspace）；A-02 随后把 `DriverRegistry`/`Sessions`/`OutlineCache` 移到 app-state，`navidog-db` 只留驱动与 SQL。两步都要兼容现有 `connections.json` 和所有 feature crate 的导入路径，适合独立 PR。
+- **A-01/A-02（core/db 分层）**：A-01 已抽出纯数据层 `navidog-model`（connection/object/crypto/paths/queries/json_store/column_widths），`navidog-core` 通过 re-export 保持现有路径；剩余 app-state（Global/Entity/actions/Workspace）仍待拆。A-02 随后把 `DriverRegistry`/`Sessions`/`OutlineCache` 移到 app-state，`navidog-db` 只留驱动与 SQL。两步都要兼容现有 `connections.json` 和所有 feature crate 的导入路径，适合独立 PR。
 - **A-06（缓存/选择，进行中）**：navigator 的多选快照改为每帧从 Workspace 派生；`Catalog::refresh_connection` 不再调用 `Sessions::refresh`，由 shell 处理数据库切换。`ScopeCache<T>` 和 `Catalog::require()` 仍是缓存层重构。
 - **A-07（god object，进行中）**：`app/update.rs` 的安装/替换逻辑已拆到 `update/install.rs`；viewer/results/editor/form/model 的拆分仍是纯搬家工作。
 - **A-10（profile 交换模型，进行中）**：新增 `with_active_profile` 的 Drop 守卫，reencrypt 在 panic 时也会恢复激活配置；`profiles + active` 的 schema 迁移仍未做，需兼容旧 `connections.json`。

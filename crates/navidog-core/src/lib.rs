@@ -9,15 +9,10 @@ const _: &str = include_str!("../locales/core.yml");
 // The Action derive macro emits `gpui::` paths
 extern crate gpui_kit as gpui;
 
+pub use navidog_model::{column_widths, connection, crypto, json_store, object, paths, queries};
+
 pub mod actions;
-pub mod column_widths;
-pub mod connection;
-pub mod crypto;
 pub mod favorites;
-pub mod json_store;
-pub mod object;
-pub mod paths;
-pub mod queries;
 pub mod registry;
 pub mod settings;
 pub mod snippets;

@@ -122,11 +122,7 @@ impl Connection {
     /// Runs `f` with profile `ix` swapped into the active fields (0 is the
     /// active profile). The swap back also runs during unwinding, so a panic
     /// cannot leave the active fields pointing at another profile.
-    pub(crate) fn with_active_profile<R>(
-        &mut self,
-        ix: usize,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
+    pub fn with_active_profile<R>(&mut self, ix: usize, f: impl FnOnce(&mut Self) -> R) -> R {
         if ix == 0 {
             return f(self);
         }
