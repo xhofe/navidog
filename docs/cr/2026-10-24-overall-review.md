@@ -77,7 +77,7 @@
 - **D-08（Catalog/OutlineCache）**：`ScopeCache<T>` 需要先统一五类不同 key 和失效代际，属于缓存层重构。
 - **S-07（每 crate i18n 后端）**：统一后端要在构建期合并 locales，并验证加载顺序，另立 PR。
 - **A-01/A-02/A-03（core/db 分层）**：`navidog-core` 的 UI 状态、`navidog-db` 的元数据/设计器职责需要跨 crate 迁移，属于架构 epic。
-- **A-06（缓存/选择，进行中）**：navigator 的多选快照改为每帧从 Workspace 派生，不再依赖可能滞后的订阅缓存；`ScopeCache<T>` 和 `Catalog::require()` 仍是缓存层重构。
+- **A-06（缓存/选择，进行中）**：navigator 的多选快照改为每帧从 Workspace 派生；`Catalog::refresh_connection` 不再调用 `Sessions::refresh`，由 shell 处理数据库切换。`ScopeCache<T>` 和 `Catalog::require()` 仍是缓存层重构。
 - **A-07（god object，进行中）**：`app/update.rs` 的安装/替换逻辑已拆到 `update/install.rs`；viewer/results/editor/form/model 的拆分仍是纯搬家工作。
 - **A-10**：profile 交换模型会改变公开行为或大量测试；按主题另立 PR。
 
