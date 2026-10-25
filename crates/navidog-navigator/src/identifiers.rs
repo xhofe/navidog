@@ -185,7 +185,7 @@ impl InfoPanel {
                     }))
                     .into_any_element()
             }
-            Some(OutlineState::Failed(e)) => self.message(e, cx),
+            Some(OutlineState::Failed(e)) => self.message(e.to_string(), cx),
             _ if scope.is_none() => self.message(t!("snippet.no_database").to_string(), cx),
             _ => self.message(t!("nav.loading").to_string(), cx),
         };

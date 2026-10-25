@@ -17,6 +17,7 @@ pub mod outline;
 pub mod params;
 pub mod postgres;
 pub mod runtime;
+pub mod scope_cache;
 pub mod sessions;
 pub mod sql;
 pub mod sqlite;

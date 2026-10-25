@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
+use gpui_kit::{App, AppContext as _, Context, Entity, Global};
 use navidog_core::json_store::JsonStore;
 use navidog_core::object::Scope;
 use navidog_core::queries::encode_segment;
@@ -231,18 +231,12 @@ fn clear_files() {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum OutlineState {
-    Loading,
-    Ready(Arc<Outline>),
-    Failed(String),
-}
+pub type OutlineState = crate::scope_cache::Load<Arc<Outline>>;
 
 /// Outlines by scope, for the query editor's completion and the info pane's identifiers page.
 #[derive(Default)]
 pub struct OutlineCache {
-    map: HashMap<Scope, OutlineState>,
-    tasks: HashMap<Scope, Task<()>>,
+    cache: crate::scope_cache::ScopeCache<Arc<Outline>>,
 }
 
 struct GlobalOutlines(Entity<OutlineCache>);
@@ -254,14 +248,11 @@ impl OutlineCache {
     }
 
     pub fn get(&self, scope: &Scope) -> Option<&OutlineState> {
-        self.map.get(scope)
+        self.cache.get(scope)
     }
 
     pub fn ready(&self, scope: &Scope) -> Option<Arc<Outline>> {
-        match self.map.get(scope)? {
-            OutlineState::Ready(o) => Some(o.clone()),
-            _ => None,
-        }
+        self.cache.ready(scope)
     }
 
     /// Makes the outline available: with "auto update" (or `refresh`) it is fetched again;
@@ -269,17 +260,17 @@ impl OutlineCache {
     pub fn ensure(&mut self, scope: &Scope, refresh: bool, cx: &mut Context<Self>) {
         let s = Settings::global(cx);
         let (auto, system) = (s.auto_update_outline, s.outline_system_objects);
-        if !refresh && self.tasks.contains_key(scope) {
+        if !refresh && self.cache.task_pending(scope) {
             return;
         }
         let fetch_now =
-            refresh || (auto && !matches!(self.map.get(scope), Some(OutlineState::Ready(_))));
+            refresh || (auto && !matches!(self.cache.get(scope), Some(OutlineState::Ready(_))));
         if !fetch_now {
-            if self.map.contains_key(scope) {
+            if self.cache.contains(scope) {
                 return;
             }
             if let Some(o) = load(scope) {
-                self.map
+                self.cache
                     .insert(scope.clone(), OutlineState::Ready(Arc::new(o)));
                 cx.notify();
                 return;
@@ -292,43 +283,41 @@ impl OutlineCache {
             move |rel| Box::pin(async move { fetch(rel, &target, system).await }),
         );
         let Some(job) = job else { return };
-        if !self.map.contains_key(scope) {
-            self.map.insert(scope.clone(), OutlineState::Loading);
+        if !self.cache.contains(scope) {
+            self.cache.insert_loading(scope.clone());
         }
         let key = scope.clone();
         let task = cx.spawn(async move |this, cx| {
             let result = job.await;
             let _ = this.update(cx, |this, cx| {
                 // Dropped with the connection, or cleared: do not write the file back.
-                if !this.tasks.contains_key(&key) {
+                if !this.cache.finish_task(&key) {
                     return;
                 }
-                this.tasks.remove(&key);
                 let state = match result {
                     Ok(Ok(o)) => {
                         save(&key, &o);
                         OutlineState::Ready(Arc::new(o))
                     }
-                    Ok(Err(e)) => OutlineState::Failed(e.to_string()),
-                    Err(e) => OutlineState::Failed(e.to_string()),
+                    Ok(Err(e)) => OutlineState::Failed(e.to_string().into()),
+                    Err(e) => OutlineState::Failed(e.to_string().into()),
                 };
                 // A failed refresh keeps the outline it had
                 if !(matches!(state, OutlineState::Failed(_))
-                    && matches!(this.map.get(&key), Some(OutlineState::Ready(_))))
+                    && matches!(this.cache.get(&key), Some(OutlineState::Ready(_))))
                 {
-                    this.map.insert(key, state);
+                    this.cache.insert(key, state);
                 }
                 cx.notify();
             });
         });
-        self.tasks.insert(scope.clone(), task);
+        self.cache.set_task(scope.clone(), task);
         cx.notify();
     }
 
     /// "Clear Code Completion Info": every file and everything in memory.
     pub fn clear_all(&mut self, cx: &mut Context<Self>) {
-        self.map.clear();
-        self.tasks.clear();
+        self.cache.clear();
         clear_files();
         cx.notify();
     }
@@ -336,8 +325,7 @@ impl OutlineCache {
     /// Drops cached outlines for a connection that is about to be deleted, so a finished fetch
     /// does not recreate `.outline` after the profile directory is removed.
     pub fn forget_connection(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.map.retain(|scope, _| scope.connection != id);
-        self.tasks.retain(|scope, _| scope.connection != id);
+        self.cache.retain_connection(id);
         cx.notify();
     }
 
@@ -413,7 +401,10 @@ mod tests {
                 cache.ready(&scope).unwrap().table("actor").unwrap().name,
                 "actor"
             );
-            assert!(cache.tasks.is_empty(), "a disk hit must not fetch");
+            assert!(
+                !cache.cache.has_pending_tasks(),
+                "a disk hit must not fetch"
+            );
             cache.clear_all(cx);
             assert!(cache.ready(&scope).is_none());
         });

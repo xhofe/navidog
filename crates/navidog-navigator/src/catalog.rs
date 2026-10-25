@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
-use gpui_kit::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
+use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use navidog_core::object::{ObjectKind, ObjectRef, Scope};
 use navidog_core::store::{ConnectionStore, StoreEvent};
 use navidog_core::workspace::{Workspace, WorkspaceEvent};
@@ -13,12 +13,7 @@ use navidog_db::sessions::{Sessions, SessionsEvent};
 use navidog_db::{ColumnInfo, DbResult, ObjectInfo, TableChildren};
 use tokio::task::JoinHandle;
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Load<T> {
-    Loading,
-    Ready(T),
-    Failed(SharedString),
-}
+pub use navidog_db::scope_cache::Load;
 
 #[derive(Default)]
 pub struct Catalog {
