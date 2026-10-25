@@ -89,13 +89,14 @@ impl NavigatorPanel {
         &self,
         entry: &TreeEntry,
         selected: bool,
+        marked: &HashSet<SharedString>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> ListItem {
         let p = palette(cx);
         let id = entry.item().id.clone();
         let node = Node::parse(&id);
-        let selected = selected || self.marked.contains(&id);
+        let selected = selected || marked.contains(&id);
         let focused = self.focus_handle.contains_focused(window, cx);
         let (icon, color) = self.row_icon(&node, entry, selected && focused, cx);
         let placeholder = matches!(node, Some(Node::Placeholder(_)));

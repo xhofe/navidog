@@ -402,8 +402,6 @@ pub struct NavigatorPanel {
     tree: Entity<TreeState>,
     filter: Entity<InputState>,
     expanded: HashSet<SharedString>,
-    /// Ids of all selected nodes (the workspace's primary and secondary selections)
-    marked: HashSet<SharedString>,
     /// Anchor of ⇧-click range selection
     anchor: Option<SharedString>,
     renaming: Option<Rename>,
@@ -545,7 +543,6 @@ impl NavigatorPanel {
                 tree,
                 filter,
                 expanded: HashSet::new(),
-                marked: HashSet::new(),
                 anchor: None,
                 renaming: None,
                 view: ViewOptions::default(),
@@ -794,9 +791,9 @@ fn step_offset(y: f32, max: f32, step: f32, down: bool) -> Option<f32> {
 
 impl Render for NavigatorPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Derive the multi-selection snapshot from the workspace on every frame
-        // instead of caching it through a subscription that can lag behind clicks.
-        self.marked = Self::selected_ids(cx).into_iter().collect();
+        // Snapshot the multi-selection for this frame; no cached field can lag
+        // behind a click that has already updated the workspace.
+        let marked: HashSet<SharedString> = Self::selected_ids(cx).into_iter().collect();
         // Other panes read the catalog while they render, so gpui skips its
         // observers and only redraws those panes. This tree is a snapshot, and
         // would keep showing "Loading…" until the next click. Reading the
@@ -821,7 +818,7 @@ impl Render for NavigatorPanel {
                     .upgrade()
                     .map(|panel| {
                         panel.update(cx, |panel, cx| {
-                            panel.render_row(entry, selected, window, cx)
+                            panel.render_row(entry, selected, &marked, window, cx)
                         })
                     })
                     .unwrap_or_else(|| ListItem::new(ix));
