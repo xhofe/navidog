@@ -273,7 +273,8 @@ impl Catalog {
 
     /// Reloads existing entries after SQL on this connection, without expanding unopened nodes.
     fn refresh_connection(&mut self, conn: &str, cx: &mut Context<Self>) {
-        Sessions::global(cx).update(cx, |sessions, cx| sessions.refresh(conn, cx));
+        // The catalog only owns metadata; the shell decides whether a database
+        // switch also refreshes the session (see `init` below).
         let schemas: Vec<_> = self
             .schemas
             .keys()
@@ -349,6 +350,8 @@ pub(crate) fn init(cx: &mut App) {
             &Workspace::global(cx),
             |this, _, event: &WorkspaceEvent, cx| match event {
                 WorkspaceEvent::DatabaseChanged(connection) => {
+                    Sessions::global(cx)
+                        .update(cx, |sessions, cx| sessions.refresh(connection, cx));
                     this.refresh_connection(connection, cx);
                 }
                 WorkspaceEvent::QueriesChanged => {
