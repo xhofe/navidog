@@ -99,7 +99,7 @@ CodeRabbit 提了 7 条可操作评论，逐条对照代码核实后全部成立
 | # | 位置 | 结论 | 处理 |
 | --- | --- | --- | --- |
 | 1 | `navigator/navigator/menus.rs` | “删除配置文件”用了 `profiles.is_empty()`，新模型下永远启用但点了没反应 | 改成 `profiles.len() <= 1` |
-| 2 | `grid/viewer/render.rs` | “限制记录数”复选框把 `0` 当成有效值，和输入框回车的 `n > 0` 规则不一致 | 解析后加 `.filter(|n| *n > 0)` |
+| 2 | `grid/viewer/render.rs` | “限制记录数”复选框把 `0` 当成有效值，和输入框回车的 `n > 0` 规则不一致 | 解析后加 `.filter(\|n\| *n > 0)` |
 | 3 | `navigator/catalog.rs` | `refresh_scope` 只丢掉 DDL 缓存、没有重载，打开中的 DDL 视图会一直显示旧文本 | 收集该 scope 的 DDL key，删缓存后按 `Requirement::Ddl` 强制重载；`catalog_lifecycle` 补回归 |
 | 4 | `navigator/ops.rs` | `refresh` 直接按对象生成 requirement，同一批里多个同类对象会重复触发 `list_objects` | 用 `HashSet` 按 `(scope, kind)` 去重 |
 | 5 | `schema/table_design/options.rs` | `pg_clause` 和 SQLite 分支用 MySQL 规则扫描选项 | PostgreSQL/SQLite 各自用自己的方言；补 SQLite 选项测试（`#` 不是注释） |
@@ -107,6 +107,16 @@ CodeRabbit 提了 7 条可操作评论，逐条对照代码核实后全部成立
 | 7 | `scripts/check-deps.sh` | `cargo tree \| grep -q` 在 `pipefail` 下会被 SIGPIPE 短路，可能漏报 | 先把完整输出写到临时文件，再 grep，并检查 `cargo tree` 自身退出码 |
 
 未处理：CodeRabbit 的 Docstring coverage 门禁（本仓库不要求每个函数都有 docstring，补 224 条会制造噪音）；Sourcery 因 diff 超过 20000 行无法 review；安全架构审查无 finding。
+
+## 本地 review 跟进（2026-10-27）
+
+[2026-10-26 PR #22 审查](../cr/2026-10-26-pr-22.md) 的结论与处理：
+
+- **Standards（违反唯一扫描器）**：`schema/table_design/options.rs` 的 `tokens` 改为消费 `navidog_sql::span::spans`，`decoded` 接收方言（反斜杠只在 MySQL 下当转义）；补 PostgreSQL 带反斜杠标识符和 SQLite `#` 的回归。
+- **Catalog 状态机**：完成加载时调用 `ScopeCache::finish_task`，`task_pending` 不再残留；`retain_connections`/`invalidate_connection`/`refresh_scope` 只在真正删除 entries/tasks/generation 时递增 revision 并通知；新增回归测试。generation token 保留，因为强制刷新会替换 task，只有 token 能阻止被替换的加载写回。
+- **A-10**：`reencrypt` 直接遍历 `profiles`，不再临时改 `active`；`SecretField` 的辅助函数改成接收 `&Profile`。
+- **A-07 结构拆分**（`TableSession`/`TableView`、`GridModel` 的 storage/edit/projection、`AfterCommit`）：保持原偏差，理由和行数见 [遗留清单的完成记录](../cr/2026-10-26-remaining-work.md)；本 PR 的拆分要求不改行为，类型级再拆另行提交。
+- **A-07 复选框拒绝 0**：是对齐输入框回车规则的缺陷修复，放在单独的 `fix:` 提交里，不算搬家。
 
 ## 遗留
 

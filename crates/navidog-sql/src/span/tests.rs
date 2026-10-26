@@ -165,6 +165,14 @@ fn statement_ends_ignore_case_expressions_inside_routines() {
     // A CASE statement ends with `END CASE`; the trailing CASE is not a new opener.
     let statement = "CREATE PROCEDURE p() BEGIN CASE 1 WHEN 1 THEN SELECT 1; END CASE; END;";
     assert_eq!(ends(statement, Dialect::MySql).len(), 1);
+    // A CASE branch may hold an IF statement: `END IF` must not close the CASE nesting.
+    let branch = "CREATE PROCEDURE p() BEGIN CASE 1 WHEN 1 THEN IF 1 THEN SELECT 1; END IF; \
+                  END CASE; SELECT 2; END;";
+    assert_eq!(ends(branch, Dialect::MySql).len(), 1);
+    // Comments between END and CASE do not change the terminator.
+    let comment = "CREATE PROCEDURE p() BEGIN CASE 1 WHEN 1 THEN SELECT 1; END /* note */ CASE; \
+                   SELECT 2; END;";
+    assert_eq!(ends(comment, Dialect::MySql).len(), 1);
     // `END IF` still does not close the routine.
     assert_eq!(
         ends(

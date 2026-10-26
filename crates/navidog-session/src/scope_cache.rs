@@ -79,9 +79,13 @@ impl<K: Eq + Hash, T> ScopeCache<K, T> {
     }
 
     /// Drops the entries and tasks whose key `keep` rejects (a closed or deleted connection).
-    pub fn retain(&mut self, mut keep: impl FnMut(&K) -> bool) {
+    /// Returns whether anything was actually removed, so callers bump their revision only on a
+    /// real cache change.
+    pub fn retain(&mut self, mut keep: impl FnMut(&K) -> bool) -> bool {
+        let before = self.entries.len() + self.tasks.len();
         self.entries.retain(|key, _| keep(key));
         self.tasks.retain(|key, _| keep(key));
+        self.entries.len() + self.tasks.len() != before
     }
 
     pub fn keys(&self) -> impl Iterator<Item = &K> {

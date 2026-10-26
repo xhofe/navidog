@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use navidog_model::connection::{
-    Connection, ConnectionId, Group, GroupId, SecretField, new_group_id,
+    Connection, ConnectionId, Group, GroupId, Profile, SecretField, new_group_id,
 };
 use navidog_model::crypto::{self, CryptoError, CryptoMode, Key};
 use navidog_model::paths;
@@ -65,10 +65,22 @@ impl ConnectionsFile {
         self.connections.iter().find(|c| c.id == id)
     }
 
-    /// Writes or clears one secret field.
+    /// Writes or clears one secret field of the active profile.
     pub fn set_secret(conn: &mut Connection, field: SecretField, value: Option<&str>, key: &Key) {
-        let aad = aad(&conn.id, field);
-        *field.slot_mut(conn) = value
+        let id = conn.id.clone();
+        Self::set_profile_secret(conn.active_mut(), &id, field, value, key);
+    }
+
+    /// Writes or clears one secret field of one profile, encrypted for the connection's id.
+    fn set_profile_secret(
+        profile: &mut Profile,
+        id: &str,
+        field: SecretField,
+        value: Option<&str>,
+        key: &Key,
+    ) {
+        let aad = aad(id, field);
+        *field.slot_mut(profile) = value
             .filter(|v| !v.is_empty())
             .map(|v| key.encrypt(&aad, v));
     }
@@ -104,29 +116,27 @@ impl ConnectionsFile {
     /// its "save password" switched off, so opening asks for it. Returns whether that happened.
     fn reencrypt(conn: &mut Connection, old_id: &str, old: &Key, new: &Key) -> bool {
         let mut cleared = false;
-        for ix in 0..conn.profiles.len() {
-            // Each profile becomes active in turn so the field helpers reach it; the guard
-            // restores the current profile even when a field helper panics.
-            let profile_cleared = conn.with_active_profile(ix, |conn| {
-                let mut cleared = false;
-                for field in SecretField::ALL {
-                    let opened = field
-                        .slot(conn)
-                        .as_ref()
-                        .map(|s| old.decrypt(&aad(old_id, field), s))
-                        .transpose();
-                    match opened {
-                        Ok(plain) => Self::set_secret(conn, field, plain.as_deref(), new),
-                        Err(_) => {
-                            *field.slot_mut(conn) = None;
-                            *field.saved_mut(conn) = false;
-                            cleared = true;
-                        }
+        let id = conn.id.clone();
+        // Walk the profiles directly: the active index never moves, so a panic or an early return
+        // cannot change which profile the connection is on.
+        for profile in &mut conn.profiles {
+            for field in SecretField::ALL {
+                let opened = field
+                    .slot(profile)
+                    .as_ref()
+                    .map(|s| old.decrypt(&aad(old_id, field), s))
+                    .transpose();
+                match opened {
+                    Ok(plain) => {
+                        Self::set_profile_secret(profile, &id, field, plain.as_deref(), new)
+                    }
+                    Err(_) => {
+                        *field.slot_mut(profile) = None;
+                        *field.saved_mut(profile) = false;
+                        cleared = true;
                     }
                 }
-                cleared
-            });
-            cleared |= profile_cleared;
+            }
         }
         cleared
     }

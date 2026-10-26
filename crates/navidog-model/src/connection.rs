@@ -651,28 +651,30 @@ impl SecretField {
         }
     }
 
-    pub fn slot(self, conn: &Connection) -> &Option<Secret> {
+    /// The field's slot in one profile. A `&Connection` works too, through its `Deref` to the
+    /// active profile.
+    pub fn slot(self, profile: &Profile) -> &Option<Secret> {
         match self {
-            Self::Password => &conn.general.password,
-            Self::SshPassword => &conn.ssh.password,
-            Self::SshPassphrase => &conn.ssh.passphrase,
+            Self::Password => &profile.general.password,
+            Self::SshPassword => &profile.ssh.password,
+            Self::SshPassphrase => &profile.ssh.passphrase,
         }
     }
 
-    pub fn slot_mut(self, conn: &mut Connection) -> &mut Option<Secret> {
+    pub fn slot_mut(self, profile: &mut Profile) -> &mut Option<Secret> {
         match self {
-            Self::Password => &mut conn.general.password,
-            Self::SshPassword => &mut conn.ssh.password,
-            Self::SshPassphrase => &mut conn.ssh.passphrase,
+            Self::Password => &mut profile.general.password,
+            Self::SshPassword => &mut profile.ssh.password,
+            Self::SshPassphrase => &mut profile.ssh.passphrase,
         }
     }
 
     /// The "save password" switch of this field.
-    pub fn saved_mut(self, conn: &mut Connection) -> &mut bool {
+    pub fn saved_mut(self, profile: &mut Profile) -> &mut bool {
         match self {
-            Self::Password => &mut conn.general.save_password,
-            Self::SshPassword => &mut conn.ssh.save_password,
-            Self::SshPassphrase => &mut conn.ssh.save_passphrase,
+            Self::Password => &mut profile.general.save_password,
+            Self::SshPassword => &mut profile.ssh.save_password,
+            Self::SshPassphrase => &mut profile.ssh.save_passphrase,
         }
     }
 

@@ -41,71 +41,88 @@ struct Token {
     start: usize,
     end: usize,
 }
+/// Tokens of a table-option string: top-level whitespace separates them, `=` and `,` are tokens
+/// of their own, and strings, quoted identifiers and dollar bodies stay inside the token they
+/// belong to. The shared scanner decides where those end for this dialect.
 fn tokens(s: &str, d: Dialect) -> DbResult<Vec<Token>> {
     parse::fragment(s, d)?;
-    let b = s.as_bytes();
+    let mut protected = navidog_sql::span::spans(s, d)
+        .into_iter()
+        .filter(|span| span.kind.is_protected())
+        .map(|span| span.range)
+        .peekable();
     let mut out = Vec::new();
+    let mut depth = 0u32;
+    let mut start: Option<usize> = None;
     let mut i = 0;
-    while i < b.len() {
-        if b[i].is_ascii_whitespace() {
-            i += 1;
+    while i < s.len() {
+        if let Some(range) = protected.peek()
+            && range.start == i
+        {
+            start.get_or_insert(i);
+            i = range.end;
+            protected.next();
             continue;
         }
-        let start = i;
-        if b[i] == b'=' || b[i] == b',' {
-            i += 1;
-        } else {
-            let mut quote = 0;
-            let mut depth = 0;
-            while i < b.len() {
-                let c = b[i];
-                if quote != 0 {
-                    if c == b'\\' {
-                        i += 2;
-                        continue;
-                    }
-                    if c == quote {
-                        if b.get(i + 1) == Some(&quote) {
-                            i += 2;
-                            continue;
-                        }
-                        quote = 0;
-                    }
-                } else {
-                    match c {
-                        b'\'' | b'"' | b'`' => quote = c,
-                        b'(' => depth += 1,
-                        b')' => depth -= 1,
-                        c if depth == 0 && (c.is_ascii_whitespace() || c == b'=' || c == b',') => {
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-                i += 1;
+        let c = s[i..].chars().next().unwrap_or('\0');
+        if c.is_whitespace() && depth == 0 {
+            if let Some(from) = start.take() {
+                out.push(Token {
+                    start: from,
+                    end: i,
+                });
             }
+        } else if depth == 0 && (c == '=' || c == ',') {
+            if let Some(from) = start.take() {
+                out.push(Token {
+                    start: from,
+                    end: i,
+                });
+            }
+            out.push(Token {
+                start: i,
+                end: i + 1,
+            });
+        } else {
+            start.get_or_insert(i);
         }
-        out.push(Token { start, end: i });
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        i += c.len_utf8();
+    }
+    if let Some(from) = start {
+        out.push(Token {
+            start: from,
+            end: s.len(),
+        });
     }
     Ok(out)
 }
+
 fn text<'a>(s: &'a str, t: &Token) -> &'a str {
     &s[t.start..t.end]
 }
-fn decoded(s: &str) -> String {
-    if s.len() >= 2
-        && s.starts_with(['\'', '"', '`'])
-        && s.as_bytes()[0] == s.as_bytes()[s.len() - 1]
-    {
-        let q = s.chars().next().unwrap();
-        s[1..s.len() - 1]
-            .replace(&format!("{q}{q}"), &q.to_string())
-            .replace("\\'", "'")
-            .replace("\\\\", "\\")
+/// A token's value with its quotes removed. A backslash is an escape only where MySQL makes it
+/// one; PostgreSQL and SQLite keep it literal.
+fn decoded(s: &str, d: Dialect) -> String {
+    if s.len() < 2 || !s.starts_with(['\'', '"', '`']) {
+        return s.into();
+    }
+    let quote = s.chars().next().unwrap_or('\'');
+    if !s.ends_with(quote) {
+        return s.into();
+    }
+    let body = s[1..s.len() - 1].replace(&format!("{quote}{quote}"), &quote.to_string());
+    if d == Dialect::MySql {
+        body.replace("\\'", "'").replace("\\\\", "\\")
     } else {
-        s.into()
+        body
     }
 }
+
 fn aliases(key: &str) -> Vec<&str> {
     match key {
         "charset" => vec![
@@ -145,7 +162,13 @@ fn mysql_span(s: &str, key: &str) -> DbResult<Option<(usize, usize, String)>> {
                     let Some(value) = ts.get(v) else {
                         return Err(DbError::msg("Missing table option value."));
                     };
-                    matched = Some((name, ts[i].start, value.end, decoded(text(s, value)), v + 1));
+                    matched = Some((
+                        name,
+                        ts[i].start,
+                        value.end,
+                        decoded(text(s, value), Dialect::MySql),
+                        v + 1,
+                    ));
                     break;
                 }
             }
@@ -220,7 +243,7 @@ pub fn table_option(s: &str, key: &str, d: Dialect) -> DbResult<String> {
                 Ok(pg_storage(s)?.remove(key).unwrap_or_default())
             }
             "tablespace" => Ok(pg_clause(s, "TABLESPACE")?
-                .map(|v| decoded(&v.2))
+                .map(|v| decoded(&v.2, Dialect::Postgres))
                 .unwrap_or_default()),
             "inherits" => Ok(pg_clause(s, "INHERITS")?
                 .map(|v| {
@@ -566,6 +589,16 @@ pub(super) fn option_alters(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn postgres_options_scan_quoted_identifiers_with_postgres_rules() {
+        // A backslash is literal inside a PostgreSQL identifier; MySQL rules would read `\"` as
+        // an escaped quote and report an unterminated string.
+        assert_eq!(
+            table_option(r#"TABLESPACE "dir\""#, "tablespace", Dialect::Postgres).unwrap(),
+            r"dir\"
+        );
+    }
+
     #[test]
     fn sqlite_options_are_scanned_with_sqlite_rules() {
         // `#` starts a comment in MySQL but is an operator in SQLite: the list is unknown, so

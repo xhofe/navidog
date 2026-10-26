@@ -158,6 +158,9 @@ struct Scanner<'a> {
     /// `CASE … END` nesting inside a routine body: that `END` closes the expression, not the
     /// routine, so it must not allow a statement boundary
     case: u32,
+    /// The `CASE` of an `END CASE` terminator: that word is the terminator's name, not a new
+    /// opener, so the next `CASE` is skipped.
+    end_case: bool,
     /// Start of the current statement, the prefix `BEGIN` is classified against
     statement_start: usize,
     /// MySQL's current terminator; `None` is `;`
@@ -177,6 +180,7 @@ impl<'a> Scanner<'a> {
             depth: 0,
             block: 0,
             case: 0,
+            end_case: false,
             statement_start: 0,
             delimiter: None,
             has_code: false,
@@ -282,6 +286,7 @@ impl<'a> Scanner<'a> {
         self.statement_start = i;
         self.block = 0;
         self.case = 0;
+        self.end_case = false;
     }
 
     fn error(&mut self, error: LexError) {
@@ -402,15 +407,25 @@ impl<'a> Scanner<'a> {
                 self.block += 1;
             } else if word.eq_ignore_ascii_case("CASE") && self.block > 0 {
                 // `END CASE` names the terminator of a CASE statement; only a real opener counts.
-                if !follows_word(&self.sql[..start], "END") {
+                if !std::mem::take(&mut self.end_case) {
                     self.case += 1;
                 }
             } else if word.eq_ignore_ascii_case("END") {
-                if self.case > 0 {
-                    // The END of a CASE expression, not of the routine.
-                    self.case -= 1;
-                } else if self.block > 0 && closes_block(&self.sql[i..]) {
-                    self.block -= 1;
+                match next_word(&self.sql[i..], self.dialect) {
+                    // `END IF`, `END LOOP`, … close the inner construct, not the routine.
+                    Some(next)
+                        if ["IF", "LOOP", "WHILE", "REPEAT"]
+                            .iter()
+                            .any(|k| next.eq_ignore_ascii_case(k)) => {}
+                    // `END CASE` closes a CASE statement; the CASE that follows is its name.
+                    Some(next) if next.eq_ignore_ascii_case("CASE") => {
+                        self.case = self.case.saturating_sub(1);
+                        self.end_case = true;
+                    }
+                    // A bare END closes a CASE expression when one is open, else the routine.
+                    _ if self.case > 0 => self.case -= 1,
+                    _ if self.block > 0 => self.block -= 1,
+                    _ => {}
                 }
             }
         }
@@ -515,28 +530,28 @@ fn is_routine(prefix: &str) -> bool {
             .any(|k| p.contains(k))
 }
 
-/// Whether the `END` whose body starts at `rest` closes its block: `END IF`, `END LOOP` and the
-/// like close only the inner construct.
-/// `END CASE` is handled by the `CASE` nesting counter, so it is not listed here.
-fn closes_block(rest: &str) -> bool {
-    let next = rest.trim_start().as_bytes();
-    !["IF", "LOOP", "WHILE", "REPEAT"].iter().any(|k| {
-        next.get(..k.len())
-            .is_some_and(|b| b.eq_ignore_ascii_case(k.as_bytes()))
-    })
-}
-
-/// Whether the text before `start` ends with the word `word`: `END CASE` has END before CASE.
-fn follows_word(before: &str, word: &str) -> bool {
-    let before = before.trim_end();
-    let bytes = before.as_bytes();
-    if bytes.len() < word.len()
-        || !bytes[bytes.len() - word.len()..].eq_ignore_ascii_case(word.as_bytes())
-    {
-        return false;
+/// The first word after `rest`, skipping whitespace and comments: the word that decides whether
+/// an `END` closes an `IF`, names a `CASE` terminator or closes the routine itself.
+fn next_word(rest: &str, dialect: Dialect) -> Option<&str> {
+    let mut s = rest;
+    loop {
+        s = s.trim_start();
+        if let Some(after) = s.strip_prefix("--") {
+            s = after.find('\n').map_or("", |n| &after[n + 1..]);
+        } else if dialect == Dialect::MySql
+            && let Some(after) = s.strip_prefix('#')
+        {
+            s = after.find('\n').map_or("", |n| &after[n + 1..]);
+        } else if let Some(after) = s.strip_prefix("/*") {
+            s = after.find("*/").map_or("", |n| &after[n + 2..]);
+        } else {
+            break;
+        }
     }
-    let lead = bytes.len() - word.len();
-    lead == 0 || !(bytes[lead - 1].is_ascii_alphanumeric() || bytes[lead - 1] == b'_')
+    let end = s
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(s.len());
+    (end > 0).then(|| &s[..end])
 }
 
 fn at_line_start(bytes: &[u8], i: usize) -> bool {

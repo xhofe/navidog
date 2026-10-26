@@ -331,6 +331,9 @@ impl Catalog {
             return;
         }
         let Some(job) = job(cx) else { return };
+        // The task marker only says "a load is in flight for this key". The generation token is
+        // what tells a replaced load from the current one: after a forced reload both tasks see
+        // the same key in the map, so only the token can keep the older result out.
         self.generation_clock = self.generation_clock.wrapping_add(1);
         let generation = self.generation_clock;
         self.generation.insert(id.clone(), generation);
@@ -349,6 +352,7 @@ impl Catalog {
                     return;
                 }
                 this.generation.remove(&id);
+                slot(this).finish_task(&task_key);
                 slot(this).insert(task_key, result);
                 this.bump();
                 cx.notify();
@@ -360,35 +364,49 @@ impl Catalog {
 
     /// Drops caches for connections that no longer exist in the store.
     pub fn retain_connections(&mut self, live: &HashSet<String>, cx: &mut Context<Self>) {
-        self.bump();
-        self.schemas.retain(|key| live.contains(&key.connection));
-        self.objects
+        let mut changed = false;
+        changed |= self.schemas.retain(|key| live.contains(&key.connection));
+        changed |= self
+            .objects
             .retain(|key| live.contains(&key.scope.connection));
-        self.ddl.retain(|key| live.contains(&key.scope.connection));
-        self.columns
+        changed |= self.ddl.retain(|key| live.contains(&key.scope.connection));
+        changed |= self
+            .columns
             .retain(|key| live.contains(&key.scope.connection));
-        self.children
+        changed |= self
+            .children
             .retain(|key| live.contains(&key.scope.connection));
-        self.generation
-            .retain(|id, _| live.contains(id.connection()));
-        cx.notify();
+        changed |= self.retain_generations(|id| live.contains(id.connection()));
+        if changed {
+            self.bump();
+            cx.notify();
+        }
     }
 
     /// Drops everything cached for a connection (closed or refreshed).
     pub fn invalidate_connection(&mut self, conn: &str, cx: &mut Context<Self>) {
-        self.bump();
-        self.schemas.retain(|key| key.connection != conn);
-        self.objects.retain(|key| key.scope.connection != conn);
-        self.ddl.retain(|key| key.scope.connection != conn);
-        self.columns.retain(|key| key.scope.connection != conn);
-        self.children.retain(|key| key.scope.connection != conn);
-        self.generation.retain(|id, _| id.connection() != conn);
-        cx.notify();
+        let mut changed = false;
+        changed |= self.schemas.retain(|key| key.connection != conn);
+        changed |= self.objects.retain(|key| key.scope.connection != conn);
+        changed |= self.ddl.retain(|key| key.scope.connection != conn);
+        changed |= self.columns.retain(|key| key.scope.connection != conn);
+        changed |= self.children.retain(|key| key.scope.connection != conn);
+        changed |= self.retain_generations(|id| id.connection() != conn);
+        if changed {
+            self.bump();
+            cx.notify();
+        }
+    }
+
+    /// Drops the in-flight tokens that `keep` rejects; see [`Catalog::retain_connections`].
+    fn retain_generations(&mut self, mut keep: impl FnMut(&LoadId) -> bool) -> bool {
+        let before = self.generation.len();
+        self.generation.retain(|id, _| keep(id));
+        self.generation.len() != before
     }
 
     /// Reloads what is loaded under a scope (a database or schema).
     pub fn refresh_scope(&mut self, scope: &Scope, cx: &mut Context<Self>) {
-        self.bump();
         let kinds: Vec<ObjectKind> = self
             .objects
             .keys()
@@ -415,10 +433,14 @@ impl Catalog {
             .filter(|key| &key.scope == scope)
             .cloned()
             .collect();
-        self.ddl.retain(|key| &key.scope != scope);
-        self.columns.retain(|key| &key.scope != scope);
-        self.children.retain(|key| &key.scope != scope);
-        self.generation.retain(|id, _| id.scope() != Some(scope));
+        let mut changed = false;
+        changed |= self.ddl.retain(|key| &key.scope != scope);
+        changed |= self.columns.retain(|key| &key.scope != scope);
+        changed |= self.children.retain(|key| &key.scope != scope);
+        changed |= self.retain_generations(|id| id.scope() != Some(scope));
+        if changed {
+            self.bump();
+        }
         for object in ddl {
             self.require_with(Requirement::Ddl(object), true, cx);
         }
@@ -701,6 +723,53 @@ mod tests {
         cx.run_until_parked();
         catalog.read_with(cx, |cat, _| {
             assert!(cat.columns(&scope, "actor").is_none());
+        });
+    }
+
+    /// A finished load clears its in-flight marker, and an invalidation that removes nothing
+    /// leaves the revision alone (D-08: the revision only follows cache changes).
+    #[gpui_kit::test]
+    fn a_finished_load_clears_its_task_and_no_op_invalidation_keeps_the_revision(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        let catalog = cx.new(|_| Catalog::default());
+        let scope = Scope::new("c", "db", None);
+        let job = runtime::spawn(async { Ok(vec![column("id")]) });
+        catalog.update(cx, |cat, cx| {
+            cat.start(
+                LoadId::Columns(key(&scope, "actor")),
+                key(&scope, "actor"),
+                |c| &mut c.columns,
+                move |_| Some(job),
+                false,
+                cx,
+            );
+        });
+        for _ in 0..50 {
+            cx.run_until_parked();
+            if catalog.read_with(cx, |cat, _| {
+                matches!(cat.columns(&scope, "actor"), Some(Load::Ready(_)))
+            }) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        catalog.update(cx, |cat, cx| {
+            assert!(matches!(cat.columns(&scope, "actor"), Some(Load::Ready(_))));
+            assert!(
+                !cat.columns.task_pending(&key(&scope, "actor")),
+                "a finished load drops its task marker"
+            );
+            let revision = cat.revision();
+            let live = HashSet::from(["c".to_string()]);
+            cat.retain_connections(&live, cx);
+            cat.invalidate_connection("other", cx);
+            assert_eq!(
+                cat.revision(),
+                revision,
+                "an invalidation that removes nothing is not a cache change"
+            );
         });
     }
 
