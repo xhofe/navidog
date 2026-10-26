@@ -176,6 +176,10 @@ gpui-kit 的[编码指南](https://gpui-kit.com/zh-CN/docs/coding-guides)和[设
 - **render 纯声明**：render 里不调 `cx.notify()`、不启动任务。
 - **大数据**：导航树、对象列表、结果网格必须虚拟化，数据、排序筛选、选择、视口和行渲染分开。
 - **i18n**：使用 rust-i18n。每个 crate 根部写 `i18n!("locales", fallback = "en")`，外壳在 `gpui_kit::init` 之前调用 `rust_i18n::extend!(gpui_component)`。切换语言后调用 `cx.refresh_windows()`。
+  - 契约是 **crate-local**：每个后端只加载自己 crate 的 `locales/*.yml`，`scripts/check-i18n.sh` 要求字面量 `t!("…")` 的 key 在本 crate 定义，并且每个 key 同时有 `en` 和 `zh-CN`。
+  - 跨 crate 的文案只能通过显式 helper（如 `navidog_ui::db_error_text`）或调用方传入的字符串复用，不能依赖另一个 crate 的 key。
+  - 动态 key（`t!(format!("…"))`、`t!(key)`、`t!(if … { "a" } else { "b" })`）不参与静态检查，必须逐条登记在 `scripts/i18n-dynamic-keys.txt`（`<path> TAB <第一个参数>`），否则 `check-i18n.sh` 失败。这份清单就是动态 key 的完整清单，新增时要说明理由。
+  - 统一 backend（构建期合并所有 locale、跨 crate 复用 key）没有采用：它要改每个 crate 的初始化和测试，收益只在大规模共享文案时才出现。改走这条路线时先更新本段和 `scripts/check-i18n.sh`。
 - **测试**：UI 测试用 `#[gpui_kit::test]` 加 `TestAppContext`，通过 `gpui_kit::test::{TestWindowExt, TestAppContextExt}` 驱动真实的点击、键盘和焦点。像素测试（`Window::render_to_image`）只在 macOS 上可用，暂不使用。
 - **偏离设计指南**：设计指南要求英文用 sentence case、选中态不用左侧竖条等。凡是 Navicat 的做法与之冲突的，以 Navicat 为准，并在模块规格的“偏差”一节说明。
 
