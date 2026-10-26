@@ -93,6 +93,12 @@ pub fn split_script(sql: &str, dialect: Dialect) -> Vec<Statement> {
             i = end;
             continue;
         }
+        if !sql.is_char_boundary(i) {
+            // A custom delimiter scan advances byte by byte; a multi-byte
+            // character can leave `i` inside a code point.
+            i += 1;
+            continue;
+        }
         let c = bytes[i];
         if delimiter != ";" && sql[i..].starts_with(delimiter.as_str()) {
             push(&mut out, sql, start..i, has_code);
@@ -123,7 +129,9 @@ pub fn split_script(sql: &str, dialect: Dialect) -> Vec<Statement> {
                     .map_or(bytes.len(), |n| i + 2 + n + 2);
                 continue;
             }
-            b'$' if dialect == Dialect::Postgres => {
+            b'$' if dialect == Dialect::Postgres
+                && navidog_util::sql_text::is_dollar_quote_start(sql, i) =>
+            {
                 if let Some(end) = navidog_util::sql_text::skip_dollar_quoted(sql, i) {
                     i = end;
                     has_code = true;
@@ -289,6 +297,10 @@ mod tests {
             ),
             ["DO $body$ BEGIN PERFORM 1; END $body$", "SELECT $1"]
         );
+        assert_eq!(
+            texts("SELECT foo$tag$ FROM t; DELETE FROM u", Dialect::Postgres),
+            ["SELECT foo$tag$ FROM t", "DELETE FROM u"]
+        );
         assert!(texts("  -- only comment\n", Dialect::Sqlite).is_empty());
         // `#` is a comment in MySQL only; PostgreSQL uses it as an operator
         assert_eq!(texts("SELECT 1 # ;\n", Dialect::MySql), ["SELECT 1 # ;"]);
@@ -321,6 +333,11 @@ mod tests {
         assert_eq!(
             texts("DELIMITER //\nSELECT 1//", Dialect::Postgres).len(),
             1
+        );
+        // Non-ASCII text under a custom delimiter must not panic while scanning
+        assert_eq!(
+            texts("DELIMITER //\nSELECT 你好//", Dialect::MySql),
+            ["SELECT 你好"]
         );
     }
 

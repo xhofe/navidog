@@ -124,8 +124,13 @@ impl GridModel {
                 (None, Some(_)) => std::cmp::Ordering::Less,
                 (Some(_), None) => std::cmp::Ordering::Greater,
                 (Some(a), Some(b)) if numeric => match (a.parse::<f64>(), b.parse::<f64>()) {
-                    (Ok(a), Ok(b)) => a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal),
-                    _ => a.cmp(b),
+                    // `total_cmp` gives NaN a fixed place instead of treating every
+                    // NaN comparison as equal. Unparsable values sort after numbers
+                    // and among themselves by text, which still makes a total order.
+                    (Ok(a), Ok(b)) => a.total_cmp(&b),
+                    (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+                    (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+                    (Err(_), Err(_)) => a.cmp(b),
                 },
                 (Some(a), Some(b)) => a.cmp(b),
             };
@@ -1398,6 +1403,24 @@ mod tests {
             vec![vec![Some("Ärger".into())]],
         );
         assert_eq!(text.find_cell("ärger", (0, 0), false, false), Some((0, 0)));
+    }
+
+    #[test]
+    fn numeric_sort_is_a_total_order_for_nan_and_bad_values() {
+        let mut m = model(true);
+        m.columns[0].type_name = "double".into();
+        m.set_data(
+            vec![m.columns[0].clone()],
+            ["NaN", "2", "bad", "1"]
+                .into_iter()
+                .map(|value| vec![Some(value.into())])
+                .collect(),
+        );
+        m.sort_rows(0, true);
+        let values: Vec<_> = (0..m.row_count())
+            .map(|row| m.value(row, 0).cloned().flatten().unwrap().to_string())
+            .collect();
+        assert_eq!(values, ["1", "2", "NaN", "bad"]);
     }
 
     #[test]

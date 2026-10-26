@@ -47,7 +47,9 @@ pub async fn apply(
         let result = rel.execute(statement).await;
         if let Err(error) = result.and_then(|sets| matched_a_row(statement, &sets, commit.dialect))
         {
-            let _ = rel.execute(undo).await;
+            if let Err(rollback) = rel.execute(undo).await {
+                tracing::error!(%rollback, undo, "could not undo the failed batch");
+            }
             return Err(error);
         }
     }
@@ -60,7 +62,9 @@ pub async fn apply(
         if !in_tx {
             // We opened this transaction, so a failed COMMIT must not leave
             // it active (SQLite keeps the write lock after SQLITE_BUSY).
-            let _ = rel.execute("ROLLBACK").await;
+            if let Err(rollback) = rel.execute("ROLLBACK").await {
+                tracing::error!(%rollback, "could not roll back the failed COMMIT");
+            }
         }
         return Err(error);
     }

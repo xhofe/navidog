@@ -162,6 +162,11 @@ impl MainWindow {
             }),
             cx.observe(&Workspace::global(cx), |_, _, cx| cx.notify()),
             cx.observe(&ConnectionStore::global(cx), |_, _, cx| cx.notify()),
+            // The status bar's object count changes when a catalog load finishes.
+            cx.observe(
+                &navidog_navigator::catalog::Catalog::global(cx),
+                |_, _, cx| cx.notify(),
+            ),
             // The Favorites and Open Recent menus list these
             cx.observe(&Favorites::global(cx), |_, _, cx| {
                 crate::menus::set_menus(cx)

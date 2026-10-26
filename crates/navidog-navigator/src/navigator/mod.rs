@@ -627,8 +627,15 @@ impl NavigatorPanel {
         } else {
             builder.groups(None)
         };
+        // `set_items` clears the focused row; keep it when it still exists so a
+        // field row is not mapped back to its table after a rebuild.
+        let previous = self
+            .tree
+            .read(cx)
+            .selected_item()
+            .map(|item| item.id.clone());
         self.tree.update(cx, |t, cx| t.set_items(items, cx));
-        self.sync_selection(cx);
+        self.sync_selection_from(previous, cx);
         cx.notify();
     }
 

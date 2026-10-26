@@ -4,21 +4,37 @@ use super::*;
 
 impl NavigatorPanel {
     pub(super) fn sync_selection(&mut self, cx: &mut Context<Self>) {
+        let current = self
+            .tree
+            .read(cx)
+            .selected_item()
+            .map(|item| item.id.clone());
+        self.sync_selection_from(current, cx);
+    }
+
+    /// Restores the focused row after `Tree::set_items`, which clears its selected index.
+    /// `previous` is the id selected before the rebuild.
+    pub(super) fn sync_selection_from(
+        &mut self,
+        previous: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
         let selection = Workspace::global(cx).read(cx).selection().clone();
         let target = Node::from_selection(&selection).map(|n| n.id());
         self.tree.update(cx, |t, cx| {
-            let current = t.selected_item().map(|i| i.id.clone());
-            if current == target {
-                return;
-            }
-            // A field or folder row under a table selects that table. Keep the focused row
-            // there, or arrow keys and clicks could never move below the table row.
-            let stands_for = current
-                .as_ref()
-                .and_then(|id| Node::parse(id))
-                .and_then(|n| n.selection());
-            if selection != Selection::None && stands_for == Some(selection) {
-                return;
+            if let Some(ix) = previous.as_ref().and_then(|id| t.index_of(id)) {
+                // A field or folder row under a table stands for that table. Keep the focused
+                // row there, or arrow keys and clicks could never move below the table row.
+                let stands_for = previous
+                    .as_ref()
+                    .and_then(|id| Node::parse(id))
+                    .and_then(|n| n.selection());
+                if previous == target
+                    || (selection != Selection::None && stands_for == Some(selection))
+                {
+                    t.set_selected_index(Some(ix), cx);
+                    return;
+                }
             }
             let ix = target.as_ref().and_then(|id| t.index_of(id));
             t.set_selected_index(ix, cx);

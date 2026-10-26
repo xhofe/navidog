@@ -73,7 +73,7 @@ pub fn find_params(sql: &str) -> Vec<Param> {
                     .find("*/")
                     .map_or(bytes.len(), |n| i + 2 + n + 2);
             }
-            b'$' if !after_identifier(sql, i) => {
+            b'$' if is_dollar_quote_start(sql, i) => {
                 // PostgreSQL dollar-quoted strings: `$$…$$` or `$tag$…$tag$`.
                 // They may contain `[$name]` text that is not a parameter;
                 // `foo$tag$` is an identifier, not an opener.
@@ -118,6 +118,12 @@ pub fn skip_quoted(sql: &str, start: usize, escapes: bool) -> usize {
         }
     }
     bytes.len()
+}
+
+/// True when `start` begins a PostgreSQL dollar quote rather than a `$tag$`
+/// inside an identifier such as `foo$tag$`.
+pub fn is_dollar_quote_start(sql: &str, start: usize) -> bool {
+    sql.as_bytes().get(start) == Some(&b'$') && !after_identifier(sql, start)
 }
 
 fn after_identifier(sql: &str, start: usize) -> bool {

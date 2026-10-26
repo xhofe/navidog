@@ -254,9 +254,36 @@ pub(super) fn install_other(path: &Path) -> Result<Delivery, String> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn appimage_member_is_safe(name: &str) -> bool {
+    let name = name.strip_prefix("./").unwrap_or(name);
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.chars().any(char::is_control)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(super) fn extract_appimage(archive: &Path) -> Result<std::path::PathBuf, String> {
     let dir = archive.with_extension("").with_extension("");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // The release archive contains exactly one top-level file. Rejecting every
+    // other shape avoids `..`, absolute paths and symlink-chain writes before
+    // tar touches the filesystem.
+    let listed = std::process::Command::new("tar")
+        .args(["-tzf"])
+        .arg(archive)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !listed.status.success() {
+        return Err("could not inspect the AppImage archive".into());
+    }
+    let listing = String::from_utf8_lossy(&listed.stdout);
+    let names: Vec<&str> = listing.lines().filter(|line| !line.is_empty()).collect();
+    if names.len() != 1 || !appimage_member_is_safe(names[0]) {
+        return Err("the AppImage archive must contain one top-level file".into());
+    }
     let status = std::process::Command::new("tar")
         .args(["-xzf"])
         .arg(archive)
@@ -273,10 +300,32 @@ pub(super) fn extract_appimage(archive: &Path) -> Result<std::path::PathBuf, Str
         .map(|entry| entry.path())
         .find(|path| path.extension().is_some_and(|ext| ext == "AppImage"))
         .ok_or_else(|| "the archive has no AppImage".to_string())?;
+    if !std::fs::symlink_metadata(&appimage)
+        .map_err(|e| e.to_string())?
+        .file_type()
+        .is_file()
+    {
+        return Err("the AppImage archive contains a non-regular file".into());
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&appimage, std::fs::Permissions::from_mode(0o755));
     }
     Ok(appimage)
+}
+
+#[cfg(all(test, not(any(target_os = "macos", target_os = "windows"))))]
+mod tests {
+    use super::appimage_member_is_safe;
+
+    #[test]
+    fn appimage_archive_members_stay_in_the_update_directory() {
+        assert!(appimage_member_is_safe("navidog.AppImage"));
+        assert!(appimage_member_is_safe("./navidog.AppImage"));
+        assert!(!appimage_member_is_safe("../navidog.AppImage"));
+        assert!(!appimage_member_is_safe("/tmp/navidog.AppImage"));
+        assert!(!appimage_member_is_safe("dir/navidog.AppImage"));
+        assert!(!appimage_member_is_safe("nul\t.AppImage"));
+    }
 }

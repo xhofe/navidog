@@ -399,10 +399,17 @@ fn http_get(url: &str, timeout: Duration) -> Result<String, HttpFail> {
         })
 }
 
-/// Last path segment of a download name. Rejects empty names and `..`.
+/// Last path segment of a download name. Rejects empty names, `.`/`..` and
+/// anything that Windows would read as a drive prefix or device path, so the
+/// joined path cannot leave the private update directory.
 fn download_file_name(name: &str) -> Option<&str> {
     let name = name.rsplit(['/', '\\']).next().unwrap_or(name);
-    if name.is_empty() || name == "." || name == ".." {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains(':')
+        || name.chars().any(char::is_control)
+    {
         None
     } else {
         Some(name)
@@ -1084,6 +1091,8 @@ mod tests {
         assert_eq!(download_file_name("navidog.dmg"), Some("navidog.dmg"));
         assert_eq!(download_file_name(".."), None);
         assert_eq!(download_file_name(""), None);
+        assert_eq!(download_file_name("C:payload.msi"), None);
+        assert_eq!(download_file_name("nul\t.msi"), None);
     }
 
     fn serve(body: &'static [u8]) -> String {
