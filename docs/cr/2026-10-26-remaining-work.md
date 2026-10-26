@@ -287,15 +287,18 @@ pub fn spans(sql: &str, dialect: Dialect) -> Vec<Span>;
 
 | 文件 | 拆分前 | 主文件现在 | 拆出的模块 |
 | --- | ---: | ---: | --- |
-| `grid/viewer/mod.rs` | 2882 | 723 | `session.rs`（连接/加载/分页）、`editing.rs`（提交/draft 状态）、`actions.rs`（工具栏命令与菜单）、`render.rs`（工具栏/底栏/主区域渲染）、`tests.rs` |
-| `query/results.rs` | 1886 | 340 | `tabs.rs`（运行状态与选项卡）、`editing.rs`（可编辑探测/提交/重载）、`render.rs`、`page.rs`、`tests.rs` |
+| `grid/viewer/mod.rs` | 2882 | 768 | `TableSession`（连接/分页/事务/提交状态）、`TableView`（渲染状态）、`enum AfterCommit`、`session.rs`（连接/加载/分页）、`editing.rs`（提交/draft 状态）、`actions.rs`（工具栏命令与菜单）、`render.rs`（工具栏/底栏/主区域渲染）、`tests.rs` |
+| `query/results.rs` | 1886 | 348 | `ResultSession`（运行/提交/刷新状态）、`tabs.rs`（运行状态与选项卡）、`editing.rs`（可编辑探测/提交/重载）、`render.rs`、`page.rs`、`tests.rs` |
 | `query/editor.rs` | 1742 | 922 | `session.rs`（生命周期/会话/上下文）、`editing.rs`（文本/偏好/补全焦点）、`toolbar.rs`、`render.rs`；测试原本在 `editor_tests.rs` |
 | `connection/form.rs` | 1493 | 534 | `pages.rs`（五页表单）、`validation.rs`、`secrets.rs`、`test_connection.rs`、`browse.rs`、`tests.rs` |
-| `grid/model.rs` | 1738 | 864 | `layout.rs`（列布局/排序投影）、`tsv.rs`（TSV 读写）、`tests.rs` |
+| `grid/model.rs` | 1738 | 139 | `storage.rs`（行/单元格存储与选择）、`edit.rs`（编辑覆盖层/草稿/提交接受）、`projection.rs`（列布局/排序/隐藏，原 `layout.rs`）、`tsv.rs`（TSV 读写）、`tests.rs` |
 | `app/update.rs` | 1353 | 27 | `manifest.rs`、`http.rs`、`download.rs`、`ui.rs`、`tests.rs`（`install.rs` 保持原样） |
 
 - 跨模块调用的方法改成 `pub(crate)`，同父模块内共享的自由函数改成 `pub(super)`；模块 `mod.rs` 保留结构体、trait impl 和构造器，并 `pub use` 原来的公开 API，外部路径不变。
-- 偏差：`TableViewer` 的 7 个 `*_after_commit` 状态量没有合并成 `enum AfterCommit`。拆分要求“只搬代码、不改行为”，而这几个标志（关闭后提交、提交后重载、隐藏列重投影、新增行）在提交结果回调里互相分支；当前 4 个字段的转换属于行为重构，放在单独的提交里做更安全，本次没有做。文件行数和“不加行为”的验收已满足。
+- `TableViewer` 的会话/分页/事务/提交状态抽成 `TableSession`，`TableViewer` 通过 `Deref` 保持 `viewer.page` 这类字段访问；渲染状态放 `TableView`。四个 `*_after_commit` 字段合成 `enum AfterCommit`（`None` / `Close` / `Hidden { hidden, reload }` / `Reload` / `AddRow`），加载与提交的消费路径按枚举分支；设置状态时要求空闲，组合行为与拆分前一致。
+- `ResultView` 的运行/提交/刷新状态抽成 `ResultSession`（访问写作 `result.session.status`），渲染半边仍是 `ResultView`，网格是现成的 `ResultGrid`。
+- `GridModel` 拆成 `storage.rs`、`edit.rs`、`projection.rs`（原 `layout.rs` 改名），`tsv.rs` 不变；`find_cell`/`find_column_name`/`cell_matches` 留在 `mod.rs`。
+- 拆分仍是纯搬家：方法体、断言没有改；`cargo test`（含 headless UI 测试）、`clippy`、`fmt` 全过。
 - 每项都跑了 `cargo test -p <crate>`、`clippy`、`fmt`；没有新增行为，没有改断言。
 
 ## 8. A-10：`Connection` 的 `profiles + active`

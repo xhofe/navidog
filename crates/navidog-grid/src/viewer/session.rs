@@ -99,7 +99,7 @@ impl TableViewer {
             Ok(Ok((dialect, columns))) => {
                 self.dialect = Some(dialect);
                 self.columns = columns;
-                self.grid.update(cx, |g, cx| {
+                self.view.grid.update(cx, |g, cx| {
                     g.set_target(
                         Some(GridTarget {
                             dialect,
@@ -110,24 +110,24 @@ impl TableViewer {
                     )
                 });
             }
-            Ok(Err(e)) => self.status = error_message(&e).into(),
-            Err(e) => self.status = e.to_string().into(),
+            Ok(Err(e)) => self.view.status = error_message(&e).into(),
+            Err(e) => self.view.status = e.to_string().into(),
         }
         self.session = Some(shared);
         self.cancel = cancel;
         self.load_foreign_keys(cx);
         // Back after a reopen with edits pending: keep the rows they belong to; they
         // commit on the new session. A reload would discard them.
-        if self.grid.read(cx).model(cx).has_changes() {
+        if self.view.grid.read(cx).model(cx).has_changes() {
             self.set_busy(false, cx);
-            self.status = SharedString::default();
+            self.view.status = SharedString::default();
         } else {
             self.reload(true, cx);
         }
         if Settings::global(cx).auto_begin_transaction {
             self.begin_transaction(cx);
         }
-        self.close_after_commit && !self.busy
+        self.after_commit == AfterCommit::Close && !self.busy
     }
 
     pub(crate) fn load_foreign_keys(&mut self, cx: &mut Context<Self>) {
@@ -159,7 +159,8 @@ impl TableViewer {
                 }
                 let names = keys.iter().map(|key| key.column.clone()).collect();
                 this.foreign_keys = keys;
-                this.grid
+                this.view
+                    .grid
                     .update(cx, |grid, cx| grid.set_foreign_keys(names, cx));
             });
         })
@@ -173,7 +174,7 @@ impl TableViewer {
         value: Cell,
         cx: &mut Context<Self>,
     ) {
-        self.grid.update(cx, |grid, cx| {
+        self.view.grid.update(cx, |grid, cx| {
             grid.update_model(cx, |model| model.set_value(row, col, value));
         });
     }
@@ -182,9 +183,9 @@ impl TableViewer {
     /// when it finishes (see `GridModel::locked`).
     pub(crate) fn set_busy(&mut self, busy: bool, cx: &mut Context<Self>) {
         self.busy = busy;
-        self.grid.update(cx, |g, cx| g.set_locked(busy, cx));
+        self.view.grid.update(cx, |g, cx| g.set_locked(busy, cx));
         if busy {
-            self.spin_until = Some(Instant::now() + REFRESH_SPIN);
+            self.view.spin_until = Some(Instant::now() + REFRESH_SPIN);
             return;
         }
         if self.external_refresh_pending {
@@ -197,22 +198,22 @@ impl TableViewer {
                 });
             });
         }
-        let Some(until) = self.spin_until else {
+        let Some(until) = self.view.spin_until else {
             return;
         };
         let left = until.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            self.spin_until = None;
+            self.view.spin_until = None;
             return;
         }
         // The load can finish before half a turn; wake the view when that half ends.
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(left).await;
             let _ = this.update(cx, |this, cx| {
-                if this.busy || this.spin_until.is_some_and(|t| Instant::now() < t) {
+                if this.busy || this.view.spin_until.is_some_and(|t| Instant::now() < t) {
                     return;
                 }
-                this.spin_until = None;
+                this.view.spin_until = None;
                 cx.notify();
             });
         })
@@ -220,7 +221,7 @@ impl TableViewer {
     }
 
     pub(crate) fn spinning(&self) -> bool {
-        refresh_spinning(self.busy, self.spin_until, Instant::now())
+        refresh_spinning(self.busy, self.view.spin_until, Instant::now())
     }
 
     pub(crate) fn generation_matches(&self, generation: u64, cx: &App) -> bool {
@@ -232,7 +233,7 @@ impl TableViewer {
 
     pub(crate) fn fail(&mut self, message: String, cx: &mut Context<Self>) {
         self.set_busy(false, cx);
-        self.status = message.into();
+        self.view.status = message.into();
         cx.notify();
     }
 
@@ -243,8 +244,8 @@ impl TableViewer {
         };
         let generation = self.session_generation;
         let (scope, table) = (&self.object.scope, &self.object.name);
-        let filter = self.filter.read(cx).value().to_string();
-        let order = self.order.read(cx).value().to_string();
+        let filter = self.view.filter.read(cx).value().to_string();
+        let order = self.view.order.read(cx).value().to_string();
         let offset = self.page * self.limit.unwrap_or(0);
         let sql = d.select_page(
             scope,
@@ -253,12 +254,12 @@ impl TableViewer {
             &order,
             self.limit,
             offset,
-            self.grid.read(cx).show_rowid,
+            self.view.grid.read(cx).show_rowid,
         );
         let count_sql = count.then(|| d.count(scope, table, &filter));
         let metadata = self.metadata_stale;
         let (scope, table) = (scope.clone(), table.clone());
-        self.status = sql.clone().into();
+        self.view.status = sql.clone().into();
         self.set_busy(true, cx);
         cx.notify();
         let page = run_on(session.clone(), move |rel| {

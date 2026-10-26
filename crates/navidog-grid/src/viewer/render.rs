@@ -7,11 +7,11 @@ impl Render for TableViewer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_form(window, cx);
         self.sync_editor(window, cx);
-        let form = self.form;
+        let form = self.view.form;
         v_flex()
             .id("table-viewer")
             .key_context(CONTEXT)
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.view.focus_handle)
             .size_full()
             .min_w_0()
             .overflow_hidden()
@@ -27,7 +27,7 @@ impl Render for TableViewer {
                 cx.listener(|this, _: &ToggleRowId, window, cx| this.toggle_rowid(window, cx)),
             )
             .on_action(cx.listener(|this, _: &Escape, window, cx| {
-                if this.show_find {
+                if this.view.show_find {
                     this.close_find(window, cx);
                 } else {
                     cx.propagate();
@@ -40,7 +40,7 @@ impl Render for TableViewer {
                 cx.listener(|this, _: &ShowReplace, window, cx| this.open_find(true, window, cx)),
             )
             .on_action(cx.listener(|this, _: &FindNext, _, cx| {
-                this.show_find = true;
+                this.view.show_find = true;
                 this.find_step(true, cx);
             }))
             .on_action(
@@ -86,34 +86,34 @@ impl Render for TableViewer {
             )
             .on_action(cx.listener(|this, _: &SortNone, _, cx| this.sort_focused(None, cx)))
             .on_action(cx.listener(|this, _: &FindData, window, cx| {
-                this.find_columns = false;
-                this.replace_mode = false;
+                this.view.find_columns = false;
+                this.view.replace_mode = false;
                 this.open_find(false, window, cx);
             }))
             .on_action(cx.listener(|this, _: &FindReplaceMode, window, cx| {
-                this.find_columns = false;
+                this.view.find_columns = false;
                 this.open_find(true, window, cx);
             }))
             .on_action(cx.listener(|this, _: &FindColumnsMode, window, cx| {
-                this.find_columns = true;
-                this.replace_mode = false;
+                this.view.find_columns = true;
+                this.view.replace_mode = false;
                 this.open_find(false, window, cx);
                 this.find_step(false, cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleMatchCase, _, cx| {
-                this.find_case = !this.find_case;
+                this.view.find_case = !this.view.find_case;
                 this.sync_highlight(cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleHighlight, _, cx| {
-                this.find_highlight = !this.find_highlight;
+                this.view.find_highlight = !this.view.find_highlight;
                 this.sync_highlight(cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleIncremental, _, cx| {
-                this.find_incremental = !this.find_incremental;
+                this.view.find_incremental = !this.view.find_incremental;
                 cx.notify();
             }))
             .on_action(cx.listener(|this, a: &PickField, _, cx| {
-                if let Some(rule) = this.rules.get_mut(a.index) {
+                if let Some(rule) = this.view.rules.get_mut(a.index) {
                     rule.field = a.name.to_string();
                     cx.notify();
                 }
@@ -122,20 +122,20 @@ impl Render for TableViewer {
                 let Some(op) = filter::Op::parse_key(&a.op) else {
                     return;
                 };
-                if let Some(rule) = this.rules.get_mut(a.index) {
+                if let Some(rule) = this.view.rules.get_mut(a.index) {
                     rule.op = op;
                     cx.notify();
                 }
             }))
             .on_action(cx.listener(|this, a: &PickSort, _, cx| {
-                if let Some(sort) = this.sorts.get_mut(a.index) {
+                if let Some(sort) = this.view.sorts.get_mut(a.index) {
                     sort.field = a.name.to_string();
                     cx.notify();
                 }
             }))
             .child(self.render_toolbar(cx))
-            .when(self.show_find, |v| v.child(self.render_find(cx)))
-            .when(self.show_filter, |v| v.child(self.render_filter(cx)))
+            .when(self.view.show_find, |v| v.child(self.render_find(cx)))
+            .when(self.view.show_filter, |v| v.child(self.render_filter(cx)))
             .child(
                 div()
                     .flex_1()
@@ -218,16 +218,16 @@ impl TableViewer {
             })
             .child(
                 button("toggle-filter", "funnel", t!("viewer.filter").to_string())
-                    .selected(self.show_filter)
+                    .selected(self.view.show_filter)
                     .on_click(
                         cx.listener(|this, _, window, cx| this.toggle_filter_pane(window, cx)),
                     ),
             )
             .child(
                 button("viewer-find", "search", t!("viewer.find").to_string())
-                    .selected(self.show_find)
+                    .selected(self.view.show_find)
                     .on_click(cx.listener(|this, _, window, cx| {
-                        if this.show_find {
+                        if this.view.show_find {
                             this.close_find(window, cx);
                         } else {
                             this.open_find(false, window, cx);
@@ -254,7 +254,7 @@ impl TableViewer {
                     .small()
                     .icon(lucide("square-function"))
                     .tooltip(t!("viewer.raw_data").to_string())
-                    .selected(self.grid.read(cx).raw_mode())
+                    .selected(self.view.grid.read(cx).raw_mode())
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_raw(cx))),
             )
             .child(
@@ -264,13 +264,13 @@ impl TableViewer {
                     .small()
                     .icon(lucide("list"))
                     .tooltip(t!("viewer.form").to_string())
-                    .selected(self.form)
+                    .selected(self.view.form)
                     .on_click(cx.listener(|this, _, _, cx| {
-                        if this.form {
+                        if this.view.form {
                             this.flush_form(cx);
                         }
-                        this.form = !this.form;
-                        this.form_for = None;
+                        this.view.form = !this.view.form;
+                        this.view.form_for = None;
                         cx.notify();
                     })),
             )
@@ -280,9 +280,9 @@ impl TableViewer {
                     .small()
                     .icon(lucide("code"))
                     .tooltip(t!("viewer.editor").to_string())
-                    .selected(self.editor.is_some())
+                    .selected(self.view.editor.is_some())
                     .on_click(cx.listener(|this, _, window, cx| {
-                        if this.editor.take().is_some() {
+                        if this.view.editor.take().is_some() {
                             cx.notify();
                         } else {
                             this.open_editor(Kind::Text, window, cx);
@@ -307,7 +307,7 @@ impl TableViewer {
     pub(crate) fn render_bottom_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
         let ready = self.session.is_some() && !self.busy;
-        let dirty = self.grid.read(cx).model(cx).has_changes();
+        let dirty = self.view.grid.read(cx).model(cx).has_changes();
         let icon_button = |id: &'static str, icon: &'static str, tip: String| {
             Button::new(id)
                 .ghost()
@@ -319,7 +319,7 @@ impl TableViewer {
         };
         let page = self.page;
         let last = self.last_page();
-        let model = self.grid.read(cx).model(cx);
+        let model = self.view.grid.read(cx).model(cx);
         let (rows, selected) = (model.row_count(), model.head().0 + 1);
         let mut records = t!(
             "viewer.records",
@@ -346,11 +346,13 @@ impl TableViewer {
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.flush_form(cx);
                         let dirty = {
-                            let model = this.grid.read(cx).model(cx);
+                            let model = this.view.grid.read(cx).model(cx);
                             model.row_dirty(model.head().0)
                         };
                         if dirty {
-                            this.add_after_commit = true;
+                            if this.after_commit == AfterCommit::None {
+                                this.after_commit = AfterCommit::AddRow;
+                            }
                             this.apply_changes(false, window, cx);
                         } else {
                             this.insert_row(cx);
@@ -361,7 +363,8 @@ impl TableViewer {
                 icon_button("row-delete", "minus", t!("viewer.delete_row").to_string())
                     .disabled(!ready)
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.grid
+                        this.view
+                            .grid
                             .update(cx, |g, cx| g.update_model(cx, |m| m.delete_selected_rows()));
                     })),
             )
@@ -376,9 +379,10 @@ impl TableViewer {
                 icon_button("row-discard", "x", t!("viewer.discard_changes").to_string())
                     .disabled(!dirty || self.busy)
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.grid
+                        this.view
+                            .grid
                             .update(cx, |g, cx| g.update_model(cx, |m| m.discard()));
-                        this.form_for = None;
+                        this.view.form_for = None;
                     })),
             )
             .child({
@@ -418,7 +422,7 @@ impl TableViewer {
             )
             .child(
                 // The last SQL or error is often longer than the bar; hover shows all of it
-                truncated("viewer-status", self.status.clone())
+                truncated("viewer-status", self.view.status.clone())
                     .flex_1()
                     .px_2()
                     .text_color(p.label_secondary),
@@ -501,7 +505,8 @@ impl TableViewer {
                             .on_click(cx.listener(|this, checked: &bool, window, cx| {
                                 this.limit = checked
                                     .then(|| {
-                                        this.limit_input
+                                        this.view
+                                            .limit_input
                                             .read(cx)
                                             .value()
                                             .trim()
@@ -517,7 +522,7 @@ impl TableViewer {
                             })),
                     )
                     .child(
-                        Input::new(&self.limit_input)
+                        Input::new(&self.view.limit_input)
                             .xsmall()
                             .flex_1()
                             .disabled(self.limit.is_none()),
@@ -538,9 +543,9 @@ impl TableViewer {
             .min_h_0()
             .min_w_0()
             .overflow_hidden()
-            .when(!form, |d| d.child(self.grid.clone()))
+            .when(!form, |d| d.child(self.view.grid.clone()))
             .when(form, |d| d.child(self.render_form(cx)));
-        if self.editor.is_none() {
+        if self.view.editor.is_none() {
             return body.into_any_element();
         }
         let rem = window.rem_size();
@@ -548,6 +553,7 @@ impl TableViewer {
         let chrome = tokens::viewer::FILTER_HEIGHT.to_pixels(rem) * 2.;
         // raw-px: the divider position the user dragged to, kept in pixels
         let height = self
+            .view
             .cell_editor_px
             .map(px)
             .unwrap_or_else(|| chrome + tokens::viewer::CELL_EDITOR_HEIGHT.to_pixels(rem));
@@ -557,7 +563,9 @@ impl TableViewer {
                 let Some(size) = state.read(cx).sizes().get(1).copied() else {
                     return;
                 };
-                viewer.update(cx, |this, _| this.cell_editor_px = Some(f32::from(size)));
+                viewer.update(cx, |this, _| {
+                    this.view.cell_editor_px = Some(f32::from(size))
+                });
             })
             .child(resizable_panel().child(body))
             .child(

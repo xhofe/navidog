@@ -4,7 +4,7 @@ use super::*;
 
 impl TableViewer {
     pub(super) fn focused_cell(&self, cx: &App) -> Option<(usize, usize, String, String)> {
-        let model = self.grid.read(cx).model(cx);
+        let model = self.view.grid.read(cx).model(cx);
         if model.columns.is_empty() || model.row_count() == 0 {
             return None;
         }
@@ -24,7 +24,7 @@ impl TableViewer {
         text: String,
         cx: &mut Context<Self>,
     ) {
-        self.grid.update(cx, |g, cx| {
+        self.view.grid.update(cx, |g, cx| {
             g.update_model(cx, |m| {
                 let current = match m.value(row, col) {
                     Some(Some(s)) => Some(s.to_string()),
@@ -41,40 +41,42 @@ impl TableViewer {
     }
 
     pub(super) fn sync_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(kind) = self.editor else {
+        let Some(kind) = self.view.editor else {
             return;
         };
         let Some((r, c, text, _)) = self.focused_cell(cx) else {
             return;
         };
-        if self.editor_cell == Some((r, c)) {
+        if self.view.editor_cell == Some((r, c)) {
             return;
         }
-        self.editor_cell = Some((r, c));
-        self.editor_note = SharedString::default();
+        self.view.editor_cell = Some((r, c));
+        self.view.editor_note = SharedString::default();
         let shown = match kind {
             Kind::Hex => encode_hex(&text),
             Kind::Json => pretty_json(&text).unwrap_or(text.clone()),
             _ => text.clone(),
         };
-        self.editor_baseline.clone_from(&shown);
+        self.view.editor_baseline.clone_from(&shown);
         if kind == Kind::Json {
-            self.json_input
+            self.view
+                .json_input
                 .update(cx, |s, cx| s.set_value(shown, window, cx));
         } else {
-            self.editor_input
+            self.view
+                .editor_input
                 .update(cx, |s, cx| s.set_value(shown, window, cx));
         }
-        self.image = editor::sniff_image(text.as_bytes())
+        self.view.image = editor::sniff_image(text.as_bytes())
             .map(|format| Arc::new(Image::from_bytes(format, text.into_bytes())));
     }
 
     pub(super) fn open_editor(&mut self, kind: Kind, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editor == Some(kind) {
+        if self.view.editor == Some(kind) {
             return;
         }
-        self.editor = Some(kind);
-        self.editor_cell = None;
+        self.view.editor = Some(kind);
+        self.view.editor_cell = None;
         self.sync_editor(window, cx);
         cx.notify();
     }
@@ -87,17 +89,17 @@ impl TableViewer {
         let Some((r, c, _, _)) = self.focused_cell(cx) else {
             return;
         };
-        let raw = if self.editor == Some(Kind::Json) {
-            self.json_input.read(cx).value().to_string()
+        let raw = if self.view.editor == Some(Kind::Json) {
+            self.view.json_input.read(cx).value().to_string()
         } else {
-            self.editor_input.read(cx).value().to_string()
+            self.view.editor_input.read(cx).value().to_string()
         };
         let baseline = raw.clone();
-        let text = match self.editor {
+        let text = match self.view.editor {
             Some(Kind::Hex) => match decode_hex(&raw) {
                 Some(text) => text,
                 None => {
-                    self.editor_note = t!("viewer.editor_hex_invalid").into();
+                    self.view.editor_note = t!("viewer.editor_hex_invalid").into();
                     cx.notify();
                     return;
                 }
@@ -105,21 +107,22 @@ impl TableViewer {
             Some(Kind::Text | Kind::Web | Kind::Json) => raw,
             _ => return,
         };
-        self.editor_note = SharedString::default();
-        self.editor_baseline = baseline;
+        self.view.editor_note = SharedString::default();
+        self.view.editor_baseline = baseline;
         self.write_at(r, c, text, cx);
-        self.editor_cell = Some((r, c));
+        self.view.editor_cell = Some((r, c));
     }
 
     pub(super) fn format_json(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let raw = self.json_input.read(cx).value().to_string();
+        let raw = self.view.json_input.read(cx).value().to_string();
         match pretty_json(&raw) {
             Some(pretty) => {
-                self.editor_note = SharedString::default();
-                self.json_input
+                self.view.editor_note = SharedString::default();
+                self.view
+                    .json_input
                     .update(cx, |s, cx| s.set_value(pretty, window, cx));
             }
-            None => self.editor_note = t!("viewer.editor_json_invalid").into(),
+            None => self.view.editor_note = t!("viewer.editor_json_invalid").into(),
         }
         cx.notify();
     }
@@ -141,24 +144,25 @@ impl TableViewer {
             let bytes = std::fs::read(&path).ok();
             let _ = this.update_in(cx, |this, window, cx| {
                 let Some(bytes) = bytes else {
-                    this.editor_note = t!("viewer.editor_image_read").into();
+                    this.view.editor_note = t!("viewer.editor_image_read").into();
                     cx.notify();
                     return;
                 };
                 if let Some(format) = editor::sniff_image(&bytes) {
-                    this.image = Some(Arc::new(Image::from_bytes(format, bytes.clone())));
+                    this.view.image = Some(Arc::new(Image::from_bytes(format, bytes.clone())));
                 }
                 match String::from_utf8(bytes) {
                     Ok(text) => {
                         if let Some((r, c, _, _)) = this.focused_cell(cx) {
                             this.write_at(r, c, text.clone(), cx);
-                            this.editor_cell = Some((r, c));
-                            this.editor_input
+                            this.view.editor_cell = Some((r, c));
+                            this.view
+                                .editor_input
                                 .update(cx, |s, cx| s.set_value(text, window, cx));
                         }
-                        this.editor_note = SharedString::default();
+                        this.view.editor_note = SharedString::default();
                     }
-                    Err(_) => this.editor_note = t!("viewer.editor_image_binary").into(),
+                    Err(_) => this.view.editor_note = t!("viewer.editor_image_binary").into(),
                 }
                 cx.notify();
             });
@@ -167,7 +171,7 @@ impl TableViewer {
     }
 
     pub(super) fn save_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let bytes = if let Some(image) = &self.image {
+        let bytes = if let Some(image) = &self.view.image {
             image.bytes.clone()
         } else {
             self.focused_cell(cx)
@@ -181,7 +185,7 @@ impl TableViewer {
             };
             if std::fs::write(&path, bytes).is_err() {
                 let _ = this.update(cx, |this, cx| {
-                    this.editor_note = t!("viewer.editor_image_write").into();
+                    this.view.editor_note = t!("viewer.editor_image_write").into();
                     cx.notify();
                 });
             }
@@ -190,14 +194,15 @@ impl TableViewer {
     }
 
     pub(super) fn clear_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.image = None;
+        self.view.image = None;
         if let Some((r, c, _, _)) = self.focused_cell(cx) {
             self.write_at(r, c, String::new(), cx);
-            self.editor_cell = Some((r, c));
-            self.editor_input
+            self.view.editor_cell = Some((r, c));
+            self.view
+                .editor_input
                 .update(cx, |s, cx| s.set_value("", window, cx));
         }
-        self.editor_note = SharedString::default();
+        self.view.editor_note = SharedString::default();
         cx.notify();
     }
 
@@ -227,7 +232,7 @@ impl TableViewer {
 
     pub(super) fn render_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
-        let kind = self.editor.unwrap_or(Kind::Text);
+        let kind = self.view.editor.unwrap_or(Kind::Text);
         let kind_button = |id: &'static str, on: bool, label: String, next: Kind| {
             Button::new(id)
                 .xsmall()
@@ -310,10 +315,10 @@ impl TableViewer {
                             // raw-px: gpui-kit's focus ring is 3px outside the border; this slot clips it square
                             .p(gpui_kit::px(3.))
                             .when(kind == Kind::Json, |slot| {
-                                slot.child(Editor::new(&self.json_input).size_full())
+                                slot.child(Editor::new(&self.view.json_input).size_full())
                             })
                             .when(kind != Kind::Json, |slot| {
-                                slot.child(Textarea::new(&self.editor_input).size_full())
+                                slot.child(Textarea::new(&self.view.editor_input).size_full())
                             }),
                     )
                     .child(
@@ -342,7 +347,7 @@ impl TableViewer {
                 },
             )
             .when(kind == Kind::Image, |pane| {
-                pane.when_some(self.image.clone(), |pane, image| {
+                pane.when_some(self.view.image.clone(), |pane, image| {
                     pane.child(
                         div().flex_1().min_h_0().overflow_hidden().child(
                             img(image)
@@ -394,12 +399,12 @@ impl TableViewer {
                         .child(t!("viewer.editor_enum_missing").to_string()),
                 ),
             })
-            .when(!self.editor_note.is_empty(), |pane| {
+            .when(!self.view.editor_note.is_empty(), |pane| {
                 pane.child(
                     div()
                         .text_xs()
                         .text_color(p.label_secondary)
-                        .child(self.editor_note.clone()),
+                        .child(self.view.editor_note.clone()),
                 )
             })
     }

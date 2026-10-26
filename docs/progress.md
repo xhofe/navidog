@@ -83,7 +83,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | A-01 拆 app-state | 完成 | `navidog-core` 删除，GPUI 状态迁到 `navidog-app-state`，纯数据留在 `navidog-model`；322 处 import 按模块迁移，无兼容 facade |
 | A-02 core/驱动去 gpui | 完成 | `navidog-db` 只依赖 model；`navidog-headless` 用 model+db 跑 SQLite；`scripts/check-deps.sh` 在 CI 检查依赖方向并禁止 `crates/navidog-core` 回潮 |
 | A-03 table_design 拆出 | 完成 | 新 `navidog-schema` 持有表草稿/表单/迁移计划，复用 R-04 的词法层；`rg 'table_design' crates/navidog-db/src` 为空，实库 DDL 测试随模块迁移 |
-| A-07 god object/超长文件 | 完成 | viewer/results/editor/form/model/update 主文件分别为 723/340/922/534/864/27 行，全部 < 1000（update < 600）；纯搬家，断言未改。`*_after_commit` 合并成 enum 的清理未做，见验收记录 |
+| A-07 god object/超长文件 | 完成 | viewer/results/editor/form/model/update 主文件分别为 768/348/922/534/139/27 行，全部 < 1000（update < 600）；`TableSession`/`TableView`、`ResultSession`、storage/edit/projection、`enum AfterCommit` 均已拆出；纯搬家，断言未改 |
 | A-10 Connection `profiles + active` | 完成 | `profiles: Vec<Profile>` + `active` 取代字段交换；`connections.json` 写旧布局、读两种布局；7+ 配置文件/重名/空名/两种 JSON/panic 恢复都有测试 |
 | S-07 共享 i18n 后端 | 完成（方案 1） | 保持 crate-local 契约；动态 key 必须登记 `scripts/i18n-dynamic-keys.txt`（19 条），`check-i18n.sh` 检查；契约写入 00-overview |
 

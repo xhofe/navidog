@@ -4,10 +4,11 @@ use super::*;
 
 impl TableViewer {
     pub(super) fn flush_form(&mut self, cx: &mut Context<Self>) {
-        let Some(row) = self.form_for else {
+        let Some(row) = self.view.form_for else {
             return;
         };
         let values: Vec<String> = self
+            .view
             .form_inputs
             .iter()
             .map(|input| input.read(cx).value().to_string())
@@ -24,9 +25,9 @@ impl TableViewer {
         text: String,
         cx: &mut Context<Self>,
     ) {
-        let raw = self.grid.read(cx).raw_mode();
+        let raw = self.view.grid.read(cx).raw_mode();
         let dialect = self.dialect.unwrap_or(Dialect::Sqlite);
-        self.grid.update(cx, |g, cx| {
+        self.view.grid.update(cx, |g, cx| {
             g.update_model(cx, |m| {
                 let old = m.raw_text(row, c, raw, dialect);
                 if text != old {
@@ -42,21 +43,26 @@ impl TableViewer {
     }
 
     pub(super) fn sync_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.form {
+        if !self.view.form {
             return;
         }
         let (row, n) = {
-            let model = self.grid.read(cx).model(cx);
+            let model = self.view.grid.read(cx).model(cx);
             (model.head().0, model.columns.len())
         };
-        if self.form_for == Some(row) && self.form_inputs.len() == n {
+        if self.view.form_for == Some(row) && self.view.form_inputs.len() == n {
             return;
         }
-        self.form_inputs.clear();
+        self.view.form_inputs.clear();
         for c in 0..n {
-            let raw = self.grid.read(cx).raw_mode();
+            let raw = self.view.grid.read(cx).raw_mode();
             let dialect = self.dialect.unwrap_or(Dialect::Sqlite);
-            let value = self.grid.read(cx).model(cx).raw_text(row, c, raw, dialect);
+            let value = self
+                .view
+                .grid
+                .read(cx)
+                .model(cx)
+                .raw_text(row, c, raw, dialect);
             let input = cx.new(|cx| InputState::new(window, cx).default_value(value));
             let row_at = row;
             cx.subscribe_in(
@@ -70,9 +76,9 @@ impl TableViewer {
                 },
             )
             .detach();
-            self.form_inputs.push(input);
+            self.view.form_inputs.push(input);
         }
-        self.form_for = Some(row);
+        self.view.form_for = Some(row);
     }
 
     pub(super) fn form_step(&mut self, delta: isize, cx: &mut Context<Self>) {
@@ -82,7 +88,7 @@ impl TableViewer {
         }
         self.flush_form(cx);
         let (row, n) = {
-            let model = self.grid.read(cx).model(cx);
+            let model = self.view.grid.read(cx).model(cx);
             (model.head().0, model.row_count())
         };
         if n == 0 {
@@ -92,12 +98,13 @@ impl TableViewer {
         if next == row {
             return;
         }
-        self.grid.update(cx, |g, cx| g.move_to_row(next, cx));
-        self.form_for = None;
+        self.view.grid.update(cx, |g, cx| g.move_to_row(next, cx));
+        self.view.form_for = None;
     }
 
     pub(super) fn render_form(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let names: Vec<_> = self
+            .view
             .grid
             .read(cx)
             .model(cx)
@@ -112,7 +119,8 @@ impl TableViewer {
             .p_3()
             .gap(tokens::form::ROW_GAP.rems())
             .children(
-                self.form_inputs
+                self.view
+                    .form_inputs
                     .iter()
                     .zip(names)
                     .map(|(input, name)| FormRow::new(name, Input::new(input).flex_1())),

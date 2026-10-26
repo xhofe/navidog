@@ -180,3 +180,151 @@ pub(super) fn rewrite(slots: &mut [SharedString], order: &[SharedString]) {
         }
     }
 }
+
+impl GridModel {
+    /// All columns in this result, including the columns currently hidden from the grid.
+    pub fn all_columns(&self) -> impl Iterator<Item = &GridColumn> {
+        self.columns.iter().chain(&self.hidden_columns)
+    }
+
+    /// Repartitions the accepted data without retaining another copy of its rows.
+    /// Returns false if pending writes need to be committed or discarded first. Completely
+    /// unfilled insert drafts contain no values to move, so they keep their default state.
+    pub fn set_hidden(&mut self, hidden: &HashSet<String>) -> bool {
+        if !self.edits.is_empty()
+            || !self.deleted.is_empty()
+            || self
+                .new_rows
+                .iter()
+                .any(|row| row.iter().any(Option::is_some))
+        {
+            return false;
+        }
+        let head_name = self.columns.get(self.head.1).map(|c| c.name.clone());
+        let mut columns = std::mem::take(&mut self.columns);
+        columns.append(&mut self.hidden_columns);
+        let mut rows = std::mem::take(&mut self.rows);
+        for (ix, row) in rows.iter_mut().enumerate() {
+            if let Some(values) = self.hidden_rows.get_mut(ix) {
+                row.append(values);
+            }
+        }
+        self.hidden_rows.clear();
+        (self.columns, self.rows) = Self::project(&columns, &rows, hidden);
+        self.cache_columns();
+        self.set_hidden_columns(&columns, &rows, hidden);
+        for row in &mut self.new_rows {
+            *row = vec![None; self.columns.len()];
+        }
+        self.head.1 = head_name
+            .and_then(|name| self.columns.iter().position(|c| c.name == name))
+            .unwrap_or_else(|| self.head.1.min(self.columns.len().saturating_sub(1)));
+        self.anchor = self.head;
+        true
+    }
+
+    /// Sorts the accepted rows and their hidden key values together. Pending edits stay put.
+    pub fn sort_rows(&mut self, col: usize, asc: bool) {
+        if self.has_changes() || col >= self.columns.len() {
+            return;
+        }
+        let numeric = self
+            .columns
+            .get(col)
+            .is_some_and(|column| matches!(type_kind(&column.type_name), TypeKind::Number));
+        let mut order: Vec<_> = (0..self.rows.len()).collect();
+        order.sort_by(|&a, &b| {
+            let value = |ix: usize| self.rows[ix].get(col).and_then(Option::as_deref);
+            let ord = match (value(a), value(b)) {
+                (None, None) => std::cmp::Ordering::Equal,
+                (None, Some(_)) => std::cmp::Ordering::Less,
+                (Some(_), None) => std::cmp::Ordering::Greater,
+                (Some(a), Some(b)) if numeric => match (a.parse::<f64>(), b.parse::<f64>()) {
+                    // `total_cmp` gives NaN a fixed place instead of treating every
+                    // NaN comparison as equal. Unparsable values sort after numbers
+                    // and among themselves by text, which still makes a total order.
+                    (Ok(a), Ok(b)) => a.total_cmp(&b),
+                    (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+                    (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+                    (Err(_), Err(_)) => a.cmp(b),
+                },
+                (Some(a), Some(b)) => a.cmp(b),
+            };
+            if asc { ord } else { ord.reverse() }
+        });
+        let reorder = |rows: &mut Vec<Vec<Cell>>| {
+            let mut previous: Vec<_> = std::mem::take(rows).into_iter().map(Some).collect();
+            *rows = order
+                .iter()
+                .filter_map(|&ix| previous.get_mut(ix).and_then(Option::take))
+                .collect();
+        };
+        reorder(&mut self.rows);
+        reorder(&mut self.hidden_rows);
+    }
+
+    /// Moves one data column. Cells, edits, the raw-SQL flags and the selection follow it.
+    pub fn move_column(&mut self, from: usize, to: usize) {
+        let n = self.columns.len();
+        if from == to || from >= n || to >= n {
+            return;
+        }
+        let mut order: Vec<usize> = (0..n).collect();
+        let ix = order.remove(from);
+        order.insert(to, ix);
+        self.reorder(&order);
+    }
+
+    /// `order[new_index]` is the old column index.
+    pub fn reorder(&mut self, order: &[usize]) {
+        if order.len() != self.columns.len() || (0..order.len()).any(|i| !order.contains(&i)) {
+            return;
+        }
+        self.columns = order.iter().map(|&i| self.columns[i].clone()).collect();
+        self.cache_columns();
+        for row in &mut self.rows {
+            let next = permute_cells(row, order);
+            *row = next;
+        }
+        for row in &mut self.new_rows {
+            let next: Vec<Option<Cell>> = order
+                .iter()
+                .map(|&i| row.get(i).cloned().flatten())
+                .collect();
+            *row = next;
+        }
+        let edits = std::mem::take(&mut self.edits);
+        self.edits = edits
+            .into_iter()
+            .filter_map(|((r, c), v)| remap_col(c, order).map(|nc| ((r, nc), v)))
+            .collect();
+        let raw = std::mem::take(&mut self.raw);
+        self.raw = raw
+            .into_iter()
+            .filter_map(|(r, c)| remap_col(c, order).map(|nc| (r, nc)))
+            .collect();
+        self.anchor.1 = remap_col(self.anchor.1, order).unwrap_or(0);
+        self.head.1 = remap_col(self.head.1, order).unwrap_or(0);
+    }
+
+    /// Columns and cell values with `hidden` names removed. Hiding every column keeps them all.
+    pub fn project(
+        columns: &[GridColumn],
+        rows: &[Vec<Cell>],
+        hidden: &HashSet<String>,
+    ) -> (Vec<GridColumn>, Vec<Vec<Cell>>) {
+        select_columns(columns, rows, |c| !hides(columns, hidden, c))
+    }
+
+    /// Keeps the `hidden` columns of the unprojected page, so rows are still located by them.
+    /// Call after `set_data` with the projection of the same page.
+    pub fn set_hidden_columns(
+        &mut self,
+        columns: &[GridColumn],
+        rows: &[Vec<Cell>],
+        hidden: &HashSet<String>,
+    ) {
+        (self.hidden_columns, self.hidden_rows) =
+            select_columns(columns, rows, |c| hides(columns, hidden, c));
+    }
+}

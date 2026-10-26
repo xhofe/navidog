@@ -214,18 +214,24 @@ impl Editing {
 }
 
 /// One result tab: the grid, the bottom bar and the edit and commit flow.
-pub(crate) struct ResultView {
-    pub grid: Entity<ResultGrid>,
-    pub sql: String,
+/// Run, commit and refresh state of one result tab (A-07). `ResultView` derefs here, so existing
+/// code keeps writing `result.status`; rendering state stays on the view.
+pub(crate) struct ResultSession {
+    pub(crate) sql: String,
     columns: Vec<Column>,
     edit: Option<Editing>,
     info: RunInfo,
     editor: WeakEntity<QueryEditor>,
-    pub pinned: bool,
     busy: bool,
     status: SharedString,
     /// The last sort accepted by this result, including DataTable's header indicator.
     accepted_sort: Option<(SharedString, bool)>,
+}
+
+pub(crate) struct ResultView {
+    pub grid: Entity<ResultGrid>,
+    pub pinned: bool,
+    pub(crate) session: ResultSession,
     /// The cell editor under the grid (F-DATA-011 style), and the cell it shows
     cell_editor: bool,
     cell_input: Entity<TextareaState>,
@@ -279,15 +285,17 @@ impl ResultView {
             ];
             let mut this = Self {
                 grid,
-                sql,
-                columns: set.columns,
-                edit: None,
-                info,
-                editor,
                 pinned: false,
-                busy: false,
-                status: SharedString::default(),
-                accepted_sort: None,
+                session: ResultSession {
+                    sql,
+                    columns: set.columns,
+                    edit: None,
+                    info,
+                    editor,
+                    busy: false,
+                    status: SharedString::default(),
+                    accepted_sort: None,
+                },
                 cell_editor: false,
                 cell_input,
                 cell_at: None,
@@ -310,7 +318,7 @@ impl Render for ResultView {
         } else {
             self.grid.clone().into_any_element()
         };
-        let read_only = self.edit.is_none();
+        let read_only = self.session.edit.is_none();
         v_flex()
             .size_full()
             .min_h_0()

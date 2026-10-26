@@ -18,7 +18,7 @@ impl TableViewer {
             PanelId::from(cx.entity_id()),
             tabs::TableMenu {
                 in_transaction: self.in_transaction,
-                filter_open: self.show_filter,
+                filter_open: self.view.show_filter,
             },
             cx,
         );
@@ -30,10 +30,10 @@ impl TableViewer {
     }
 
     pub(crate) fn toggle_filter_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.show_filter = !self.show_filter;
-        if self.show_filter {
+        self.view.show_filter = !self.view.show_filter;
+        if self.view.show_filter {
             self.focus_filter_input(window, cx);
-        } else if self.focus_handle.contains_focused(window, cx) {
+        } else if self.view.focus_handle.contains_focused(window, cx) {
             // The focused field is in this pane and unmounts with it. Leave focus on the
             // grid, or the shortcut has nowhere to land and cannot open the pane again.
             self.focus_grid(window, cx);
@@ -44,10 +44,10 @@ impl TableViewer {
 
     /// Where keyboard input goes once a pane that held it has closed.
     pub(crate) fn focus_grid(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.form {
-            window.focus(&self.focus_handle, cx);
+        if self.view.form {
+            window.focus(&self.view.focus_handle, cx);
         } else {
-            let handle = self.grid.read(cx).focus_handle(cx);
+            let handle = self.view.grid.read(cx).focus_handle(cx);
             window.focus(&handle, cx);
         }
     }
@@ -55,12 +55,12 @@ impl TableViewer {
     /// Text mode focuses the WHERE field. The builder has no WHERE field, so the first
     /// condition's value takes its place; an empty builder leaves focus where it was.
     pub(crate) fn focus_filter_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.builder {
-            if let Some(rule) = self.rules.first() {
+        if self.view.builder {
+            if let Some(rule) = self.view.rules.first() {
                 rule.value.update(cx, |s, cx| s.focus(window, cx));
             }
         } else {
-            self.filter.update(cx, |s, cx| s.focus(window, cx));
+            self.view.filter.update(cx, |s, cx| s.focus(window, cx));
         }
     }
 
@@ -83,23 +83,25 @@ impl TableViewer {
     }
 
     pub(crate) fn sort_focused(&mut self, dir: Option<bool>, cx: &mut Context<Self>) {
-        let col = self.grid.read(cx).model(cx).head().1;
-        if self.grid.read(cx).model(cx).columns.get(col).is_none() {
+        let col = self.view.grid.read(cx).model(cx).head().1;
+        if self.view.grid.read(cx).model(cx).columns.get(col).is_none() {
             return;
         }
-        self.grid.update(cx, |g, cx| {
+        self.view.grid.update(cx, |g, cx| {
             g.request_sort(dir.map(|_| col), dir.unwrap_or(true), cx)
         });
     }
 
     pub(crate) fn clear_filter_sort(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.rules.clear();
-        self.sorts.clear();
-        self.grouped = false;
-        self.group_negate = false;
-        self.filter
+        self.view.rules.clear();
+        self.view.sorts.clear();
+        self.view.grouped = false;
+        self.view.group_negate = false;
+        self.view
+            .filter
             .update(cx, |s, cx| s.set_value(String::new(), window, cx));
-        self.order
+        self.view
+            .order
             .update(cx, |s, cx| s.set_value(String::new(), window, cx));
         self.page = 0;
         self.reload_committed(true, window, cx);
@@ -150,38 +152,40 @@ impl TableViewer {
 
     pub(crate) fn reproject(&mut self, cx: &mut Context<Self>) {
         if !self
+            .view
             .grid
-            .update(cx, |g, cx| g.set_hidden_columns(&self.hidden, cx))
+            .update(cx, |g, cx| g.set_hidden_columns(&self.view.hidden, cx))
         {
             return;
         }
-        self.form_for = None;
+        self.view.form_for = None;
         // The focused cell may keep its coordinates on new rows; the next `render` reloads the
         // cell editor through `sync_editor`
-        self.editor_cell = None;
+        self.view.editor_cell = None;
     }
 
     /// The menu and display change together only after the grid accepts the projection.
     pub(crate) fn publish_hidden(&mut self, next: HashSet<String>, cx: &mut Context<Self>) {
         if self
+            .view
             .grid
             .update(cx, |g, cx| g.set_hidden_columns(&next, cx))
         {
-            self.hidden = next;
-            self.form_for = None;
-            self.editor_cell = None;
+            self.view.hidden = next;
+            self.view.form_for = None;
+            self.view.editor_cell = None;
             cx.notify();
         }
     }
 
     pub(crate) fn insert_row(&mut self, cx: &mut Context<Self>) {
-        self.grid.update(cx, |g, cx| {
+        self.view.grid.update(cx, |g, cx| {
             let mut row = 0;
             g.update_model(cx, |m| row = m.insert_row());
             g.scroll_to_row(row, cx);
             g.settle(cx);
         });
-        self.form_for = None;
+        self.view.form_for = None;
     }
 
     pub(crate) fn toggle_column(
@@ -193,16 +197,17 @@ impl TableViewer {
         if self.busy {
             return;
         }
-        self.grid.update(cx, |g, cx| g.commit_edit(window, cx));
+        self.view.grid.update(cx, |g, cx| g.commit_edit(window, cx));
         self.flush_form(cx);
         let visible = self
+            .view
             .grid
             .read(cx)
             .model(cx)
             .all_columns()
-            .filter(|c| !self.hidden.contains(c.name.as_ref()))
+            .filter(|c| !self.view.hidden.contains(c.name.as_ref()))
             .count();
-        let mut next = self.hidden.clone();
+        let mut next = self.view.hidden.clone();
         if next.contains(&name) {
             next.remove(&name);
         } else if visible <= 1 {
@@ -210,8 +215,23 @@ impl TableViewer {
         } else {
             next.insert(name);
         }
-        if self.grid.read(cx).model(cx).has_changes() {
-            self.hidden_after_commit = Some(next);
+        if self.view.grid.read(cx).model(cx).has_changes() {
+            self.after_commit = match std::mem::take(&mut self.after_commit) {
+                // The close prompt owns the next commit; the projection goes first.
+                AfterCommit::Close => AfterCommit::Close,
+                AfterCommit::Hidden { reload, .. } => AfterCommit::Hidden {
+                    hidden: next,
+                    reload,
+                },
+                AfterCommit::Reload => AfterCommit::Hidden {
+                    hidden: next,
+                    reload: true,
+                },
+                AfterCommit::AddRow | AfterCommit::None => AfterCommit::Hidden {
+                    hidden: next,
+                    reload: false,
+                },
+            };
             self.apply_changes(false, window, cx);
         } else {
             self.publish_hidden(next, cx);
@@ -219,14 +239,14 @@ impl TableViewer {
     }
 
     pub(crate) fn columns_menu(&self, cx: &App) -> NativeMenu {
-        let model = self.grid.read(cx).model(cx);
+        let model = self.view.grid.read(cx).model(cx);
         let names: Vec<String> = if model.all_columns().next().is_none() {
             self.columns.iter().map(|c| c.name.clone()).collect()
         } else {
             model.all_columns().map(|c| c.name.to_string()).collect()
         };
         names.into_iter().fold(NativeMenu::new(), |menu, name| {
-            let shown = !self.hidden.contains(&name);
+            let shown = !self.view.hidden.contains(&name);
             menu.menu_with_check(
                 name.clone(),
                 shown,
@@ -236,18 +256,18 @@ impl TableViewer {
     }
 
     pub(crate) fn toggle_raw(&mut self, cx: &mut Context<Self>) {
-        self.form_for = None;
-        let raw = !self.grid.read(cx).raw_mode();
-        self.grid.update(cx, |g, cx| g.set_raw_mode(raw, cx));
+        self.view.form_for = None;
+        let raw = !self.view.grid.read(cx).raw_mode();
+        self.view.grid.update(cx, |g, cx| g.set_raw_mode(raw, cx));
         cx.notify();
     }
 
     pub(crate) fn show_sql(&self, window: &mut Window, cx: &mut Context<Self>) {
         let pending = self.commit_statements(cx).statements.join(";\n");
         let text = if pending.is_empty() {
-            self.status.to_string()
+            self.view.status.to_string()
         } else {
-            format!("{}\n\n{pending}", self.status)
+            format!("{}\n\n{pending}", self.view.status)
         };
         let editor = cx.new(|cx| {
             EditorState::new(window, cx)
@@ -281,16 +301,16 @@ impl TableViewer {
         if self.dialect != Some(Dialect::Sqlite) {
             return;
         }
-        let on = !self.grid.read(cx).show_rowid;
-        self.grid.update(cx, |g, cx| g.set_show_rowid(on, cx));
+        let on = !self.view.grid.read(cx).show_rowid;
+        self.view.grid.update(cx, |g, cx| g.set_show_rowid(on, cx));
         self.reload_committed(false, window, cx);
     }
 
     /// Menu items dispatch along the focused element. Stay on the grid when it
     /// already has focus; otherwise focus this viewer so the item is handled.
     pub(crate) fn focus_for_menu(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.focus_handle.contains_focused(window, cx) {
-            window.focus(&self.focus_handle, cx);
+        if !self.view.focus_handle.contains_focused(window, cx) {
+            window.focus(&self.view.focus_handle, cx);
         }
     }
 }

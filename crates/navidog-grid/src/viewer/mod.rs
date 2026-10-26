@@ -106,7 +106,7 @@ struct PickSort {
     name: SharedString,
 }
 
-struct Draft {
+pub(crate) struct Draft {
     field: String,
     op: filter::Op,
     value: Entity<InputState>,
@@ -147,88 +147,130 @@ pub(crate) fn init(cx: &mut App) {
     });
 }
 
-pub struct TableViewer {
-    focus_handle: FocusHandle,
-    object: ObjectRef,
-    grid: Entity<ResultGrid>,
-    filter: Entity<InputState>,
-    order: Entity<InputState>,
-    limit_input: Entity<InputState>,
-    show_filter: bool,
-    /// Visual builder. Text mode keeps editing `filter` and `order` directly.
-    builder: bool,
-    rules: Vec<Draft>,
-    sorts: Vec<Sort>,
-    grouped: bool,
-    group_negate: bool,
-    /// Cell editor under the grid. `None` hides it (F-DATA-011).
-    editor: Option<Kind>,
-    /// Dragged cell-editor height in pixels. `None` uses the default until the user drags.
-    cell_editor_px: Option<f32>,
-    editor_input: Entity<TextareaState>,
-    /// JSON tab. Separate from `editor_input` so it can use the JSON highlighter.
-    json_input: Entity<EditorState>,
-    /// Row and column the editor text was loaded from.
-    editor_cell: Option<(usize, usize)>,
-    /// Exact text loaded into the field editor, before a user applies it.
-    editor_baseline: String,
-    editor_note: SharedString,
-    /// Preview of a loaded image. Binary files are not written into the cell.
-    image: Option<Arc<Image>>,
-    find_input: Entity<InputState>,
-    replace_input: Entity<InputState>,
-    show_find: bool,
-    replace_mode: bool,
-    find_columns: bool,
-    find_case: bool,
-    find_highlight: bool,
-    find_incremental: bool,
-    limit: Option<u64>,
-    page: u64,
-    total: Option<u64>,
-    session: Option<SharedSession>,
-    session_generation: u64,
-    cancel: Option<CancelHandle>,
-    dialect: Option<Dialect>,
-    columns: Vec<ColumnInfo>,
-    foreign_keys: Vec<navidog_db::ForeignKey>,
-    hidden: HashSet<String>,
-    /// Published only after the commit and grid projection both accept the candidate set.
-    hidden_after_commit: Option<HashSet<String>>,
-    /// Insert a row once the commit that made room for it succeeds
-    add_after_commit: bool,
-    /// Load the page once the commit started by paging, sorting or filtering succeeds
-    reload_after_commit: bool,
+/// What the next load or commit should do once it finishes (A-07). Only one action is pending at a
+/// time: every setter runs while the viewer is idle, and the action is consumed by the load it
+/// belongs to.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AfterCommit {
+    #[default]
+    None,
+    /// The close prompt chose "commit and close": the tab goes once the commit succeeds.
+    Close,
+    /// Republish the hidden-column projection after the commit; `reload` also loads the page.
+    Hidden {
+        hidden: HashSet<String>,
+        reload: bool,
+    },
+    /// Load the page once the commit started by paging, sorting or filtering succeeds.
+    Reload,
+    /// Start a blank row once the commit that made room for it lands, or after the page loads.
+    AddRow,
+}
+
+/// Connection, paging, transaction and commit state of a table tab (A-07). `TableViewer` derefs
+/// here, so existing code keeps writing `viewer.page`; the render half is [`TableView`].
+pub struct TableSession {
+    pub(crate) object: ObjectRef,
+    pub(crate) limit: Option<u64>,
+    pub(crate) page: u64,
+    pub(crate) total: Option<u64>,
+    pub(crate) session: Option<SharedSession>,
+    pub(crate) session_generation: u64,
+    pub(crate) cancel: Option<CancelHandle>,
+    pub(crate) dialect: Option<Dialect>,
+    pub(crate) columns: Vec<ColumnInfo>,
+    pub(crate) foreign_keys: Vec<navidog_db::ForeignKey>,
     /// The user answered the close prompt; the tab may close now (pending edits are committed or dropped)
-    close_approved: bool,
-    /// Close the tab once the commit chosen in the close prompt succeeds
-    close_after_commit: bool,
-    /// Window this tab was last added to. A popped-out tab updates it in `on_added_to`.
-    home: Option<gpui_kit::AnyWindowHandle>,
-    form: bool,
-    form_inputs: Vec<Entity<InputState>>,
-    form_for: Option<usize>,
-    in_transaction: bool,
-    transaction_pending: bool,
-    busy: bool,
+    pub(crate) close_approved: bool,
+    /// What the next load or commit should do once it finishes.
+    pub(crate) after_commit: AfterCommit,
+    pub(crate) in_transaction: bool,
+    pub(crate) transaction_pending: bool,
+    pub(crate) busy: bool,
     /// Database notifications received during an operation collapse into one follow-up load.
-    external_refresh_pending: bool,
+    pub(crate) external_refresh_pending: bool,
     /// A blocked notification must still refresh catalog data on the next explicit reload.
-    metadata_stale: bool,
-    catalog_revision: u64,
+    pub(crate) metadata_stale: bool,
+    pub(crate) catalog_revision: u64,
+    pub(crate) task: Option<Task<()>>,
+}
+
+/// Render and interaction state of a table tab (A-07): toolbar inputs, the find bar, the cell
+/// editor, the form view and the status line. `TableViewer` derefs to [`TableSession`], so this
+/// state is reached as `viewer.view`.
+pub(crate) struct TableView {
+    pub(crate) focus_handle: FocusHandle,
+    pub(crate) grid: Entity<ResultGrid>,
+    pub(crate) filter: Entity<InputState>,
+    pub(crate) order: Entity<InputState>,
+    pub(crate) limit_input: Entity<InputState>,
+    pub(crate) show_filter: bool,
+    /// Visual builder. Text mode keeps editing `filter` and `order` directly.
+    pub(crate) builder: bool,
+    pub(crate) rules: Vec<Draft>,
+    pub(crate) sorts: Vec<Sort>,
+    pub(crate) grouped: bool,
+    pub(crate) group_negate: bool,
+    /// Cell editor under the grid. `None` hides it (F-DATA-011).
+    pub(crate) editor: Option<Kind>,
+    /// Dragged cell-editor height in pixels. `None` uses the default until the user drags.
+    pub(crate) cell_editor_px: Option<f32>,
+    pub(crate) editor_input: Entity<TextareaState>,
+    /// JSON tab. Separate from `editor_input` so it can use the JSON highlighter.
+    pub(crate) json_input: Entity<EditorState>,
+    /// Row and column the editor text was loaded from.
+    pub(crate) editor_cell: Option<(usize, usize)>,
+    /// Exact text loaded into the field editor, before a user applies it.
+    pub(crate) editor_baseline: String,
+    pub(crate) editor_note: SharedString,
+    /// Preview of a loaded image. Binary files are not written into the cell.
+    pub(crate) image: Option<Arc<Image>>,
+    pub(crate) find_input: Entity<InputState>,
+    pub(crate) replace_input: Entity<InputState>,
+    pub(crate) show_find: bool,
+    pub(crate) replace_mode: bool,
+    pub(crate) find_columns: bool,
+    pub(crate) find_case: bool,
+    pub(crate) find_highlight: bool,
+    pub(crate) find_incremental: bool,
+    pub(crate) hidden: HashSet<String>,
+    /// Window this tab was last added to. A popped-out tab updates it in `on_added_to`.
+    pub(crate) home: Option<gpui_kit::AnyWindowHandle>,
+    pub(crate) form: bool,
+    pub(crate) form_inputs: Vec<Entity<InputState>>,
+    pub(crate) form_for: Option<usize>,
     /// Refresh icon keeps turning until this instant, even if the load finished sooner.
-    spin_until: Option<Instant>,
+    pub(crate) spin_until: Option<Instant>,
     /// The most recently executed SQL or error
-    status: SharedString,
-    task: Option<Task<()>>,
-    _subscriptions: Vec<Subscription>,
+    pub(crate) status: SharedString,
+    pub(crate) _subscriptions: Vec<Subscription>,
+}
+
+/// One table tab: the session half in `state`, the render half in `view`.
+pub struct TableViewer {
+    state: TableSession,
+    view: TableView,
+}
+
+impl std::ops::Deref for TableViewer {
+    type Target = TableSession;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl std::ops::DerefMut for TableViewer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
+    }
 }
 
 impl EventEmitter<PanelEvent> for TableViewer {}
 
 impl Focusable for TableViewer {
     fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus_handle.clone()
+        self.view.focus_handle.clone()
     }
 }
 
@@ -259,7 +301,7 @@ impl BasePanel for TableViewer {
         let panel = PanelId::from(cx.entity_id());
         tabs::added(panel, group, cx);
         // Runs again when the tab moves to another window, so the prompt follows it
-        self.home = Some(window.window_handle());
+        self.view.home = Some(window.window_handle());
         let (viewer, home) = (cx.entity().downgrade(), window.window_handle());
         let guard: tabs::CloseGuard = std::rc::Rc::new(move |cx| {
             let viewer = viewer.clone();
@@ -278,7 +320,7 @@ impl BasePanel for TableViewer {
             tabs::MenuSurface::Table,
             tabs::TableMenu {
                 in_transaction: self.in_transaction,
-                filter_open: self.show_filter,
+                filter_open: self.view.show_filter,
             },
             cx,
         );
@@ -300,7 +342,7 @@ impl BasePanel for TableViewer {
             return;
         };
         // Closing the session rolls back an open transaction, which is what "discard" asked for
-        let dirty = self.grid.read(cx).model(cx).has_changes();
+        let dirty = self.view.grid.read(cx).model(cx).has_changes();
         if self.close_approved || (!dirty && !self.in_transaction) {
             close_session(session);
             return;
@@ -397,13 +439,13 @@ impl TableViewer {
     fn needs_close_prompt(&self, cx: &App) -> bool {
         !self.close_approved
             && self.session.is_some()
-            && (self.in_transaction || self.grid.read(cx).model(cx).has_changes())
+            && (self.in_transaction || self.view.grid.read(cx).model(cx).has_changes())
     }
 
     /// The tab close commands land here while there are uncommitted changes: commit them and
     /// close, drop them and close, or keep the tab. A failed commit keeps the tab and the changes.
     fn ask_to_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.grid.update(cx, |g, cx| g.commit_edit(window, cx));
+        self.view.grid.update(cx, |g, cx| g.commit_edit(window, cx));
         self.flush_form(cx);
         if !self.needs_close_prompt(cx) {
             self.close_now(window, cx);
@@ -431,7 +473,8 @@ impl TableViewer {
                     move |_, window, cx| {
                         window.close_dialog(cx);
                         discard.update(cx, |v, cx| {
-                            v.grid
+                            v.view
+                                .grid
                                 .update(cx, |g, cx| g.update_model(cx, |m| m.discard()));
                             v.close_now(window, cx);
                         });
@@ -445,19 +488,19 @@ impl TableViewer {
     }
 
     fn commit_and_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_after_commit = true;
+        self.after_commit = AfterCommit::Close;
         self.apply_changes(true, window, cx);
     }
 
     /// Sends a close-prompt commit that was skipped because a load still held `busy`.
     /// The commit completion path closes the tab itself and must not call this.
     fn resume_close(viewer: WeakEntity<Self>, cx: &mut App) {
-        let Ok(Some(home)) = viewer.update(cx, |this, _| this.home) else {
+        let Ok(Some(home)) = viewer.update(cx, |this, _| this.view.home) else {
             return;
         };
         let _ = home.update(cx, |_, window, cx| {
             let _ = viewer.update(cx, |this, cx| {
-                if this.close_after_commit && !this.busy {
+                if this.after_commit == AfterCommit::Close && !this.busy {
                     this.apply_changes(true, window, cx);
                 }
             });
@@ -522,7 +565,9 @@ impl TableViewer {
                     window,
                     |this, _, e: &InputEvent, _, cx| match e {
                         InputEvent::PressEnter { .. } => this.find_step(true, cx),
-                        InputEvent::Change if this.find_incremental => this.find_step(false, cx),
+                        InputEvent::Change if this.view.find_incremental => {
+                            this.find_step(false, cx)
+                        }
                         InputEvent::Change => this.sync_highlight(cx),
                         _ => {}
                     },
@@ -557,8 +602,8 @@ impl TableViewer {
                     window,
                     |this, _, e: &GridEvent, window, cx| match e {
                         GridEvent::SortChanged(sort) => {
-                            if this.builder {
-                                this.sorts = sort
+                            if this.view.builder {
+                                this.view.sorts = sort
                                     .as_ref()
                                     .map(|(col, asc)| Sort {
                                         field: col.to_string(),
@@ -579,7 +624,9 @@ impl TableViewer {
                                         )
                                     })
                                     .unwrap_or_default();
-                                this.order.update(cx, |s, cx| s.set_value(text, window, cx));
+                                this.view
+                                    .order
+                                    .update(cx, |s, cx| s.set_value(text, window, cx));
                             }
                             this.page = 0;
                             this.reload_committed(false, window, cx);
@@ -632,12 +679,9 @@ impl TableViewer {
                             this.external_refresh_pending = false;
                             this.transaction_pending = false;
                             this.set_busy(false, cx);
-                            this.add_after_commit = false;
-                            this.reload_after_commit = false;
-                            this.close_after_commit = false;
-                            this.hidden_after_commit = None;
+                            this.after_commit = AfterCommit::None;
                             this.set_in_transaction(false, cx);
-                            this.status = t!("viewer.closed").to_string().into();
+                            this.view.status = t!("viewer.closed").to_string().into();
                             cx.notify();
                         }
                         _ => {}
@@ -645,66 +689,67 @@ impl TableViewer {
                 ),
             ];
             let mut this = Self {
-                focus_handle: cx.focus_handle(),
-                object,
-                grid,
-                filter,
-                order,
-                limit_input,
-                find_input,
-                replace_input,
-                editor_input,
-                json_input,
-                show_filter: false,
-                builder: false,
-                rules: Vec::new(),
-                sorts: Vec::new(),
-                grouped: false,
-                group_negate: false,
-                editor: None,
-                cell_editor_px: None,
-                editor_cell: None,
-                editor_baseline: String::new(),
-                editor_note: SharedString::default(),
-                image: None,
-                show_find: false,
-                replace_mode: false,
-                find_columns: false,
-                find_case: false,
-                find_highlight: true,
-                find_incremental: false,
-                limit: {
-                    let s = Settings::global(cx);
-                    s.limit_records.then_some(s.records_per_page.max(1))
+                state: TableSession {
+                    object,
+                    session: None,
+                    session_generation: 0,
+                    cancel: None,
+                    dialect: None,
+                    columns: Vec::new(),
+                    foreign_keys: Vec::new(),
+                    limit: {
+                        let s = Settings::global(cx);
+                        s.limit_records.then_some(s.records_per_page.max(1))
+                    },
+                    page: 0,
+                    total: None,
+                    close_approved: false,
+                    after_commit: AfterCommit::None,
+                    in_transaction: false,
+                    transaction_pending: false,
+                    busy: false,
+                    external_refresh_pending: false,
+                    metadata_stale: false,
+                    catalog_revision: 0,
+                    task: None,
                 },
-                page: 0,
-                total: None,
-                session: None,
-                session_generation: 0,
-                cancel: None,
-                dialect: None,
-                columns: Vec::new(),
-                foreign_keys: Vec::new(),
-                hidden: HashSet::new(),
-                hidden_after_commit: None,
-                add_after_commit: false,
-                reload_after_commit: false,
-                close_approved: false,
-                close_after_commit: false,
-                home: None,
-                form: false,
-                form_inputs: Vec::new(),
-                form_for: None,
-                in_transaction: false,
-                transaction_pending: false,
-                busy: false,
-                external_refresh_pending: false,
-                metadata_stale: false,
-                catalog_revision: 0,
-                spin_until: None,
-                status: SharedString::default(),
-                task: None,
-                _subscriptions: subs,
+                view: TableView {
+                    focus_handle: cx.focus_handle(),
+                    grid,
+                    filter,
+                    order,
+                    limit_input,
+                    find_input,
+                    replace_input,
+                    editor_input,
+                    json_input,
+                    show_filter: false,
+                    builder: false,
+                    rules: Vec::new(),
+                    sorts: Vec::new(),
+                    grouped: false,
+                    group_negate: false,
+                    editor: None,
+                    cell_editor_px: None,
+                    editor_cell: None,
+                    editor_baseline: String::new(),
+                    editor_note: SharedString::default(),
+                    image: None,
+                    show_find: false,
+                    replace_mode: false,
+                    find_columns: false,
+                    find_case: false,
+                    find_highlight: true,
+                    find_incremental: false,
+                    hidden: HashSet::new(),
+                    home: None,
+                    form: false,
+                    form_inputs: Vec::new(),
+                    form_for: None,
+                    spin_until: None,
+                    status: SharedString::default(),
+                    _subscriptions: subs,
+                },
             };
             this.connect(cx);
             this

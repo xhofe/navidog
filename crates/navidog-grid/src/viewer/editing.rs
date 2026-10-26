@@ -58,7 +58,7 @@ impl TableViewer {
                     .into_iter()
                     .map(|r| r.into_iter().map(|v| v.map(Into::into)).collect())
                     .collect();
-                self.grid.update(cx, |g, cx| {
+                self.view.grid.update(cx, |g, cx| {
                     let mut drafts = None;
                     g.update_model(cx, |m| drafts = Some(m.take_blank_insert_drafts()));
                     g.set_data(columns, rows, cx);
@@ -67,18 +67,22 @@ impl TableViewer {
                     });
                 });
                 self.reproject(cx);
-                if std::mem::take(&mut self.add_after_commit) {
+                if self.after_commit == AfterCommit::AddRow {
+                    self.after_commit = AfterCommit::None;
                     self.insert_row(cx);
                 }
             }
             Ok(_) => {}
             Err(e) => {
-                self.add_after_commit = false;
-                self.status = e.into();
+                // A failed load drops the row that waited for it; other actions stay.
+                if self.after_commit == AfterCommit::AddRow {
+                    self.after_commit = AfterCommit::None;
+                }
+                self.view.status = e.into();
             }
         }
         cx.notify();
-        self.close_after_commit && !self.busy
+        self.after_commit == AfterCommit::Close && !self.busy
     }
 
     /// Reloads after the page, sort, filter or limit changed. Like leaving a modified row
@@ -90,8 +94,8 @@ impl TableViewer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.grid.update(cx, |g, cx| g.commit_edit(window, cx));
-        if !self.grid.read(cx).model(cx).has_changes() {
+        self.view.grid.update(cx, |g, cx| g.commit_edit(window, cx));
+        if !self.view.grid.read(cx).model(cx).has_changes() {
             self.reload(count, cx);
             return;
         }
@@ -99,13 +103,20 @@ impl TableViewer {
         if self.busy {
             return;
         }
-        self.reload_after_commit = true;
+        self.after_commit = match std::mem::take(&mut self.after_commit) {
+            // The projection asked for by a column change belongs to the page being left.
+            AfterCommit::Hidden { hidden, .. } => AfterCommit::Hidden {
+                hidden,
+                reload: true,
+            },
+            _ => AfterCommit::Reload,
+        };
         self.apply_changes(false, window, cx);
     }
 
     pub(crate) fn commit_statements(&self, cx: &App) -> Commit {
         let d = self.dialect.unwrap_or(Dialect::MySql);
-        let m = self.grid.read(cx).model(cx);
+        let m = self.view.grid.read(cx).model(cx);
         let statements = d.render_changes(
             &self.object.scope,
             &self.object.name,
@@ -127,29 +138,32 @@ impl TableViewer {
             return;
         };
         // Statements already in flight must not be sent again. A close-prompt commit keeps
-        // `close_after_commit`; the load that holds `busy` resumes it when it finishes.
+        // `after_commit`; the load that holds `busy` resumes it when it finishes.
         if self.busy {
             return;
         }
         // The cell being typed in belongs to this commit; once the grid locks it could not be written
-        self.grid.update(cx, |g, cx| g.commit_edit(window, cx));
+        self.view.grid.update(cx, |g, cx| g.commit_edit(window, cx));
         self.flush_form(cx);
         let commit = self.commit_statements(cx);
         if commit.statements.is_empty() && !end_transaction {
             // Nothing to send. A hide still has to reproject; an empty new row stays as it is,
             // unless the page is being left.
-            self.add_after_commit = false;
-            if std::mem::take(&mut self.reload_after_commit) {
-                self.hidden_after_commit = None;
-                self.reload(true, cx);
-            } else if let Some(next) = self.hidden_after_commit.take() {
-                self.publish_hidden(next, cx);
+            match std::mem::take(&mut self.after_commit) {
+                // Leaving the page drops the projection of the page being left.
+                AfterCommit::Reload | AfterCommit::Hidden { reload: true, .. } => {
+                    self.reload(true, cx)
+                }
+                AfterCommit::Hidden { hidden, .. } => self.publish_hidden(hidden, cx),
+                // The close prompt still closes once the load that holds `busy` finishes.
+                AfterCommit::Close => self.after_commit = AfterCommit::Close,
+                AfterCommit::AddRow | AfterCommit::None => {}
             }
             return;
         }
         let in_tx = self.in_transaction;
         let generation = self.session_generation;
-        self.status = commit.statements.join(";\n").into();
+        self.view.status = commit.statements.join(";\n").into();
         self.set_busy(true, cx);
         let job = run_on(session, move |rel| {
             Box::pin(apply(rel, commit, in_tx, end_transaction))
@@ -182,22 +196,27 @@ impl TableViewer {
                 if end_transaction {
                     self.set_in_transaction(false, cx);
                 }
+                let after = std::mem::take(&mut self.after_commit);
                 // Committed from the close prompt: nothing to reload, the tab goes
-                if std::mem::take(&mut self.close_after_commit) {
-                    self.grid.update(cx, |g, cx| {
+                if after == AfterCommit::Close {
+                    self.view.grid.update(cx, |g, cx| {
                         g.update_model(cx, |m| m.accept_committed_preserving_drafts());
                     });
                     self.close_now(window, cx);
                     return;
                 }
-                let hidden = self.hidden_after_commit.take();
+                let add = after == AfterCommit::AddRow;
+                let (hidden, leaving) = match after {
+                    AfterCommit::Hidden { hidden, reload } => (Some(hidden), reload),
+                    AfterCommit::Reload => (None, true),
+                    AfterCommit::Close | AfterCommit::AddRow | AfterCommit::None => (None, false),
+                };
                 let reproject = hidden.is_some();
-                let leaving = std::mem::take(&mut self.reload_after_commit);
                 let sync = !cx.has_global::<Settings>() || Settings::global(cx).sync_record;
                 // Accept the completed write before any projection or reload. A failed
                 // SELECT must not leave this batch available for a second Apply.
-                let unknown = self.grid.read(cx).model(cx).commit_needs_reload();
-                self.grid.update(cx, |g, cx| {
+                let unknown = self.view.grid.read(cx).model(cx).commit_needs_reload();
+                self.view.grid.update(cx, |g, cx| {
                     g.update_model(cx, |m| m.accept_committed_preserving_drafts());
                 });
                 if let Some(next) = hidden {
@@ -206,18 +225,15 @@ impl TableViewer {
                 if sync || reproject || leaving || unknown {
                     self.reload(true, cx);
                 } else {
-                    self.form_for = None;
-                    if std::mem::take(&mut self.add_after_commit) {
+                    self.view.form_for = None;
+                    if add {
                         self.insert_row(cx);
                     }
                 }
             }
             Err(e) => {
-                self.add_after_commit = false;
-                self.reload_after_commit = false;
-                self.close_after_commit = false;
-                self.hidden_after_commit = None;
-                self.status = e.clone().into();
+                self.after_commit = AfterCommit::None;
+                self.view.status = e.clone().into();
                 window.open_alert_dialog(cx, move |alert, _, _| {
                     alert
                         .icon(lucide("circle-x"))
@@ -262,7 +278,7 @@ impl TableViewer {
                 this.transaction_pending = false;
                 match result {
                     Ok(_) => after(this, cx),
-                    Err(e) => this.status = e.into(),
+                    Err(e) => this.view.status = e.into(),
                 }
                 cx.notify();
             });

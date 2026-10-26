@@ -67,7 +67,7 @@ fn wait(cx: &mut TestAppContext, done: impl Fn(&mut TestAppContext) -> bool) {
 }
 
 fn discard_grid_changes(viewer: &mut TableViewer, cx: &mut Context<TableViewer>) {
-    viewer.grid.update(cx, |grid, cx| {
+    viewer.view.grid.update(cx, |grid, cx| {
         grid.update_model(cx, |model| model.discard())
     });
 }
@@ -143,12 +143,12 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     });
     wait(cx, |cx| {
         cx.update(|cx| {
-            !viewer.read(cx).busy && viewer.read(cx).grid.read(cx).model(cx).row_count() == 2
+            !viewer.read(cx).busy && viewer.read(cx).view.grid.read(cx).model(cx).row_count() == 2
         })
     });
     cx.update_window(handle, |_, window, cx| {
         viewer.update(cx, |v, cx| {
-            v.grid.update(cx, |g, cx| {
+            v.view.grid.update(cx, |g, cx| {
                 g.update_model(cx, |m| {
                     m.set_value(0, 1, Some("z".into()));
                     m.select((1, 0), false);
@@ -167,7 +167,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
         viewer.update(cx, |v, cx| {
             v.toggle_column("id".into(), window, cx);
             v.toggle_column("id".into(), window, cx);
-            let model = v.grid.read(cx).model(cx);
+            let model = v.view.grid.read(cx).model(cx);
             assert_eq!(model.row_count(), 2);
             assert_eq!(model.value(0, 0), Some(&Some("1".into())));
             assert_eq!(model.value(0, 1), Some(&Some("z".into())));
@@ -176,15 +176,15 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
 
             v.insert_row(cx);
             v.toggle_column("id".into(), window, cx);
-            assert!(v.hidden.contains("id"));
-            let model = v.grid.read(cx).model(cx);
+            assert!(v.view.hidden.contains("id"));
+            let model = v.view.grid.read(cx).model(cx);
             assert_eq!(model.columns.len(), 1);
             assert_eq!(model.columns[0].name, "name");
             assert_eq!(model.row_count(), 3);
             assert_eq!(model.row_state(2), crate::model::RowState::Inserted);
             assert!(model.change_set().inserts.is_empty());
             v.toggle_column("id".into(), window, cx);
-            let model = v.grid.read(cx).model(cx);
+            let model = v.view.grid.read(cx).model(cx);
             assert_eq!(model.columns.len(), 2);
             assert_eq!(model.value(2, 0), None);
             assert_eq!(model.value(2, 1), None);
@@ -206,7 +206,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     );
     cx.update_window(handle, |_, window, cx| {
         viewer.update(cx, |v, cx| {
-            v.grid.update(cx, |g, cx| {
+            v.view.grid.update(cx, |g, cx| {
                 g.update_model(cx, |m| {
                     m.discard();
                     m.set_value(0, 1, Some("pending".into()));
@@ -214,24 +214,27 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
             });
             v.toggle_column("id".into(), window, cx);
             assert!(v.busy);
-            assert!(!v.hidden.contains("id"));
-            assert_eq!(v.grid.read(cx).model(cx).columns.len(), 2);
+            assert!(!v.view.hidden.contains("id"));
+            assert_eq!(v.view.grid.read(cx).model(cx).columns.len(), 2);
             assert_eq!(
-                v.grid.read(cx).model(cx).value(0, 1),
+                v.view.grid.read(cx).model(cx).value(0, 1),
                 Some(&Some("pending".into()))
             );
             // A second request during the same write must leave the candidate unchanged.
             v.toggle_column("name".into(), window, cx);
-            assert_eq!(v.hidden_after_commit.as_ref(), Some(&["id".into()].into()));
+            assert!(matches!(
+                &v.after_commit,
+                AfterCommit::Hidden { hidden, .. } if hidden == &HashSet::from(["id".to_string()])
+            ));
         });
     })
     .unwrap();
     wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
     cx.update(|cx| {
         let v = viewer.read(cx);
-        assert!(!v.hidden.contains("id"));
-        assert!(v.hidden_after_commit.is_none());
-        let model = v.grid.read(cx).model(cx);
+        assert!(!v.view.hidden.contains("id"));
+        assert_eq!(v.after_commit, AfterCommit::None);
+        let model = v.view.grid.read(cx).model(cx);
         assert_eq!(model.columns.len(), 2);
         assert_eq!(model.value(0, 1), Some(&Some("pending".into())));
         assert!(model.has_changes());
@@ -255,11 +258,11 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
         let v = viewer.read(cx);
         assert!(v.session.is_none());
         assert_eq!(
-            v.grid.read(cx).model(cx).value(0, 1),
+            v.view.grid.read(cx).model(cx).value(0, 1),
             Some(&Some("pending".into()))
         );
-        assert!(v.grid.read(cx).model(cx).has_changes());
-        assert!(!v.hidden.contains("id"));
+        assert!(v.view.grid.read(cx).model(cx).has_changes());
+        assert!(!v.view.hidden.contains("id"));
     });
     cx.update(|cx| {
         Sessions::global(cx).update(cx, |sessions, cx| {
@@ -276,12 +279,12 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     cx.update(|cx| {
         let v = viewer.read(cx);
         assert!(!Arc::ptr_eq(v.session.as_ref().unwrap(), &previous_session));
-        let model = v.grid.read(cx).model(cx);
+        let model = v.view.grid.read(cx).model(cx);
         assert_eq!(model.columns.len(), 2);
         assert_eq!(model.row_count(), 2);
         assert_eq!(model.value(0, 1), Some(&Some("pending".into())));
         assert!(model.has_changes());
-        assert!(!v.hidden.contains("id"));
+        assert!(!v.view.hidden.contains("id"));
     });
     assert_eq!(
         sql(&file, "SELECT name FROM t WHERE id = 1"),
@@ -298,7 +301,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
         sql(&file, "SELECT name FROM t WHERE id = 1"),
         [vec![Some("pending".into())]]
     );
-    cx.update(|cx| assert!(!viewer.read(cx).grid.read(cx).model(cx).has_changes()));
+    cx.update(|cx| assert!(!viewer.read(cx).view.grid.read(cx).model(cx).has_changes()));
 
     // Mixed writes must not consume independent blank drafts, whether synchronization is
     // disabled, succeeds, or fails after the database has already committed the batch.
@@ -322,11 +325,11 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
         cx.update_window(handle, |_, window, cx| {
             viewer.update(cx, |v, cx| {
                 if fail_sync {
-                    v.filter.update(cx, |input, cx| {
+                    v.view.filter.update(cx, |input, cx| {
                         input.set_value("missing_sync_column = 1", window, cx);
                     });
                 }
-                v.grid.update(cx, |g, cx| {
+                v.view.grid.update(cx, |g, cx| {
                     g.update_model(cx, |m| {
                         m.set_value(0, 1, Some("updated".into()));
                         m.select((1, 0), false);
@@ -346,7 +349,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
         wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
         cx.update(|cx| {
             let v = viewer.read(cx);
-            let model = v.grid.read(cx).model(cx);
+            let model = v.view.grid.read(cx).model(cx);
             assert_eq!(model.row_count(), 4, "sync={sync}, fail_sync={fail_sync}");
             assert_eq!(model.value(0, 1), Some(&Some("updated".into())));
             assert_eq!(model.value(1, 1), Some(&Some("inserted".into())));
@@ -361,7 +364,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
             assert!(changes.deletes.is_empty());
             assert!(changes.inserts.is_empty());
             if fail_sync {
-                assert!(v.status.contains("missing_sync_column"));
+                assert!(v.view.status.contains("missing_sync_column"));
             }
         });
         assert_eq!(
@@ -389,7 +392,8 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
         for _ in 0..2 {
             cx.update_window(handle, |_, window, cx| {
                 viewer.update(cx, |v, cx| {
-                    v.filter
+                    v.view
+                        .filter
                         .update(cx, |input, cx| input.set_value("", window, cx));
                     v.reload(true, cx);
                 });
@@ -397,7 +401,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
             .unwrap();
             wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
             cx.update(|cx| {
-                let model = viewer.read(cx).grid.read(cx).model(cx);
+                let model = viewer.read(cx).view.grid.read(cx).model(cx);
                 assert_eq!(model.row_count(), 4, "sync must not duplicate blank drafts");
                 assert!(model.change_set().inserts.is_empty());
             });
@@ -408,7 +412,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
         })
         .unwrap();
         cx.update(|cx| {
-            let model = viewer.read(cx).grid.read(cx).model(cx);
+            let model = viewer.read(cx).view.grid.read(cx).model(cx);
             assert_eq!(model.row_count(), 2);
             assert!(!model.has_changes());
         });
@@ -418,7 +422,8 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     // mutably borrowed here, so the constructor must use its captured session generation.
     cx.update_window(handle, |_, window, cx| {
         viewer.update(cx, |v, cx| {
-            v.grid
+            v.view
+                .grid
                 .update(cx, |g, cx| g.update_model(cx, |m| m.select((0, 0), false)));
             v.foreign_keys = vec![navidog_db::ForeignKey {
                 column: "id".into(),
@@ -437,7 +442,11 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     // load/commit/connect results, must not mutate or unlock the replacement session's view.
     let (old_generation, old_session) = cx.update(|cx| {
         viewer.update(cx, |v, cx| {
-            v.run_simple("SELECT 1", |v, _| v.status = "stale statement".into(), cx);
+            v.run_simple(
+                "SELECT 1",
+                |v, _| v.view.status = "stale statement".into(),
+                cx,
+            );
             (v.session_generation, v.session.clone().unwrap())
         })
     });
@@ -455,14 +464,14 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     });
     cx.update_window(handle, |_, window, cx| {
         viewer.update(cx, |v, cx| {
-            assert_ne!(v.status.as_ref(), "stale statement");
-            v.grid.update(cx, |g, cx| {
+            assert_ne!(v.view.status.as_ref(), "stale statement");
+            v.view.grid.update(cx, |g, cx| {
                 g.update_model(cx, |m| {
                     m.set_value(0, 1, Some("newer pending".into()));
                     m.insert_row();
                 });
             });
-            v.status = "replacement operation".into();
+            v.view.status = "replacement operation".into();
             v.set_busy(true, cx);
             let replacement = v.session.clone().unwrap();
             assert!(!v.apply_page(old_generation, Ok(Vec::new()), cx));
@@ -477,10 +486,10 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
                 cx,
             ));
             assert!(v.busy, "old callbacks must not unlock a new operation");
-            assert!(v.grid.read(cx).model(cx).locked);
-            assert_eq!(v.status.as_ref(), "replacement operation");
+            assert!(v.view.grid.read(cx).model(cx).locked);
+            assert_eq!(v.view.status.as_ref(), "replacement operation");
             assert!(Arc::ptr_eq(v.session.as_ref().unwrap(), &replacement));
-            let model = v.grid.read(cx).model(cx);
+            let model = v.view.grid.read(cx).model(cx);
             assert_eq!(model.row_count(), 3);
             assert_eq!(model.value(0, 1), Some(&Some("newer pending".into())));
             assert!(model.has_changes());
@@ -512,7 +521,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     cx.update(|cx| {
         let v = viewer.read(cx);
         assert!(!Arc::ptr_eq(v.session.as_ref().unwrap(), &replaced_session));
-        let model = v.grid.read(cx).model(cx);
+        let model = v.view.grid.read(cx).model(cx);
         assert!(!model.locked);
         assert_eq!(model.row_count(), 3);
         assert_eq!(model.value(0, 1), Some(&Some("newer pending".into())));
@@ -534,9 +543,11 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
         viewer.update(cx, |v, cx| {
             discard_grid_changes(v, cx);
             v.metadata_stale = true;
-            v.filter
+            v.view
+                .filter
                 .update(cx, |input, cx| input.set_value("", window, cx));
-            v.order
+            v.view
+                .order
                 .update(cx, |input, cx| input.set_value("", window, cx));
             v.page = 0;
             v.reload(true, cx);
@@ -548,7 +559,8 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     // Start with a clean page. Notifications for other connections must not reload it.
     cx.update(|cx| {
         viewer.update(cx, |v, cx| {
-            v.grid
+            v.view
+                .grid
                 .update(cx, |g, cx| g.update_model(cx, |m| m.discard()));
         })
     });
@@ -558,7 +570,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
         let v = viewer.read(cx);
         assert!(!v.busy);
         assert_eq!(
-            v.grid.read(cx).model(cx).value(0, 1),
+            v.view.grid.read(cx).model(cx).value(0, 1),
             Some(&Some("z".into()))
         );
     });
@@ -568,7 +580,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
         let v = viewer.read(cx);
         assert_eq!(v.total, Some(2));
         assert_eq!(
-            v.grid.read(cx).model(cx).value(0, 1),
+            v.view.grid.read(cx).model(cx).value(0, 1),
             Some(&Some("elsewhere".into()))
         );
     });
@@ -579,9 +591,11 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     let held = session.clone().try_lock_owned().unwrap();
     cx.update_window(handle, |_, window, cx| {
         viewer.update(cx, |v, cx| {
-            v.filter
+            v.view
+                .filter
                 .update(cx, |input, cx| input.set_value("id >= 1", window, cx));
-            v.order
+            v.view
+                .order
                 .update(cx, |input, cx| input.set_value("id DESC", window, cx));
             v.limit = Some(1);
             v.page = 1;
@@ -616,10 +630,10 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
         assert_eq!(v.total, Some(3));
         assert_eq!(v.limit, Some(1));
         assert_eq!(v.page, 1);
-        assert_eq!(v.filter.read(cx).value().as_ref(), "id >= 1");
-        assert_eq!(v.order.read(cx).value().as_ref(), "id DESC");
+        assert_eq!(v.view.filter.read(cx).value().as_ref(), "id >= 1");
+        assert_eq!(v.view.order.read(cx).value().as_ref(), "id DESC");
         assert_eq!(
-            v.grid.read(cx).model(cx).value(0, 1),
+            v.view.grid.read(cx).model(cx).value(0, 1),
             Some(&Some("queued".into()))
         );
         assert_eq!(v.foreign_keys.len(), 1);
@@ -630,8 +644,10 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     // settle that editor, send a write, or replace the loaded page.
     cx.update_window(handle, |_, window, cx| {
         viewer.update(cx, |v, cx| {
-            v.grid.update(cx, |g, cx| g.start_edit((0, 1), window, cx));
-            assert!(v.grid.read(cx).is_editing(cx));
+            v.view
+                .grid
+                .update(cx, |g, cx| g.start_edit((0, 1), window, cx));
+            assert!(v.view.grid.read(cx).is_editing(cx));
         })
     })
     .unwrap();
@@ -640,13 +656,16 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     cx.update_window(handle, |_, window, cx| {
         viewer.update(cx, |v, cx| {
             assert!(!v.busy);
-            assert!(v.grid.read(cx).is_editing(cx));
+            assert!(v.view.grid.read(cx).is_editing(cx));
             assert_eq!(
-                v.grid.read(cx).model(cx).value(0, 1),
+                v.view.grid.read(cx).model(cx).value(0, 1),
                 Some(&Some("queued".into()))
             );
-            assert_eq!(v.status, t!("viewer.external_refresh_pending").to_string());
-            v.grid.update(cx, |g, cx| g.commit_edit(window, cx));
+            assert_eq!(
+                v.view.status,
+                t!("viewer.external_refresh_pending").to_string()
+            );
+            v.view.grid.update(cx, |g, cx| g.commit_edit(window, cx));
             discard_grid_changes(v, cx);
         })
     })
@@ -656,7 +675,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     for blank in [false, true] {
         cx.update(|cx| {
             viewer.update(cx, |v, cx| {
-                v.grid.update(cx, |g, cx| {
+                v.view.grid.update(cx, |g, cx| {
                     g.update_model(cx, |m| {
                         if blank {
                             m.insert_row();
@@ -671,13 +690,21 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
         cx.update(|cx| {
             viewer.update(cx, |v, cx| {
                 assert!(!v.busy);
-                assert!(v.grid.read(cx).model(cx).has_changes());
+                assert!(v.view.grid.read(cx).model(cx).has_changes());
                 if blank {
-                    assert_eq!(v.grid.read(cx).model(cx).row_count(), 2);
-                    assert!(v.grid.read(cx).model(cx).change_set().inserts.is_empty());
+                    assert_eq!(v.view.grid.read(cx).model(cx).row_count(), 2);
+                    assert!(
+                        v.view
+                            .grid
+                            .read(cx)
+                            .model(cx)
+                            .change_set()
+                            .inserts
+                            .is_empty()
+                    );
                 } else {
                     assert_eq!(
-                        v.grid.read(cx).model(cx).value(0, 1),
+                        v.view.grid.read(cx).model(cx).value(0, 1),
                         Some(&Some("local".into()))
                     );
                 }
@@ -693,9 +720,9 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     // Inputs not yet written back to the model need the same protection as model changes.
     cx.update_window(handle, |_, window, cx| {
         viewer.update(cx, |v, cx| {
-            v.form = true;
+            v.view.form = true;
             v.sync_form(window, cx);
-            v.form_inputs[1].update(cx, |input, cx| input.set_value("form draft", window, cx));
+            v.view.form_inputs[1].update(cx, |input, cx| input.set_value("form draft", window, cx));
         })
     })
     .unwrap();
@@ -703,13 +730,17 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     cx.update_window(handle, |_, window, cx| {
         viewer.update(cx, |v, cx| {
             assert!(!v.busy);
-            assert_eq!(v.form_inputs[1].read(cx).value().as_ref(), "form draft");
-            assert!(!v.grid.read(cx).model(cx).has_changes());
-            v.form = false;
-            v.form_for = None;
-            v.form_inputs.clear();
+            assert_eq!(
+                v.view.form_inputs[1].read(cx).value().as_ref(),
+                "form draft"
+            );
+            assert!(!v.view.grid.read(cx).model(cx).has_changes());
+            v.view.form = false;
+            v.view.form_for = None;
+            v.view.form_inputs.clear();
             v.open_editor(Kind::Text, window, cx);
-            v.editor_input
+            v.view
+                .editor_input
                 .update(cx, |input, cx| input.set_value("field draft", window, cx));
         })
     })
@@ -718,9 +749,9 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     cx.update(|cx| {
         viewer.update(cx, |v, cx| {
             assert!(!v.busy);
-            assert_eq!(v.editor_input.read(cx).value().as_ref(), "field draft");
-            assert!(!v.grid.read(cx).model(cx).has_changes());
-            v.editor = None;
+            assert_eq!(v.view.editor_input.read(cx).value().as_ref(), "field draft");
+            assert!(!v.view.grid.read(cx).model(cx).has_changes());
+            v.view.editor = None;
         })
     });
 
@@ -730,7 +761,8 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     cx.update_window(handle, |_, window, cx| {
         viewer.update(cx, |v, cx| {
             v.open_editor(Kind::Text, window, cx);
-            v.editor_input
+            v.view
+                .editor_input
                 .update(cx, |input, cx| input.set_value("unapplied", window, cx));
         })
     })
@@ -740,7 +772,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
         viewer.update(cx, |v, cx| {
             assert!(v.metadata_stale);
             assert_eq!(v.columns.len(), 3);
-            v.editor = None;
+            v.view.editor = None;
             v.reload(true, cx);
         })
     });
@@ -757,7 +789,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     // draft as accepted while the locked grid would reject the write.
     cx.update_window(handle, |_, window, cx| {
         viewer.update(cx, |v, cx| {
-            v.grid.update(cx, |grid, cx| {
+            v.view.grid.update(cx, |grid, cx| {
                 grid.update_model(cx, |model| model.select((0, 1), false))
             });
             v.open_editor(Kind::Text, window, cx);
@@ -769,13 +801,13 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     cx.update_window(handle, |_, window, cx| {
         viewer.update(cx, |v, cx| {
             assert!(v.busy);
-            assert_eq!(v.editor_baseline, "latest");
-            v.editor_input.update(cx, |input, cx| {
+            assert_eq!(v.view.editor_baseline, "latest");
+            v.view.editor_input.update(cx, |input, cx| {
                 input.set_value("during refresh", window, cx)
             });
             v.apply_editor(window, cx);
-            assert_eq!(v.editor_baseline, "latest");
-            assert!(!v.grid.read(cx).model(cx).has_changes());
+            assert_eq!(v.view.editor_baseline, "latest");
+            assert!(!v.view.grid.read(cx).model(cx).has_changes());
         });
         window.render_frame(cx);
         assert_eq!(window.find("editor-update").disabled(), Some(true));
@@ -786,14 +818,17 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
     cx.update(|cx| {
         viewer.update(cx, |v, cx| {
-            assert_eq!(v.editor_input.read(cx).value().as_ref(), "during refresh");
-            assert_eq!(v.editor_baseline, "latest");
             assert_eq!(
-                v.grid.read(cx).model(cx).value(0, 1),
+                v.view.editor_input.read(cx).value().as_ref(),
+                "during refresh"
+            );
+            assert_eq!(v.view.editor_baseline, "latest");
+            assert_eq!(
+                v.view.grid.read(cx).model(cx).value(0, 1),
                 Some(&Some("latest".into()))
             );
-            assert!(!v.grid.read(cx).model(cx).has_changes());
-            v.editor = None;
+            assert!(!v.view.grid.read(cx).model(cx).has_changes());
+            v.view.editor = None;
         })
     });
 
@@ -809,7 +844,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
     cx.update_window(handle, |_, window, cx| {
         viewer.update(cx, |v, cx| {
-            v.form = true;
+            v.view.form = true;
             v.sync_form(window, cx);
         })
     })
@@ -819,13 +854,13 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     cx.update_window(handle, |_, window, cx| {
         viewer.update(cx, |v, cx| {
             assert!(v.busy);
-            let row = v.form_for;
-            v.form_inputs[1].update(cx, |input, cx| {
+            let row = v.view.form_for;
+            v.view.form_inputs[1].update(cx, |input, cx| {
                 input.set_value("form during refresh", window, cx)
             });
             v.form_step(1, cx);
-            assert_eq!(v.form_for, row);
-            assert!(!v.grid.read(cx).model(cx).has_changes());
+            assert_eq!(v.view.form_for, row);
+            assert!(!v.view.grid.read(cx).model(cx).has_changes());
         });
         window.render_frame(cx);
         assert_eq!(window.find("form-next").disabled(), Some(true));
@@ -839,13 +874,13 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     cx.update(|cx| {
         viewer.update(cx, |v, cx| {
             assert_eq!(
-                v.form_inputs[1].read(cx).value().as_ref(),
+                v.view.form_inputs[1].read(cx).value().as_ref(),
                 "form during refresh"
             );
-            assert!(!v.grid.read(cx).model(cx).has_changes());
-            v.form = false;
-            v.form_for = None;
-            v.form_inputs.clear();
+            assert!(!v.view.grid.read(cx).model(cx).has_changes());
+            v.view.form = false;
+            v.view.form_for = None;
+            v.view.form_inputs.clear();
             v.limit = Some(1);
             v.page = 1;
             v.reload(true, cx);
@@ -896,7 +931,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
     wait(cx, |cx| cx.update(|cx| !viewer.read(cx).busy));
     cx.update(|cx| {
         assert_eq!(
-            viewer.read(cx).grid.read(cx).model(cx).value(0, 1),
+            viewer.read(cx).view.grid.read(cx).model(cx).value(0, 1),
             Some(&Some("latest".into()))
         )
     });
@@ -933,11 +968,11 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
             &retired_session
         ));
         assert!(!viewer.external_refresh_pending);
-        assert!(!viewer.grid.read(cx).model(cx).locked);
+        assert!(!viewer.view.grid.read(cx).model(cx).locked);
         assert_eq!(
-            viewer.grid.read(cx).model(cx).value(0, 1),
+            viewer.view.grid.read(cx).model(cx).value(0, 1),
             Some(&Some("after reopen".into()))
         );
-        assert!(viewer.status.starts_with("SELECT"));
+        assert!(viewer.view.status.starts_with("SELECT"));
     });
 }

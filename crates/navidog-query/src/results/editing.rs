@@ -49,7 +49,10 @@ impl ResultView {
 
     /// Typing in the cell editor edits the cell, when the result is editable.
     pub(crate) fn write_cell(&mut self, text: String, cx: &mut Context<Self>) {
-        let (Some((r, c)), true) = (self.cell_at, self.edit.is_some() && !self.busy) else {
+        let (Some((r, c)), true) = (
+            self.cell_at,
+            self.session.edit.is_some() && !self.session.busy,
+        ) else {
             return;
         };
         let current = self.grid.read(cx).model(cx).value(r, c).cloned().flatten();
@@ -63,7 +66,7 @@ impl ResultView {
 
     #[cfg(test)]
     pub(crate) fn editable(&self) -> bool {
-        self.edit.is_some()
+        self.session.edit.is_some()
     }
 
     #[cfg(test)]
@@ -93,17 +96,17 @@ impl ResultView {
 
     #[cfg(test)]
     pub(crate) fn status_text(&self) -> &str {
-        &self.status
+        &self.session.status
     }
 
     #[cfg(test)]
     pub(crate) fn status(&self) -> &str {
-        &self.status
+        &self.session.status
     }
 
     #[cfg(test)]
     pub(crate) fn is_busy(&self) -> bool {
-        self.busy
+        self.session.busy
     }
 
     #[cfg(test)]
@@ -121,13 +124,13 @@ impl ResultView {
     /// Looks up the primary key of the result's table; with all of it in the result, the result
     /// becomes editable.
     pub(crate) fn find_table(&mut self, cx: &mut Context<Self>) {
-        let Some(dialect) = self.info.dialect else {
+        let Some(dialect) = self.session.info.dialect else {
             return;
         };
-        let Some((schema, table)) = single_table(&self.sql, &self.columns) else {
+        let Some((schema, table)) = single_table(&self.session.sql, &self.session.columns) else {
             return;
         };
-        let Some(scope) = self.info.scope_for(&schema) else {
+        let Some(scope) = self.session.info.scope_for(&schema) else {
             return;
         };
         let generation = Sessions::global(cx).read(cx).generation(&scope.connection);
@@ -151,6 +154,7 @@ impl ResultView {
                     .map(|c| c.name.as_str())
                     .collect();
                 let names: BTreeMap<String, String> = this
+                    .session
                     .columns
                     .iter()
                     .filter_map(|c| Some((c.name.clone(), c.origin.as_ref()?.column.clone())))
@@ -160,7 +164,7 @@ impl ResultView {
                 if !all_pk_present {
                     return;
                 }
-                this.edit = Some(Editing {
+                this.session.edit = Some(Editing {
                     dialect,
                     scope: scope.clone(),
                     table: table.clone(),
@@ -178,10 +182,11 @@ impl ResultView {
                     );
                     g.update_model(cx, |model| {
                         for c in &mut model.columns {
-                            c.primary_key = this.edit.as_ref().is_some_and(|e| e.is_pk(&c.name));
+                            c.primary_key =
+                                this.session.edit.as_ref().is_some_and(|e| e.is_pk(&c.name));
                         }
                     });
-                    g.set_sort(this.accepted_sort.clone(), cx);
+                    g.set_sort(this.session.accepted_sort.clone(), cx);
                     g.set_locked(false, cx);
                 });
                 cx.notify();
@@ -201,13 +206,14 @@ impl ResultView {
             GridEvent::SortChanged(sort) => {
                 self.grid.update(cx, |g, cx| g.commit_edit(window, cx));
                 if self.grid.read(cx).model(cx).has_changes() {
-                    self.grid
-                        .update(cx, |g, cx| g.set_sort(self.accepted_sort.clone(), cx));
-                    self.status = t!("query.sort_blocked").to_string().into();
+                    self.grid.update(cx, |g, cx| {
+                        g.set_sort(self.session.accepted_sort.clone(), cx)
+                    });
+                    self.session.status = t!("query.sort_blocked").to_string().into();
                     cx.notify();
                     return;
                 }
-                self.accepted_sort = sort.clone();
+                self.session.accepted_sort = sort.clone();
                 if let Some((name, asc)) = sort
                     && let Some(col) = self
                         .grid
@@ -229,10 +235,12 @@ impl ResultView {
     }
 
     pub(crate) fn commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.session.busy {
             return;
         }
-        let Some(edit) = &self.edit else { return };
+        let Some(edit) = &self.session.edit else {
+            return;
+        };
         self.grid.update(cx, |g, cx| g.commit_edit(window, cx));
         let model = self.grid.read(cx).model(cx);
         if !model.has_changes() {
@@ -245,11 +253,11 @@ impl ResultView {
         if statements.is_empty() {
             return;
         }
-        self.status = statements.join(";\n").into();
+        self.session.status = statements.join(";\n").into();
         let commit = Commit::new(edit.dialect, statements);
         let generation = Sessions::global(cx)
             .read(cx)
-            .generation(&self.info.connection_id);
+            .generation(&self.session.info.connection_id);
         let database = edit.scope.database.clone();
         let dialect = edit.dialect;
         // A fresh operation session cannot inherit a metadata caller's transaction or locks.
@@ -291,7 +299,7 @@ impl ResultView {
                     }
                     Err(e) => {
                         let e = error_message(&e);
-                        this.status = e.clone().into();
+                        this.session.status = e.clone().into();
                         window.open_alert_dialog(cx, move |alert, _, _| {
                             alert
                                 .icon(lucide("circle-x"))
@@ -311,11 +319,11 @@ impl ResultView {
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.grid.update(cx, |g, cx| g.commit_edit(window, cx));
         if self.grid.read(cx).model(cx).has_changes() {
-            self.status = t!("query.pending_result_changes").to_string().into();
+            self.session.status = t!("query.pending_result_changes").to_string().into();
             cx.notify();
             return;
         }
-        if self.busy {
+        if self.session.busy {
             return;
         }
         self.reload(cx);
@@ -324,35 +332,36 @@ impl ResultView {
     /// Reloads accepted rows after a successful commit, or the internal explicit-refresh guard.
     /// Reuses the editor session only while it still matches the result's original source.
     fn reload(&mut self, cx: &mut Context<Self>) {
-        let session = self.editor.upgrade().and_then(|e| {
+        let session = self.session.editor.upgrade().and_then(|e| {
             e.read(cx)
                 .live
                 .as_ref()
-                .filter(|live| live.matches_source(&self.info))
+                .filter(|live| live.matches_source(&self.session.info))
                 .map(|live| live.session.clone())
         });
         let open = if session.is_none() {
-            if !self.info.context_known {
-                self.status = t!("query.source_context_unknown").to_string().into();
+            if !self.session.info.context_known {
+                self.session.status = t!("query.source_context_unknown").to_string().into();
                 cx.notify();
                 return;
             }
-            Sessions::global(cx)
-                .read(cx)
-                .new_session(&self.info.connection_id, self.info.database.as_deref())
+            Sessions::global(cx).read(cx).new_session(
+                &self.session.info.connection_id,
+                self.session.info.database.as_deref(),
+            )
         } else {
             None
         };
         if session.is_none() && open.is_none() {
-            self.status = t!("query.no_connection").to_string().into();
+            self.session.status = t!("query.no_connection").to_string().into();
             cx.notify();
             return;
         }
         let generation = Sessions::global(cx)
             .read(cx)
-            .generation(&self.info.connection_id);
-        let sql = self.sql.clone();
-        let info = self.info.clone();
+            .generation(&self.session.info.connection_id);
+        let sql = self.session.sql.clone();
+        let info = self.session.info.clone();
         self.set_busy(true, cx);
         cx.spawn(async move |this, cx| {
             let result = async {
@@ -413,22 +422,22 @@ impl ResultView {
                     Ok(sets) => {
                         if let Some(set) = sets.into_iter().find(|s| !s.columns.is_empty()) {
                             let (mut columns, rows) = grid_data(&set);
-                            if let Some(edit) = &this.edit {
+                            if let Some(edit) = &this.session.edit {
                                 for column in &mut columns {
                                     column.primary_key = edit.is_pk(&column.name);
                                 }
                             }
-                            this.columns = set.columns;
+                            this.session.columns = set.columns;
                             // Preserve a valid accepted sort across synchronization. Otherwise
                             // the SQL's original order would disagree with the cached arrow.
-                            this.accepted_sort = this.accepted_sort.take().filter(|(name, _)| {
+                            this.session.accepted_sort = this.session.accepted_sort.take().filter(|(name, _)| {
                                 columns.iter().any(|column| column.name == *name)
                             });
                             this.grid.update(cx, |g, cx| {
                                 let mut drafts = None;
                                 g.update_model(cx, |model| drafts = Some(model.take_blank_insert_drafts()));
                                 g.set_data(columns, rows, cx);
-                                if let Some((name, asc)) = &this.accepted_sort
+                                if let Some((name, asc)) = &this.session.accepted_sort
                                     && let Some(col) = g.model(cx).columns.iter().position(|c| c.name == *name)
                                 {
                                     g.update_model(cx, |model| model.sort_rows(col, *asc));
@@ -436,11 +445,11 @@ impl ResultView {
                                 if let Some(drafts) = drafts {
                                     g.update_model(cx, |model| model.restore_blank_insert_drafts(drafts));
                                 }
-                                g.set_sort(this.accepted_sort.clone(), cx);
+                                g.set_sort(this.session.accepted_sort.clone(), cx);
                             });
                         }
                     }
-                    Err(error) => this.status = error_message(&error).into(),
+                    Err(error) => this.session.status = error_message(&error).into(),
                 }
                 cx.notify();
             });
@@ -452,14 +461,14 @@ impl ResultView {
     fn accepts_generation(&mut self, generation: u64, cx: &mut Context<Self>) -> bool {
         if Sessions::global(cx)
             .read(cx)
-            .generation(&self.info.connection_id)
+            .generation(&self.session.info.connection_id)
             == generation
         {
             return true;
         }
         // This view serializes its work through `busy`; reopening does not start a newer load.
         self.set_busy(false, cx);
-        self.status = t!("query.connection_changed_during_operation")
+        self.session.status = t!("query.connection_changed_during_operation")
             .to_string()
             .into();
         cx.notify();
@@ -467,8 +476,8 @@ impl ResultView {
     }
 
     fn set_busy(&mut self, busy: bool, cx: &mut Context<Self>) {
-        self.busy = busy;
-        let lock = busy || self.edit.is_none();
+        self.session.busy = busy;
+        let lock = busy || self.session.edit.is_none();
         self.grid.update(cx, |g, cx| g.set_locked(lock, cx));
     }
 }

@@ -969,7 +969,7 @@ fn accepted_results_keep_their_rows_and_original_source(cx: &mut TestAppContext)
     );
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |v, cx| {
-            v.sql = "SELECT * FROM missing_refresh_target".into();
+            v.session.sql = "SELECT * FROM missing_refresh_target".into();
             v.grid.update(cx, |g, cx| {
                 g.update_model(cx, |m| {
                     m.set_value(0, 1, Some("accepted once".into()));
@@ -1021,7 +1021,7 @@ fn accepted_results_keep_their_rows_and_original_source(cx: &mut TestAppContext)
         cx.update(|cx| Settings::update(cx, |settings| settings.sync_record = sync));
         cx.update_window(handle, |_, window, cx| {
             view.update(cx, |v, cx| {
-                v.sql = "SELECT id, name FROM t ORDER BY id".into();
+                v.session.sql = "SELECT id, name FROM t ORDER BY id".into();
                 v.grid.update(cx, |grid, cx| {
                     grid.update_model(cx, |model| model.set_value(0, 1, Some(value.into())));
                 });
@@ -1112,7 +1112,7 @@ fn accepted_results_keep_their_rows_and_original_source(cx: &mut TestAppContext)
     // A changed result shape invalidates the accepted sort rather than retaining a stale arrow.
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |v, cx| {
-            v.sql = "SELECT id FROM t ORDER BY id".into();
+            v.session.sql = "SELECT id FROM t ORDER BY id".into();
             v.refresh_now(window, cx);
         });
     })

@@ -99,7 +99,7 @@ impl ResultView {
 
     pub(crate) fn render_bottom_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
-        let editable = self.edit.is_some() && !self.busy;
+        let editable = self.session.edit.is_some() && !self.session.busy;
         let dirty = self.grid.read(cx).model(cx).has_changes();
         let icon_button = |id: &'static str, icon: &'static str, tip: String| {
             Button::new(id)
@@ -110,10 +110,10 @@ impl ResultView {
                 .w(tokens::result::BOTTOM_BUTTON.rems())
                 .h(tokens::result::BOTTOM_BUTTON.rems())
         };
-        let sql: SharedString = if self.status.is_empty() {
-            self.sql.clone().into()
+        let sql: SharedString = if self.session.status.is_empty() {
+            self.session.sql.clone().into()
         } else {
-            self.status.clone()
+            self.session.status.clone()
         };
         h_flex()
             .h(tokens::result::BOTTOM_BAR_HEIGHT.rems())
@@ -155,7 +155,7 @@ impl ResultView {
                     .px_2()
                     .text_color(p.label_secondary),
             )
-            .when(self.edit.is_none(), |bar| {
+            .when(self.session.edit.is_none(), |bar| {
                 bar.child(
                     div()
                         .flex_none()
@@ -190,7 +190,7 @@ impl ResultView {
             )
             .child(
                 icon_button("result-discard", "x", t!("query.discard").to_string())
-                    .disabled(!dirty || self.busy)
+                    .disabled(!dirty || self.session.busy)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.grid
                             .update(cx, |g, cx| g.update_model(cx, |m| m.discard()));

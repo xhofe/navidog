@@ -52,14 +52,14 @@
 
 | 文件 | 拆分前 | 现在 |
 | --- | ---: | ---: |
-| `grid/viewer/mod.rs` | 2882 | 723 |
-| `query/results/mod.rs` | 1886 | 340 |
+| `grid/viewer/mod.rs` | 2882 | 768 |
+| `query/results/mod.rs` | 1886 | 348 |
 | `query/editor/mod.rs` | 1742 | 922 |
 | `connection/form/mod.rs` | 1493 | 534 |
-| `grid/model/mod.rs` | 1738 | 864 |
+| `grid/model/mod.rs` | 1738 | 139 |
 | `app/update/mod.rs` | 1353 | 27 |
 
-模块划分和“偏差”见[遗留清单的完成记录](../cr/2026-10-26-remaining-work.md)。`TableViewer` 的 `*_after_commit` 状态量没有合并成 `enum AfterCommit`：拆分要求不改行为，这几个标志在提交结果回调里互相分支，转换属于行为重构，留待单独提交。
+模块划分见[遗留清单的完成记录](../cr/2026-10-26-remaining-work.md)。结构级拆分同时完成：`TableSession`/`TableView`、`ResultSession`/`ResultGrid`、`GridModel` 的 `storage`/`edit`/`projection`，四个 `*_after_commit` 字段合并成 `enum AfterCommit`；仍是纯搬家，断言未改。
 
 ### A-10：`Connection` 的 `profiles + active`
 
@@ -115,8 +115,15 @@ CodeRabbit 提了 7 条可操作评论，逐条对照代码核实后全部成立
 - **Standards（违反唯一扫描器）**：`schema/table_design/options.rs` 的 `tokens` 改为消费 `navidog_sql::span::spans`，`decoded` 接收方言（反斜杠只在 MySQL 下当转义）；补 PostgreSQL 带反斜杠标识符和 SQLite `#` 的回归。
 - **Catalog 状态机**：完成加载时调用 `ScopeCache::finish_task`，`task_pending` 不再残留；`retain_connections`/`invalidate_connection`/`refresh_scope` 只在真正删除 entries/tasks/generation 时递增 revision 并通知；新增回归测试。generation token 保留，因为强制刷新会替换 task，只有 token 能阻止被替换的加载写回。
 - **A-10**：`reencrypt` 直接遍历 `profiles`，不再临时改 `active`；`SecretField` 的辅助函数改成接收 `&Profile`。
-- **A-07 结构拆分**（`TableSession`/`TableView`、`GridModel` 的 storage/edit/projection、`AfterCommit`）：保持原偏差，理由和行数见 [遗留清单的完成记录](../cr/2026-10-26-remaining-work.md)；本 PR 的拆分要求不改行为，类型级再拆另行提交。
+- **A-07 结构拆分**（`TableSession`/`TableView`、`ResultSession`、`GridModel` 的 storage/edit/projection、`AfterCommit`）：已补齐，见下面“结构级拆分”一节。
 - **A-07 复选框拒绝 0**：是对齐输入框回车规则的缺陷修复，放在单独的 `fix:` 提交里，不算搬家。
+
+### 结构级拆分（2026-10-27）
+
+- `grid/viewer`：会话/分页/事务/提交状态抽成 `TableSession`（`TableViewer` 实现 `Deref`/`DerefMut`，字段访问保持不变），渲染状态放 `TableView`；四个 `*_after_commit` 字段合成 `enum AfterCommit`（`None` / `Close` / `Hidden { hidden, reload }` / `Reload` / `AddRow`），加载/提交路径按枚举消费，行为不变。
+- `query/results`：运行/提交/刷新状态抽成 `ResultSession`（`ResultView` 显式写 `result.session.*`），网格继续用现成的 `ResultGrid`。
+- `grid/model`：`storage.rs`（行/单元格存储与选择）、`edit.rs`（编辑覆盖层/草稿/提交接受）、`projection.rs`（列布局/排序/隐藏，原 `layout.rs` 改名）。
+- 方法体与测试断言未改；`cargo test`、`clippy -D warnings`、`fmt --check` 全过。
 
 ## 遗留
 
