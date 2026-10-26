@@ -87,10 +87,8 @@
 | i18n 检查 | `scripts/check-i18n.sh` | 通过 |
 | 依赖方向 | `scripts/check-deps.sh` | 通过 |
 | headless 依赖检查 | `cargo test -p navidog-headless` | 通过（SQLite 连接/执行 SQL，模型序列化） |
-| 实库测试 | `docker compose up -d --wait && NAVIDOG_LIVE=1 cargo test -p navidog-db -p navidog-schema -p navidog-query --lib --test live --locked -j 1` | 见下 |
-| 截图 | `cargo test -p navidog --test snapshot` | 见下 |
-
-实库测试结果：待填。
+| 实库测试 | `docker compose up -d --wait && NAVIDOG_LIVE=1 cargo test -p navidog-db -p navidog-schema -p navidog-query --lib --test live --locked -j 1` | 通过：`navidog-db` 的 `tests/live.rs` 15 项、`navidog-schema` 的 lib（含 3 项实库 DDL/表选项/注释重命名回归）22 项、`navidog-query` 的 lib 33 项；MySQL 8.4、MariaDB 11、PostgreSQL 16 容器均 Healthy |
+| 截图 | `cargo test -p navidog --test snapshot` | 未跑：外观未变（见下） |
 
 截图：本次没有改外观（拆分为纯搬家、缓存/连接模型的行为与界面无关），按遗留清单的 A-07 验收“截图测试只在外观受影响时补跑”未补跑；如需要，可在 PR 批准后补一轮浅深色截图。
 
