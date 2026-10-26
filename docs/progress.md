@@ -26,10 +26,12 @@
 | M11 AI 助手 | 未开始 | | | |
 | M12 同步（替代 Cloud） | 未开始 | | | |
 | M13 HTTP 隧道 | 未开始 | | | |
-| M14 其他数据库 | 未开始 | | db/ | |
+| M14 其他数据库 | 未开始 | | db/ | 已实现的 MySQL/MariaDB、PostgreSQL、SQLite 各自一个 crate。新数据库加 crate 并在 session 注册，不必改各界面里的产品名分支 |
 | M15 发布 | 部分 | `codex/macos-adhoc-signing` | 150-macos-distribution | 工作流、安装包、`latest.json`、应用内更新已在仓库里；无证书时免费临时签名与验签已接入并经本机验证。正式公证仍需证书与凭据（第 4 节），配置迁移（F-REL-004）未做 |
 
 ## 2. 当前里程碑：M4（表设计器）
+
+已实现的三种数据库拆成独立 crate：`navidog-mysql`（含 MariaDB）、`navidog-postgres`、`navidog-sqlite`。`Dialect` 是 trait，扫描器只看 `Lex`。目录和补全 SQL 在各会话实现里，`navidog-db` 只留结果集读取。表设计的语句差异是方言上的能力方法，执行顺序仍在 `navidog-schema`。连接表单读 `DriverInfo` 的多主机、超时、连接参数和 SSL 模式，不再按产品名分支。行为不变。验证见第 5 节。
 
 ### M3 收尾记录
 
@@ -304,7 +306,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 格式与静态检查 | `cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings` | CI 执行 |
 | 裸值检查 | `scripts/check-raw-px.sh` | CI 执行 |
 | i18n 检查 | `scripts/check-i18n.sh` | CI 执行；字面量 key 必须在本 crate 定义，动态 key 必须登记在 `scripts/i18n-dynamic-keys.txt` |
-| 依赖方向检查 | `scripts/check-deps.sh` | CI 执行；model/db/sql/schema/util/sql-log/headless 的 normal 依赖不得出现 `gpui`，`crates/navidog-core` 不得回潮 |
+| 依赖方向检查 | `scripts/check-deps.sh` | CI 执行；model/db/sql/schema/util/sql-log/headless/mysql/postgres/sqlite 的 normal 依赖不得出现 `gpui`，`crates/navidog-core` 不得回潮 |
 | 依赖审计 | `cargo deny --all-features check`、`cargo audit` | CI 的 security-audit 工作流执行，配置在根目录 `deny.toml` 和 `.cargo/audit.toml`；只有直接依赖的 unmaintained 会失败，无补丁的 `RUSTSEC-2023-0071`（rsa）在两边都忽略 |
 | 单元测试与 headless UI 测试 | `cargo test --workspace` | CI 执行 |
 | 实库测试 | `docker compose up -d --wait && NAVIDOG_LIVE=1 cargo test -p navidog-db -p navidog-schema -p navidog-query --lib --test live --locked` | CI 的 integration 工作流和本地都执行；`--lib` 包含操作写入完成后元数据断连恢复的三驱动回归和 `navidog-schema` 的表设计 DDL 回归，测完执行 `docker compose down` |

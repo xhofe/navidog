@@ -10,6 +10,6 @@
 | MongoDB | Document | [mongodb/features.md](mongodb/features.md) | M14 |
 | Redis | KeyValue | [redis/features.md](redis/features.md) | M14 |
 
-MariaDB 归入 MySQL 驱动，差异在各模块规格的方言一节中说明。
+MariaDB 和 MySQL 放在同一个 crate `navidog-mysql`：两个 `Driver`，同一套方言。接入一个新数据库时新增一个不依赖 GPUI 的 crate，实现 `Driver`、`Relational` 和 `Dialect`，再在 `navidog-session` 注册。不要在 grid、query、designer 里按产品名分支；界面读方言能力方法或 `DriverInfo` 上的标志（多主机、文件库、网络库、SSL 模式列表）。M14 的 Oracle、SQL Server、MongoDB、Redis 仍按类别补规格后再做。
 
 接入顺序按类别推进：先在 `navidog-db` 中实现 `Document` 和 `KeyValue` 两个类别 trait，并为各 feature crate 加上对应的界面，然后逐个接入数据库。每个数据库开工前都要补一份详细规格。
