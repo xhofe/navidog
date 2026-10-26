@@ -135,6 +135,7 @@ fn block_writes(path: &std::path::Path, block: bool) -> bool {
     }
 }
 
+#[allow(clippy::permissions_set_readonly_false)] // test helper; Windows needs the attribute cleared
 fn restore_writes(path: &std::path::Path) {
     #[cfg(unix)]
     {
