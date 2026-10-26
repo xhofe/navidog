@@ -525,7 +525,7 @@ impl TableDesigner {
             .iter()
             .find(|c| Some(c.id) == self.selected);
         let props = c
-            .map(|c| column_properties(&c.definition))
+            .map(|c| column_properties(&c.definition, self.dialect))
             .unwrap_or_default();
         self.syncing = true;
         self.name.update(cx, |s, cx| {

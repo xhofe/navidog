@@ -183,8 +183,8 @@ pub(super) fn plan_on(
                     }
                     if c.definition != previous.definition {
                         if let (Some((a, b, mode, params)), Some((oa, ob, old_mode, old_params))) = (
-                            properties::identity(&c.definition),
-                            properties::identity(&previous.definition),
+                            properties::identity(&c.definition, d),
+                            properties::identity(&previous.definition, d),
                         ) {
                             let stripped = format!("{}{}", &c.definition[..a], &c.definition[b..]);
                             let old_stripped = format!(
@@ -386,7 +386,7 @@ fn pg_column(definition: &str) -> DbResult<(String, bool, Option<String>)> {
         }
     }
     // Split only at top-level whitespace so types and default strings may contain keywords.
-    let spaces = positions(definition, b' ')?;
+    let spaces = positions(definition, b' ', Dialect::Postgres)?;
     let marker = spaces.into_iter().find(|i| {
         let tail = definition[*i..].trim_start().to_uppercase();
         tail.starts_with("NOT NULL") || tail.starts_with("DEFAULT ") || tail == "NULL"
@@ -544,7 +544,7 @@ fn sqlite(
                     let Some((body, _)) = body.rsplit_once(')') else {
                         return false;
                     };
-                    if !positions(body, b',').is_ok_and(|commas| commas.is_empty()) {
+                    if !positions(body, b',', d).is_ok_and(|commas| commas.is_empty()) {
                         return false;
                     }
                     ident(body).is_ok_and(|(name, _)| name == c.name)

@@ -181,7 +181,7 @@ impl TableDesigner {
             .iter()
             .find(|c| Some(c.id) == self.selected);
         let p = c
-            .map(|c| column_properties(&c.definition))
+            .map(|c| column_properties(&c.definition, self.dialect))
             .unwrap_or_default();
         let disabled = self.busy || !self.loaded || c.is_none();
         let numeric = navidog_util::sql_type::type_kind(&p.data_type)
@@ -522,7 +522,7 @@ impl Render for TableDesigner {
                     .constraints
                     .iter()
                     .chain(&self.draft.indexes)
-                    .any(|s| parse_entry(s).is_none()),
+                    .any(|s| parse_entry(s, self.dialect).is_none()),
                 |v| {
                     v.child(
                         h_flex()

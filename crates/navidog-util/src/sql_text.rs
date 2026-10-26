@@ -1,7 +1,11 @@
 //! SQL text helpers that need no parser: leading comments, statement names, the query editor's
-//! `[$name]` parameters and snippet placeholders.
+//! `[$name]` parameters and snippet placeholders. Quote, comment and dollar-quote scanning comes
+//! from `navidog_sql::span`, the same lexer the statement splitter uses.
 
 use std::ops::Range;
+
+use navidog_sql::Dialect;
+use navidog_sql::span::{self, SpanKind};
 
 /// Skips whitespace and `--`, `#` and `/* */` comments at the start of `sql`.
 pub fn skip_leading_comments(sql: &str) -> &str {
@@ -56,112 +60,21 @@ pub struct Param {
 }
 
 /// `[$name]` markers outside strings, quoted identifiers and comments.
-pub fn find_params(sql: &str) -> Vec<Param> {
-    let bytes = sql.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            q @ (b'\'' | b'"' | b'`') => {
-                i = skip_quoted(sql, i, q == b'\'');
-            }
-            b'-' if bytes.get(i + 1) == Some(&b'-') => {
-                i = sql[i..].find('\n').map_or(bytes.len(), |n| i + n);
-            }
-            b'/' if bytes.get(i + 1) == Some(&b'*') => {
-                i = sql[i + 2..]
-                    .find("*/")
-                    .map_or(bytes.len(), |n| i + 2 + n + 2);
-            }
-            b'$' if is_dollar_quote_start(sql, i) => {
-                // PostgreSQL dollar-quoted strings: `$$…$$` or `$tag$…$tag$`.
-                // They may contain `[$name]` text that is not a parameter;
-                // `foo$tag$` is an identifier, not an opener.
-                i = dollar_end(sql, i).unwrap_or(i + 1);
-            }
-            b'[' if bytes.get(i + 1) == Some(&b'$') => match sql[i + 2..].find(']') {
-                Some(n) if n > 0 && !sql[i + 2..i + 2 + n].contains(['\n', '[']) => {
-                    out.push(Param {
-                        range: i..i + 2 + n + 1,
-                        name: sql[i + 2..i + 2 + n].to_string(),
-                    });
-                    i += 2 + n + 1;
-                }
-                _ => i += 1,
-            },
-            _ => i += 1,
-        }
-    }
-    out
-}
-
-/// Skips a quoted span whose opening quote is at `start`; a doubled quote escapes,
-/// and `escapes` also makes a backslash escape (except inside backticks). Returns the
-/// position after the closing quote, or the end of the string when it is unterminated.
-pub fn skip_quoted(sql: &str, start: usize, escapes: bool) -> usize {
-    let bytes = sql.as_bytes();
-    let Some(&quote) = bytes.get(start) else {
-        return bytes.len();
-    };
-    let mut i = start + 1;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' if escapes && quote != b'`' => i += 2,
-            b if b == quote => {
-                if bytes.get(i + 1) == Some(&quote) {
-                    i += 2;
-                } else {
-                    return i + 1;
-                }
-            }
-            _ => i += 1,
-        }
-    }
-    bytes.len()
-}
-
-/// True when `start` begins a PostgreSQL dollar quote rather than a `$tag$`
-/// inside an identifier such as `foo$tag$`.
-pub fn is_dollar_quote_start(sql: &str, start: usize) -> bool {
-    sql.as_bytes().get(start) == Some(&b'$') && !after_identifier(sql, start)
-}
-
-fn after_identifier(sql: &str, start: usize) -> bool {
-    start > 0
-        && matches!(
-            sql.as_bytes()[start - 1],
-            b if b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
-        )
-}
-
-/// The end of a PostgreSQL dollar-quoted string starting at `start`, or `None`
-/// when `start` is not a valid opening tag (for example `$1`).
-pub fn skip_dollar_quoted(sql: &str, start: usize) -> Option<usize> {
-    dollar_end(sql, start)
-}
-
-fn dollar_end(sql: &str, start: usize) -> Option<usize> {
-    let rest = &sql[start + 1..];
-    let tag_len = rest.find('$')?;
-    let tag = &rest[..tag_len];
-    if !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        || tag.starts_with(|c: char| c.is_ascii_digit())
-    {
-        return None;
-    }
-    let delim = &sql[start..start + tag_len + 2];
-    let body = start + tag_len + 2;
-    Some(
-        sql[body..]
-            .find(delim)
-            .map_or(sql.len(), |n| body + n + delim.len()),
-    )
+pub fn find_params(sql: &str, dialect: Dialect) -> Vec<Param> {
+    span::spans(sql, dialect)
+        .into_iter()
+        .filter(|s| s.kind == SpanKind::Param)
+        .map(|s| Param {
+            name: sql[s.range.start + 2..s.range.end - 1].to_string(),
+            range: s.range,
+        })
+        .collect()
 }
 
 /// Distinct parameter names in order of first appearance.
-pub fn param_names(sql: &str) -> Vec<String> {
+pub fn param_names(sql: &str, dialect: Dialect) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
-    for p in find_params(sql) {
+    for p in find_params(sql, dialect) {
         if !names.contains(&p.name) {
             names.push(p.name);
         }
@@ -170,10 +83,14 @@ pub fn param_names(sql: &str) -> Vec<String> {
 }
 
 /// Replaces every `[$name]` with `value(name)`.
-pub fn substitute_params(sql: &str, mut value: impl FnMut(&str) -> String) -> String {
+pub fn substitute_params(
+    sql: &str,
+    dialect: Dialect,
+    mut value: impl FnMut(&str) -> String,
+) -> String {
     let mut out = String::with_capacity(sql.len());
     let mut last = 0;
-    for p in find_params(sql) {
+    for p in find_params(sql, dialect) {
         out.push_str(&sql[last..p.range.start]);
         out.push_str(&value(&p.name));
         last = p.range.end;
@@ -243,26 +160,29 @@ mod tests {
     fn parameters_inside_dollar_quotes_are_not_rewritten() {
         let sql = "SELECT $$ [$x] $$, [$y]";
         assert_eq!(
-            find_params(sql)
+            find_params(sql, Dialect::Postgres)
                 .iter()
                 .map(|p| p.name.as_str())
                 .collect::<Vec<_>>(),
             ["y"]
         );
         assert_eq!(
-            substitute_params(sql, |name| format!("'{name}'")),
+            substitute_params(sql, Dialect::Postgres, |name| format!("'{name}'")),
             "SELECT $$ [$x] $$, 'y'"
         );
-        assert!(find_params("SELECT $tag$ [$x] $tag$, $1").is_empty());
+        assert!(find_params("SELECT $tag$ [$x] $tag$, $1", Dialect::Postgres).is_empty());
     }
 
     #[test]
     fn a_dollar_tag_inside_an_identifier_is_not_a_quote() {
         let sql = "SELECT foo$tag$ FROM t WHERE id = [$id] AND note = $tag$text$tag$";
-        let params: Vec<_> = find_params(sql).into_iter().map(|p| p.name).collect();
+        let params: Vec<_> = find_params(sql, Dialect::Postgres)
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
         assert_eq!(params, ["id"]);
         assert_eq!(
-            substitute_params(sql, |name| format!("'{name}'")),
+            substitute_params(sql, Dialect::Postgres, |name| format!("'{name}'")),
             "SELECT foo$tag$ FROM t WHERE id = 'id' AND note = $tag$text$tag$"
         );
     }
@@ -284,11 +204,13 @@ mod tests {
     #[test]
     fn params_skip_strings_and_comments() {
         let sql = "SELECT '[$no]' FROM t -- [$no]\nWHERE a = [$id] AND b = [$name] OR c = [$id] /* [$no] */";
-        assert_eq!(param_names(sql), ["id", "name"]);
-        let out = substitute_params(sql, |n| if n == "id" { "1".into() } else { "'x'".into() });
+        assert_eq!(param_names(sql, Dialect::MySql), ["id", "name"]);
+        let out = substitute_params(sql, Dialect::MySql, |n| {
+            if n == "id" { "1".into() } else { "'x'".into() }
+        });
         assert!(out.contains("a = 1 AND b = 'x' OR c = 1"), "{out}");
         assert!(out.contains("'[$no]'"));
-        assert!(find_params("[$] [$a\nb]").is_empty());
+        assert!(find_params("[$] [$a\nb]", Dialect::MySql).is_empty());
     }
 
     #[test]

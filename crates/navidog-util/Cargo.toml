@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Pure helpers shared by the navidog crates. No UI and no database drivers."
 
 [dependencies]
+navidog-sql = { path = "../navidog-sql" }
 chrono.workspace = true
 semver = "1"
 hex.workspace = true

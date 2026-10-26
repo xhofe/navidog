@@ -2,6 +2,9 @@
 
 use std::ops::Range;
 
+use navidog_sql::Dialect;
+use navidog_sql::span;
+
 /// One lexical token, enough to check that formatting kept the SQL the same.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Token {
@@ -13,80 +16,22 @@ pub enum Token {
     Punct(char),
 }
 
-/// Skips a quoted span; a doubled quote escapes, and with `backslash` so does a backslash.
-fn quoted_end(b: &[u8], start: usize, q: u8, backslash: bool) -> usize {
-    let mut i = start + 1;
-    while i < b.len() {
-        if backslash && b[i] == b'\\' && q != b'`' {
-            i += 2;
-            continue;
-        }
-        if b[i] == q {
-            if b.get(i + 1) == Some(&q) {
-                i += 2;
-                continue;
-            }
-            return i + 1;
-        }
-        i += 1;
-    }
-    b.len()
+/// The scanner the editor's dialect flag asks for. MySQL gets `#` comments and backslash
+/// escapes; every other dialect - and Generic mode, when no connection is open - uses
+/// PostgreSQL's rules: no `#` comments, `E'…'` strings and protected dollar bodies, which is
+/// what the generic scan did before there was a shared lexer.
+fn lexer(mysql: bool) -> Dialect {
+    if mysql { Dialect::MySql } else { Dialect::Postgres }
 }
 
-/// `$tag$ … $tag$` starting at `start`.
-fn dollar_end(s: &str, start: usize) -> Option<usize> {
-    let rest = &s[start + 1..];
-    let n = rest.find('$')?;
-    let tag = &rest[..n];
-    if !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        || tag.starts_with(|c: char| c.is_ascii_digit())
-    {
-        return None;
-    }
-    let delim = &s[start..start + n + 2];
-    let body = start + n + 2;
-    Some(
-        s[body..]
-            .find(delim)
-            .map_or(s.len(), |k| body + k + delim.len()),
-    )
-}
-
-/// Spans of `sql` that are strings, quoted identifiers or comments: (range, is_comment).
-fn spans(sql: &str, hash_comments: bool) -> Vec<(Range<usize>, bool)> {
-    let b = sql.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < b.len() {
-        let start = i;
-        match b[i] {
-            q @ (b'\'' | b'"' | b'`') => {
-                i = quoted_end(b, i, q, hash_comments);
-                out.push((start..i, false));
-            }
-            b'-' if b.get(i + 1) == Some(&b'-') => {
-                i = sql[i..].find('\n').map_or(b.len(), |n| i + n);
-                out.push((start..i, true));
-            }
-            b'#' if hash_comments => {
-                i = sql[i..].find('\n').map_or(b.len(), |n| i + n);
-                out.push((start..i, true));
-            }
-            b'/' if b.get(i + 1) == Some(&b'*') => {
-                i = sql[i + 2..].find("*/").map_or(b.len(), |n| i + 2 + n + 2);
-                out.push((start..i, true));
-            }
-            b'$' => match dollar_end(sql, i) {
-                Some(end) => {
-                    i = end;
-                    out.push((start..i, false));
-                }
-                None => i += 1,
-            },
-            _ => i += 1,
-        }
-    }
-    out
+/// Spans of `sql` that are strings, quoted identifiers, dollar bodies or comments:
+/// (range, is_comment).
+fn protected_spans(sql: &str, dialect: Dialect) -> Vec<(Range<usize>, bool)> {
+    span::spans(sql, dialect)
+        .into_iter()
+        .filter(|s| s.kind.is_protected() || s.kind.is_comment())
+        .map(|s| (s.range, s.kind.is_comment()))
+        .collect()
 }
 
 /// Tokens of `sql` outside whitespace; word case is folded so keyword case does not count.
@@ -111,7 +56,7 @@ pub fn tokens(sql: &str, hash_comments: bool) -> Vec<Token> {
             out.push(Token::Word(word));
         }
     };
-    for (range, comment) in spans(sql, hash_comments) {
+    for (range, comment) in protected_spans(sql, lexer(hash_comments)) {
         push_plain(&sql[last..range.start], &mut out);
         let text = &sql[range.clone()];
         out.push(if comment {
@@ -153,7 +98,7 @@ pub fn beautify(sql: &str, o: &BeautifyOptions) -> String {
     let mut protected = String::with_capacity(sql.len());
     let mut kept = Vec::new();
     let mut last = 0;
-    for (range, comment) in spans(sql, o.mysql) {
+    for (range, comment) in protected_spans(sql, lexer(o.mysql)) {
         if comment {
             continue;
         }
@@ -165,7 +110,7 @@ pub fn beautify(sql: &str, o: &BeautifyOptions) -> String {
     protected.push_str(&sql[last..]);
     // sqlformat knows `--` and `/* */`; MySQL `#` comments become `--` and back
     let hashes: Vec<Range<usize>> = if o.mysql {
-        spans(&protected, true)
+        protected_spans(&protected, Dialect::MySql)
             .into_iter()
             .filter(|(r, c)| *c && protected[r.clone()].starts_with('#'))
             .map(|(r, _)| r)
@@ -225,7 +170,7 @@ pub fn minify(sql: &str, mysql: bool) -> String {
             }
         }
     };
-    for (range, comment) in spans(sql, mysql) {
+    for (range, comment) in protected_spans(sql, lexer(mysql)) {
         flush_plain(&sql[last..range.start], &mut out, &mut pending_space);
         let text = &sql[range.clone()];
         let piece = if comment && !text.starts_with("/*") {
@@ -297,7 +242,7 @@ pub fn line_range(text: &str, selection: Range<usize>) -> Range<usize> {
 
 /// Matching `(` `)` pairs outside strings and comments, as (open, close) byte offsets.
 pub fn bracket_pairs(sql: &str, hash_comments: bool) -> Vec<(usize, usize)> {
-    let skip = spans(sql, hash_comments);
+    let skip = protected_spans(sql, lexer(hash_comments));
     let mut out = Vec::new();
     let mut stack = Vec::new();
     let mut spans = skip.iter().peekable();

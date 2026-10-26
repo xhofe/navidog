@@ -1,5 +1,6 @@
 //! Structured index and constraint forms. Unknown syntax remains an untouched advanced entry.
 use super::*;
+use navidog_sql::span::{self as sql_span, SpanKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
@@ -56,7 +57,7 @@ impl DesignEntry {
             &self.expression,
             &self.reference_fields,
         ] {
-            parse::fragment(s)?;
+            parse::fragment(s, dialect)?;
         }
         let q = |s: &str| dialect.quote_ident(s);
         let name = if self.name.is_empty() {
@@ -69,8 +70,8 @@ impl DesignEntry {
             EntryKind::Unique => format!("{name}UNIQUE ({})", self.fields),
             EntryKind::Check => format!("{name}CHECK ({})", self.expression),
             EntryKind::ForeignKey => {
-                let local = split_field_list(&self.fields)?;
-                let referenced = split_field_list(&self.reference_fields)?;
+                let local = split_field_list(&self.fields, dialect)?;
+                let referenced = split_field_list(&self.reference_fields, dialect)?;
                 if self.reference_table.is_empty()
                     || local.is_empty()
                     || local.len() != referenced.len()
@@ -155,10 +156,10 @@ impl DesignEntry {
         })
     }
 }
-pub fn split_field_list(s: &str) -> DbResult<Vec<String>> {
+pub fn split_field_list(s: &str, d: Dialect) -> DbResult<Vec<String>> {
     let mut out = Vec::new();
     let mut start = 0;
-    for end in parse::positions(s, b',')? {
+    for end in parse::positions(s, b',', d)? {
         out.push(s[start..end].trim().to_string());
         start = end + 1;
     }
@@ -178,38 +179,20 @@ fn take<'a>(s: &'a str, word: &str) -> Option<&'a str> {
         None
     }
 }
-fn group(s: &str) -> Option<(String, &str)> {
-    let s = s.trim_start().strip_prefix('(')?;
-    let mut depth = 1;
-    let mut quote = None;
-    let mut it = s.char_indices().peekable();
-    while let Some((i, c)) = it.next() {
-        if let Some(q) = quote {
-            if c == q {
-                if it.peek().is_some_and(|(_, n)| *n == q) {
-                    it.next();
-                } else {
-                    quote = None;
-                }
-            } else if c == '\\' {
-                it.next();
-            }
-        } else {
-            match c {
-                '\'' | '"' | '`' => quote = Some(c),
-                '(' => depth += 1,
-                ')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some((s[..i].trim().into(), s[i + 1..].trim()));
-                    }
-                }
-                _ => {}
-            }
-        }
+/// The parenthesized group at the start of `s`: its inner text and the rest.
+fn group(s: &str, d: Dialect) -> Option<(String, &str)> {
+    let s = s.trim_start();
+    if !s.starts_with('(') {
+        return None;
     }
-    None
+    let close = sql_span::spans(s, d)
+        .into_iter()
+        .find(|sp| sp.kind == SpanKind::CloseParen && sp.depth == 1)?
+        .range
+        .start;
+    Some((s[1..close].trim().into(), s[close + 1..].trim()))
 }
+
 fn qualified(s: &str) -> Option<(String, String, &str)> {
     let (a, rest) = parse::ident(s).ok()?;
     if let Some(rest) = rest.strip_prefix('.') {
@@ -226,7 +209,7 @@ fn qualified(s: &str) -> Option<(String, String, &str)> {
     }
 }
 /// Returns None unless all syntax can be represented by the form.
-pub fn parse_entry(s: &str) -> Option<DesignEntry> {
+pub fn parse_entry(s: &str, d: Dialect) -> Option<DesignEntry> {
     let mut rest = s.trim().trim_end_matches(';').trim();
     let mut e = DesignEntry::new(EntryKind::Advanced);
     if let Some(r) = take(rest, "CONSTRAINT") {
@@ -250,7 +233,7 @@ pub fn parse_entry(s: &str) -> Option<DesignEntry> {
         rest = r;
     } else if let Some(r) = take(rest, "CHECK") {
         e.kind = EntryKind::Check;
-        let (expr, r) = group(r)?;
+        let (expr, r) = group(r, d)?;
         e.expression = expr;
         return r.is_empty().then_some(e);
     } else if let Some(r) = take(rest, "INDEX").or_else(|| take(rest, "KEY")) {
@@ -276,7 +259,7 @@ pub fn parse_entry(s: &str) -> Option<DesignEntry> {
         e.method = m;
         rest = r;
     }
-    let (fields, r) = group(rest)?;
+    let (fields, r) = group(rest, d)?;
     e.fields = fields;
     rest = r;
     if e.kind == EntryKind::ForeignKey {
@@ -284,7 +267,7 @@ pub fn parse_entry(s: &str) -> Option<DesignEntry> {
         let (schema, table, r) = qualified(r)?;
         e.reference_schema = schema;
         e.reference_table = table;
-        let (fields, r) = group(r)?;
+        let (fields, r) = group(r, d)?;
         e.reference_fields = fields;
         rest = r;
         for _ in 0..2 {
@@ -317,24 +300,13 @@ pub fn parse_entry(s: &str) -> Option<DesignEntry> {
         rest = r;
     }
     if let Some(r) = take(rest, "COMMENT") {
-        let r = r.strip_prefix('\'')?;
-        let mut end = None;
-        let mut chars = r.char_indices().peekable();
-        while let Some((i, c)) = chars.next() {
-            if c == '\'' {
-                if chars.peek().is_some_and(|(_, c)| *c == '\'') {
-                    chars.next();
-                } else {
-                    end = Some(i);
-                    break;
-                }
-            } else if c == '\\' {
-                chars.next();
-            }
-        }
-        let end = end?;
-        e.comment = r[..end].replace("''", "'").replace("\\'", "'");
-        rest = r[end + 1..].trim();
+        let literal = sql_span::spans(r, d)
+            .into_iter()
+            .next()
+            .filter(|sp| sp.kind == SpanKind::String && sp.range.start == 0)?;
+        let body = &r[literal.range.start + 1..literal.range.end - 1];
+        e.comment = body.replace("''", "'").replace("\\'", "'");
+        rest = r[literal.range.end..].trim();
     }
     if let Some(r) = take(rest, "WHERE") {
         e.expression = r.into();
@@ -356,27 +328,36 @@ mod tests {
             "UNIQUE (name)",
             "PRIMARY KEY (id)",
         ] {
-            let e = parse_entry(sql).unwrap();
+            let e = parse_entry(sql, Dialect::Sqlite).unwrap();
             let result = e
                 .sql(Dialect::Sqlite, &scope, "t", sql.starts_with("CREATE"))
                 .unwrap();
-            assert!(parse_entry(&result).is_some(), "{result}");
+            assert!(parse_entry(&result, Dialect::Sqlite).is_some(), "{result}");
         }
-        let fk =
-            parse_entry("CONSTRAINT fk FOREIGN KEY (a) REFERENCES public.parent (id)").unwrap();
+        let fk = parse_entry(
+            "CONSTRAINT fk FOREIGN KEY (a) REFERENCES public.parent (id)",
+            Dialect::Sqlite,
+        )
+        .unwrap();
         assert_eq!(fk.reference_schema, "public");
         assert_eq!(fk.reference_table, "parent");
-        let fk =
-            parse_entry("CONSTRAINT fk FOREIGN KEY (a) REFERENCES \"literal.dot\" (id)").unwrap();
+        let fk = parse_entry(
+            "CONSTRAINT fk FOREIGN KEY (a) REFERENCES \"literal.dot\" (id)",
+            Dialect::Sqlite,
+        )
+        .unwrap();
         assert!(fk.reference_schema.is_empty());
         assert_eq!(fk.reference_table, "literal.dot");
         assert_eq!(
-            split_field_list("lower(name), \"a,b\", id").unwrap().len(),
+            split_field_list("lower(name), \"a,b\", id", Dialect::Sqlite)
+                .unwrap()
+                .len(),
             3
         );
         assert!(
             parse_entry(
-                "CONSTRAINT fk FOREIGN KEY (id) REFERENCES p(id) DEFERRABLE INITIALLY DEFERRED"
+                "CONSTRAINT fk FOREIGN KEY (id) REFERENCES p(id) DEFERRABLE INITIALLY DEFERRED",
+                Dialect::Sqlite,
             )
             .is_none()
         );

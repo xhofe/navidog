@@ -1,102 +1,50 @@
 use super::*;
+use navidog_sql::span::{self, LexError, SpanKind};
 
 /// Top-level separators, ignoring quoted text, SQL comments and nested expressions.
-pub(super) fn positions(text: &str, delimiter: u8) -> DbResult<Vec<usize>> {
-    scan(text, delimiter, true)
+pub(super) fn positions(text: &str, delimiter: u8, dialect: Dialect) -> DbResult<Vec<usize>> {
+    validate(text, dialect)?;
+    Ok(span::separators(text, dialect, delimiter))
 }
-fn scan(text: &str, delimiter: u8, allow_comments: bool) -> DbResult<Vec<usize>> {
-    let b = text.as_bytes();
-    let mut i = 0;
-    let mut depth = 0i32;
-    let mut out = Vec::new();
-    while i < b.len() {
-        match b[i] {
-            b'\'' | b'"' | b'`' | b'[' => {
-                let end = if b[i] == b'[' { b']' } else { b[i] };
-                i += 1;
-                loop {
-                    if i >= b.len() {
-                        return Err(DbError::msg("Unclosed SQL quote."));
-                    }
-                    if b[i] == b'\\' && end != b']' {
-                        i += 2;
-                        continue;
-                    }
-                    if b[i] == end {
-                        i += 1;
-                        if b.get(i) == Some(&end) {
-                            i += 1;
-                        } else {
-                            break;
-                        }
-                    } else {
-                        i += 1;
-                    }
-                }
-                continue;
-            }
-            b'#' if !allow_comments => {
-                return Err(DbError::msg(
-                    "SQL comments are not supported in definitions.",
-                ));
-            }
-            b'$' if !allow_comments && b.get(i + 1) == Some(&b'$') => {
-                return Err(DbError::msg(
-                    "Dollar quotes are not supported in definitions.",
-                ));
-            }
-            b'-' if b.get(i + 1) == Some(&b'-') => {
-                if !allow_comments {
-                    return Err(DbError::msg(
-                        "SQL comments are not supported in definitions.",
-                    ));
-                }
-                while i < b.len() && b[i] != b'\n' {
-                    i += 1;
-                }
-                continue;
-            }
-            b'/' if b.get(i + 1) == Some(&b'*') => {
-                if !allow_comments {
-                    return Err(DbError::msg(
-                        "SQL comments are not supported in definitions.",
-                    ));
-                }
-                i += 2;
-                while i + 1 < b.len() && &b[i..i + 2] != b"*/" {
-                    i += 1;
-                }
-                if i + 1 >= b.len() {
-                    return Err(DbError::msg("Unclosed SQL comment."));
-                }
-                i += 2;
-                continue;
-            }
-            b'(' => depth += 1,
-            b')' => {
-                depth -= 1;
-                if depth < 0 {
-                    return Err(DbError::msg("Unbalanced SQL parentheses."));
-                }
-            }
-            c if c == delimiter && depth == 0 => out.push(i),
-            _ => {}
-        }
-        i += 1;
-    }
-    if depth != 0 {
-        return Err(DbError::msg("Unbalanced SQL parentheses."));
-    }
-    Ok(out)
+
+/// Rejects unterminated strings and comments and unbalanced parentheses.
+fn validate(text: &str, dialect: Dialect) -> DbResult<()> {
+    span::check(text, dialect).map_err(|error| {
+        DbError::msg(match error {
+            LexError::UnclosedQuote => "Unclosed SQL quote.",
+            LexError::UnclosedComment => "Unclosed SQL comment.",
+            LexError::UnbalancedParentheses => "Unbalanced SQL parentheses.",
+        })
+    })
 }
-pub(super) fn fragment(text: &str) -> DbResult<()> {
-    if !scan(text, b';', false)?.is_empty() || text.contains('\0') {
+
+/// One SQL definition: no extra statements, no comments and no dollar quotes.
+pub(super) fn fragment(text: &str, dialect: Dialect) -> DbResult<()> {
+    if text.contains('\0') {
         return Err(DbError::msg(
             "A SQL definition cannot contain extra statements.",
         ));
     }
+    validate(text, dialect)?;
+    let spans = span::spans(text, dialect);
+    if spans.iter().any(|s| s.kind == SpanKind::StatementEnd) {
+        return Err(DbError::msg(
+            "A SQL definition cannot contain extra statements.",
+        ));
+    }
+    if spans.iter().any(|s| s.kind.is_comment()) {
+        return Err(DbError::msg(
+            "SQL comments are not supported in definitions.",
+        ));
+    }
+    if spans.iter().any(|s| s.kind == SpanKind::DollarQuoted) {
+        return Err(DbError::msg(
+            "Dollar quotes are not supported in definitions.",
+        ));
+    }
     Ok(())
 }
+
 pub(super) fn ident(input: &str) -> DbResult<(String, &str)> {
     let input = input.trim_start();
     let Some(first) = input.chars().next() else {
@@ -155,7 +103,7 @@ pub(super) fn create(ddl: &str, name: &str, d: Dialect) -> DbResult<TableDesign>
         .char_indices()
         .filter(|(_, c)| *c == ')')
         .map(|(i, _)| i)
-        .find(|i| positions(&body_and_options[..*i], b',').is_ok())
+        .find(|i| positions(&body_and_options[..*i], b',', d).is_ok())
         .ok_or_else(|| DbError::msg("Invalid table body."))?;
     let body = &body_and_options[..end];
     let mut design = TableDesign {
@@ -165,7 +113,7 @@ pub(super) fn create(ddl: &str, name: &str, d: Dialect) -> DbResult<TableDesign>
         ..Default::default()
     };
     let mut begin = 0;
-    for finish in positions(body, b',')?
+    for finish in positions(body, b',', d)?
         .into_iter()
         .chain(std::iter::once(body.len()))
     {

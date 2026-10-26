@@ -282,7 +282,7 @@ impl QueryEditor {
         }
         let names: Vec<String> = statements
             .iter()
-            .flat_map(|s| sql_text::param_names(&s.text))
+            .flat_map(|s| sql_text::param_names(&s.text, dialect))
             .fold(Vec::new(), |mut acc, n| {
                 if !acc.contains(&n) {
                     acc.push(n);
@@ -316,7 +316,7 @@ impl QueryEditor {
         statements
             .into_iter()
             .map(|s| Planned {
-                sql: sql_text::substitute_params(&s.text, |name| {
+                sql: sql_text::substitute_params(&s.text, dialect, |name| {
                     let (v, raw) = self.params.get(name).cloned().unwrap_or_default();
                     param_value(dialect, &v, raw)
                 }),

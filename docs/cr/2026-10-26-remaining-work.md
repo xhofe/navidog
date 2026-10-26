@@ -11,7 +11,7 @@
 
 | 编号 | 主题 | 当前状态 | 建议 PR | 依赖 | 规模 |
 | --- | --- | --- | --- | --- | --- |
-| R-04 / D-05 | 统一 SQL 扫描/词法 | 部分完成 | SQL lexer | 无 | 大 |
+| R-04 / D-05 | 统一 SQL 扫描/词法 | 已完成 | SQL lexer | 无 | 大 |
 | D-08 | Catalog/OutlineCache 统一缓存 | 部分完成 | ScopeCache | 无 | 中 |
 | A-01 | `navidog-core` 拆 app-state | 部分完成 | app-state split | 无 | 大 |
 | A-02 | core 去掉 gpui-kit | 部分完成 | 随 A-01 | A-01 | 中 |
@@ -58,6 +58,12 @@ pub fn spans(sql: &str, dialect: Dialect) -> Vec<Span>;
 ### 主要文件
 
 `crates/navidog-util/src/sql_text.rs`、`crates/navidog-util/src/sql_format.rs`、`crates/navidog-db/src/sql.rs`、`crates/navidog-grid/src/filter.rs`、`crates/navidog-db/src/table_design/parse.rs`、`properties.rs`、`entries.rs`。
+
+### 完成情况（2026-10-26，`refactor/remaining-work`）
+
+- 新建 `navidog-sql`：`dialect`（从 `navidog-db` 移入，`db` 用 `pub use navidog_sql::dialect` 保持旧路径）、`keywords`（同上）和 `span` 词法器。`span::spans(sql, dialect)` 给出字符串、引号标识符、行/块注释（PostgreSQL 嵌套）、`$tag$`、`[$name]` 参数、括号深度、语句分隔符（含 MySQL `DELIMITER` 与 `BEGIN…END` 例外）和 MySQL `#` 注释；`span::check` 报告未闭合引号/注释与括号不平衡；`span::separators` 给出深度 0 的分隔符位置。
+- 六个消费者全部改为消费同一份 span 结果，各自的跳过函数已删除：`db/sql.rs`（分句）、`util/sql_text.rs`（参数）、`util/sql_format.rs`（格式化/括号配对）、`grid/filter.rs`（WHERE/ORDER BY 拆分）、`db/table_design/parse.rs`（表体与片段校验）、`properties.rs` 与 `entries.rs`（列属性与索引/约束表单）。table_design 的解析函数增加 `Dialect` 参数，由调用方（designer、plan）传入。
+- 回归用例集中在 `navidog-sql/src/span/tests.rs`；跨消费者一致性测试在 `navidog-grid/src/filter/consistency_tests.rs`（同一段 SQL 的字符串在分句、字段列表、参数、筛选、格式化、列属性六处都按文本处理）。MySQL/PostgreSQL/SQLite 三种方言的既有测试全过。
 
 ## 2. D-08：Catalog/OutlineCache 统一缓存
 

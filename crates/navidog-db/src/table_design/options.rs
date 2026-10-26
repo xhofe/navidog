@@ -41,8 +41,8 @@ struct Token {
     start: usize,
     end: usize,
 }
-fn tokens(s: &str) -> DbResult<Vec<Token>> {
-    parse::fragment(s)?;
+fn tokens(s: &str, d: Dialect) -> DbResult<Vec<Token>> {
+    parse::fragment(s, d)?;
     let b = s.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -122,7 +122,7 @@ fn aliases(key: &str) -> Vec<&str> {
     }
 }
 fn mysql_span(s: &str, key: &str) -> DbResult<Option<(usize, usize, String)>> {
-    let ts = tokens(s)?;
+    let ts = tokens(s, Dialect::MySql)?;
     let mut found = None;
     let mut i = 0;
     while i < ts.len() {
@@ -170,7 +170,7 @@ fn mysql_span(s: &str, key: &str) -> DbResult<Option<(usize, usize, String)>> {
     Ok(found)
 }
 fn pg_clause(s: &str, key: &str) -> DbResult<Option<(usize, usize, String)>> {
-    let ts = tokens(s)?;
+    let ts = tokens(s, Dialect::MySql)?;
     let mut found = None;
     for (i, t) in ts.iter().enumerate() {
         if text(s, t).eq_ignore_ascii_case(key) {
@@ -194,7 +194,7 @@ pub(super) fn pg_storage(s: &str) -> DbResult<BTreeMap<String, String>> {
         .and_then(|v| v.strip_suffix(')'))
         .ok_or_else(|| DbError::msg("Invalid PostgreSQL storage parameters."))?;
     let mut values = BTreeMap::new();
-    for field in split_field_list(body)? {
+    for field in split_field_list(body, Dialect::Postgres)? {
         let (k, v) = field
             .split_once('=')
             .ok_or_else(|| DbError::msg("Invalid PostgreSQL storage parameter."))?;
@@ -232,7 +232,7 @@ pub fn table_option(s: &str, key: &str, d: Dialect) -> DbResult<String> {
             _ => Err(DbError::msg("Unsupported PostgreSQL option.")),
         },
         Dialect::Sqlite => {
-            let ts = tokens(s)?;
+            let ts = tokens(s, Dialect::MySql)?;
             let normalized = ts
                 .iter()
                 .map(|t| text(s, t).to_ascii_uppercase())
@@ -426,7 +426,7 @@ pub fn edit_table_option(s: &str, key: &str, value: &str, d: Dialect) -> DbResul
     }
 }
 pub(super) fn pg_parents(s: &str) -> DbResult<Vec<String>> {
-    split_field_list(s)?
+    split_field_list(s, Dialect::Postgres)?
         .into_iter()
         .map(|v| {
             let (head, rest) = parse::ident(&v)?;
@@ -490,7 +490,10 @@ pub(super) fn option_alters(
             new_tail = replace(&new_tail, mysql_span(&new_tail, key)?, "");
         }
         let normalize = |s: &str| -> DbResult<Vec<String>> {
-            Ok(tokens(s)?.iter().map(|t| text(s, t).to_string()).collect())
+            Ok(tokens(s, d)?
+                .iter()
+                .map(|t| text(s, t).to_string())
+                .collect())
         };
         if normalize(&old_tail)? != normalize(&new_tail)? {
             return Err(DbError::msg(

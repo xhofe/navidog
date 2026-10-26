@@ -5094,6 +5094,7 @@ dependencies = [
  "native-tls",
  "navidog-core",
  "navidog-session",
+ "navidog-sql",
  "navidog-sql-log",
  "navidog-util",
  "postgres-native-tls",
@@ -5133,6 +5134,7 @@ dependencies = [
  "navidog-core",
  "navidog-db",
  "navidog-session",
+ "navidog-sql",
  "navidog-test-support",
  "navidog-ui",
  "navidog-util",
@@ -5221,6 +5223,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "navidog-sql"
+version = "0.0.1"
+dependencies = [
+ "navidog-model",
+]
+
+[[package]]
 name = "navidog-sql-log"
 version = "0.0.1"
 dependencies = [
@@ -5254,6 +5263,7 @@ version = "0.0.1"
 dependencies = [
  "chrono",
  "hex",
+ "navidog-sql",
  "semver",
  "serde",
  "serde_json",

@@ -13,7 +13,7 @@
 | R-01 | 手写 UUID/RNG | P0 | 已修 |
 | R-02 | 手写日历与 UTC 今天 | P1 | 已修 |
 | R-03 | percent/URI 两套与 + 解码 | P0 | 已修 |
-| R-04 | 六处 SQL 扫描/解析 | P1 | 进行中 |
+| R-04 | 六处 SQL 扫描/解析 | P1 | 已修 |
 | R-05 | 两套 hex 编码 | P1 | 已修 |
 | R-06 | 平台目录/家目录展开 | P1 | 已修 |
 | R-07 | 原子写不一致 | P1 | 已修 |
@@ -24,7 +24,7 @@
 | D-02 | 9 处 JSON 持久化 | P1 | 已修 |
 | D-03 | MySQL/PG 生命周期复制 | P1 | 已修 |
 | D-04 | 网格/查询提交与关闭复制 | P1 | 已修 |
-| D-05 | SQL 扫描重复 | P1 | 进行中 |
+| D-05 | SQL 扫描重复 | P1 | 已修 |
 | D-06 | 对话框 footer 复制 | P2 | 已修 |
 | D-07 | driver_name/db_text/kind_label 等 | P1 | 已修 |
 | D-08 | Catalog 与 OutlineCache 双缓存 | P2 | 进行中 |
@@ -72,7 +72,7 @@
 
 这些是架构级重构，不是单点 bug；已在本次分支记录，建议按主题另开 PR，避免把行为迁移和修复混在一起。每项的当前缺口、目标、验收标准和推荐 PR 顺序见 [2026-10-26-remaining-work.md](2026-10-26-remaining-work.md)。
 
-- **R-04 / D-05（SQL 扫描统一，进行中）**：引号与 `$tag$` 跳过已收拢到 `navidog_util::sql_text`；`find_params`、分句器、筛选解析的完整词法层仍需语法级重构和三种方言的回归。
+- **R-04 / D-05（SQL 扫描统一）**：`navidog-sql` 的 `span::spans` 成为唯一词法层（字符串、引号标识符、注释、`$tag$`、参数、括号深度、语句边界）；六个消费者全部改为消费它，各自的跳过函数已删除，跨消费者一致性测试在 `navidog-grid/src/filter/consistency_tests.rs`。
 
 - **D-08（Catalog/OutlineCache，进行中）**：`Load<T>` 与 `ScopeCache<T>` 已引入，OutlineCache 已迁移；Catalog 的五类不同 key/失效代际仍需继续迁移。
 - **S-07（每 crate i18n 后端）**：明确契约为 crate-local：`scripts/check-i18n.sh` 校验每个字面量 `t!` key 都在本 crate locales 中；跨 crate 文案必须走 `navidog_ui::db_error_text` 这类显式 helper。统一后端仍可后续合并。

@@ -58,7 +58,7 @@ fn literal(sql: &str) -> DbResult<String> {
 }
 fn decode(sql: &str) -> DbResult<(bool, Vec<String>, String)> {
     let sql = sql.trim().trim_end_matches(';').trim_end();
-    parse::fragment(sql)?;
+    parse::fragment(sql, Dialect::Postgres)?;
     let rest = word(word(sql, "COMMENT")?, "ON")?;
     let column = rest
         .split_whitespace()

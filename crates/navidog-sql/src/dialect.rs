@@ -1,7 +1,7 @@
 //! SQL dialects: identifier quoting, literals, paged queries and SQL generation for grid change
 //! sets (21-table-viewer.md §2).
 
-use navidog_core::object::{ObjectKind, Scope};
+use navidog_model::object::{ObjectKind, Scope};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dialect {

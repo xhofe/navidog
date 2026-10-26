@@ -5,6 +5,8 @@
 
 use std::ops::Range;
 
+use navidog_sql::span::{self, SpanKind};
+
 use crate::dialect::Dialect;
 
 /// One statement of a script and where it sits in the original text.
@@ -70,110 +72,28 @@ pub fn split_statements(sql: &str, dialect: Dialect) -> Vec<String> {
 }
 
 /// Splits a script into statements. Empty and comment-only statements are dropped, and so are
-/// MySQL `DELIMITER` lines: they configure the splitter and never go to the server.
+/// MySQL `DELIMITER` lines: they configure the scanner and never go to the server.
 pub fn split_script(sql: &str, dialect: Dialect) -> Vec<Statement> {
-    let bytes = sql.as_bytes();
-    let mysql = dialect == Dialect::MySql;
     let mut out = Vec::new();
-    let mut delimiter = String::from(";");
     let mut start = 0;
-    let mut i = 0;
-    let mut depth = 0usize;
-    let mut has_code = false;
-    while i < bytes.len() {
-        if mysql
-            && !has_code
-            && at_line_start(bytes, i)
-            && let Some((end, next)) = delimiter_line(sql, i)
-        {
-            if let Some(next) = next {
-                delimiter = next;
-            }
-            start = end;
-            i = end;
-            continue;
-        }
-        if !sql.is_char_boundary(i) {
-            // A custom delimiter scan advances byte by byte; a multi-byte
-            // character can leave `i` inside a code point.
-            i += 1;
-            continue;
-        }
-        let c = bytes[i];
-        if delimiter != ";" && sql[i..].starts_with(delimiter.as_str()) {
-            push(&mut out, sql, start..i, has_code);
-            i += delimiter.len();
-            start = i;
-            has_code = false;
-            continue;
-        }
-        match c {
-            b'\'' | b'"' | b'`' => {
-                let escapes =
-                    mysql || (dialect == Dialect::Postgres && c == b'\'' && e_prefix(bytes, i));
-                i = navidog_util::sql_text::skip_quoted(sql, i, escapes);
-                has_code = true;
-                continue;
-            }
-            b'-' if bytes.get(i + 1) == Some(&b'-') => {
-                i = sql[i..].find('\n').map_or(bytes.len(), |n| i + n);
-                continue;
-            }
-            b'#' if mysql => {
-                i = sql[i..].find('\n').map_or(bytes.len(), |n| i + n);
-                continue;
-            }
-            b'/' if bytes.get(i + 1) == Some(&b'*') => {
-                i = sql[i + 2..]
-                    .find("*/")
-                    .map_or(bytes.len(), |n| i + 2 + n + 2);
-                continue;
-            }
-            b'$' if dialect == Dialect::Postgres
-                && navidog_util::sql_text::is_dollar_quote_start(sql, i) =>
-            {
-                if let Some(end) = navidog_util::sql_text::skip_dollar_quoted(sql, i) {
-                    i = end;
-                    has_code = true;
-                    continue;
+    let mut code = false;
+    for span in span::spans(sql, dialect) {
+        match span.kind {
+            SpanKind::DelimiterLine => {
+                if !code {
+                    start = span.range.end;
                 }
             }
-            b';' if depth == 0 && delimiter == ";" => {
-                push(&mut out, sql, start..i, has_code);
-                start = i + 1;
-                has_code = false;
+            SpanKind::StatementEnd => {
+                push(&mut out, sql, start..span.range.start, code);
+                start = span.range.end;
+                code = false;
             }
-            c if c.is_ascii_alphabetic() || c == b'_' => {
-                let end = i + sql[i..]
-                    .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-                    .unwrap_or(sql.len() - i);
-                let word = &sql[i..end];
-                if delimiter != ";" {
-                    // A custom delimiter ends statements whatever the block depth
-                } else if word.eq_ignore_ascii_case("BEGIN") && is_routine(&sql[start..i]) {
-                    depth += 1;
-                } else if word.eq_ignore_ascii_case("END") && depth > 0 {
-                    // `END IF`, `END LOOP` and the like do not close the block. Bytes, not
-                    // `next[..k.len()]`, so a multi-byte character there cannot panic.
-                    let next = sql[end..].trim_start().as_bytes();
-                    let closes = !["IF", "LOOP", "WHILE", "REPEAT", "CASE"].iter().any(|k| {
-                        next.get(..k.len())
-                            .is_some_and(|b| b.eq_ignore_ascii_case(k.as_bytes()))
-                    });
-                    if closes {
-                        depth -= 1;
-                    }
-                }
-                has_code = true;
-                i = end;
-                continue;
-            }
-            c if !c.is_ascii_whitespace() => has_code = true,
-            _ => {}
+            kind if kind.is_comment() => {}
+            _ => code = true,
         }
-        i += 1;
     }
-    push(&mut out, sql, start..sql.len(), has_code);
+    push(&mut out, sql, start..sql.len(), code);
     out
 }
 
@@ -188,49 +108,6 @@ fn push(out: &mut Vec<Statement>, sql: &str, range: Range<usize>, has_code: bool
             range: start..start + text.len(),
         });
     }
-}
-
-fn at_line_start(bytes: &[u8], i: usize) -> bool {
-    bytes[..i]
-        .iter()
-        .rev()
-        .take_while(|b| **b != b'\n')
-        .all(|b| b.is_ascii_whitespace())
-}
-
-/// A `DELIMITER <symbol>` line at `i`: where the line ends, and the new terminator (`None` when
-/// the line names none).
-fn delimiter_line(sql: &str, i: usize) -> Option<(usize, Option<String>)> {
-    const KEYWORD: &str = "DELIMITER";
-    let rest = &sql[i..];
-    if !navidog_util::starts_with_ignore_ascii_case(rest, KEYWORD) {
-        return None;
-    }
-    let after = &rest[KEYWORD.len()..];
-    if !after.is_empty() && !after.starts_with([' ', '\t']) {
-        return None;
-    }
-    let end = rest.find('\n').map_or(sql.len(), |n| i + n);
-    let next = sql[i + KEYWORD.len()..end]
-        .split_whitespace()
-        .next()
-        .map(String::from);
-    Some((end, next))
-}
-
-/// `E'…'`: a PostgreSQL escape string, where a backslash escapes the next character.
-fn e_prefix(bytes: &[u8], quote: usize) -> bool {
-    quote > 0
-        && bytes[quote - 1].eq_ignore_ascii_case(&b'e')
-        && (quote < 2 || !(bytes[quote - 2].is_ascii_alphanumeric() || bytes[quote - 2] == b'_'))
-}
-
-fn is_routine(prefix: &str) -> bool {
-    let p = prefix.trim_start().to_ascii_uppercase();
-    p.starts_with("CREATE")
-        && ["TRIGGER", "FUNCTION", "PROCEDURE", "EVENT"]
-            .iter()
-            .any(|k| p.contains(k))
 }
 
 #[cfg(test)]

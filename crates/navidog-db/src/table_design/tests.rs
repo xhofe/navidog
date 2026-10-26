@@ -33,8 +33,8 @@ fn invalid_fragments_and_unsupported_attributes_are_rejected() {
     draft.columns[0].definition = "int); DROP TABLE x; --".into();
     assert!(plan(Dialect::MySql, &scope(), None, &draft).is_err());
     assert!(super::plan::index_name("CREATE TABLE x (id int)").is_err());
-    assert!(super::parse::fragment("TEXT DEFAULT 'semi;hash#-- $$/*'").is_ok());
-    assert!(super::parse::fragment("TEXT DEFAULT 1 -- hidden suffix").is_err());
+    assert!(super::parse::fragment("TEXT DEFAULT 'semi;hash#-- $$/*'", Dialect::MySql).is_ok());
+    assert!(super::parse::fragment("TEXT DEFAULT 1 -- hidden suffix", Dialect::MySql).is_err());
 }
 #[test]
 fn sqlite_backup_name_uses_the_date_then_a_suffix() {
@@ -558,7 +558,7 @@ fn live_table_options_and_dialect_attributes() {
                 assert!(!saved.design.unlogged);
                 assert_eq!(saved.design.owner, role);
                 assert_eq!(
-                    column_properties(&saved.design.columns[0].definition).identity,
+                    column_properties(&saved.design.columns[0].definition, d).identity,
                     "BY DEFAULT"
                 );
                 assert_eq!(

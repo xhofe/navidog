@@ -110,7 +110,7 @@ impl TableDesign {
             if c.definition.trim().is_empty() {
                 return Err(DbError::msg("A column needs a type definition."));
             }
-            parse::fragment(&c.definition)?;
+            parse::fragment(&c.definition, dialect)?;
         }
         if self.comment.contains('\0') || self.columns.iter().any(|c| c.comment.contains('\0')) {
             return Err(DbError::msg("Comments cannot contain NUL characters."));
@@ -123,9 +123,9 @@ impl TableDesign {
             ));
         }
         for c in &self.constraints {
-            parse::fragment(c)?;
+            parse::fragment(c, dialect)?;
         }
-        parse::fragment(&self.options)?;
+        parse::fragment(&self.options, dialect)?;
         for index in &self.indexes {
             if crate::sql::split_script(index, dialect).len() != 1 {
                 return Err(DbError::msg(
