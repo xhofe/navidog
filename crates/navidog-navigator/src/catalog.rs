@@ -6,10 +6,10 @@ use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
 use gpui_kit::{App, AppContext as _, Context, Entity, Global};
-use navidog_core::object::{ObjectKind, ObjectRef, Scope};
-use navidog_core::store::{ConnectionStore, StoreEvent};
-use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
+use navidog_app_state::store::{ConnectionStore, StoreEvent};
+use navidog_app_state::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::{ColumnInfo, DbResult, ObjectInfo, TableChildren};
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_session::scope_cache::ScopeCache;
 use navidog_session::sessions::{Sessions, SessionsEvent};
 use tokio::task::JoinHandle;
@@ -525,7 +525,7 @@ pub(crate) fn listed_kind(selection: &Selection) -> Option<(Scope, ObjectKind)> 
 
 /// Saved queries of a scope as object rows: name, modification date and size (30 §7).
 fn query_infos(scope: &Scope) -> Vec<ObjectInfo> {
-    navidog_core::queries::list(scope)
+    navidog_model::queries::list(scope)
         .into_iter()
         .map(|q| {
             let mut properties = Vec::new();
@@ -884,7 +884,7 @@ mod tests {
         // SAFETY: `lock` is held until this test returns.
         unsafe { std::env::set_var("NAVIDOG_HOME", &dir) };
         let scope = Scope::new("c1", "sakila", None);
-        let path = navidog_core::queries::path(&scope, "actor");
+        let path = navidog_model::queries::path(&scope, "actor");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "SELECT 1").unwrap();
         let catalog = cx.new(|_| Catalog::default());

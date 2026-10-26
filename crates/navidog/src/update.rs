@@ -21,7 +21,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, IntoElement, ParentElement as _, Render, Styled as _, Window,
 };
-use navidog_core::settings::Settings;
+use navidog_app_state::settings::Settings;
 mod install;
 use install::*;
 use navidog_ui::tokens;

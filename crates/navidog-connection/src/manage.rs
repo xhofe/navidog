@@ -13,9 +13,9 @@ use gpui_kit::{
     IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription, Window,
     WindowBounds, WindowOptions, div,
 };
-use navidog_core::connection::Connection;
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::{Selection, Workspace};
+use navidog_model::connection::Connection;
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::highlighted;
 use navidog_ui::{palette, tokens};

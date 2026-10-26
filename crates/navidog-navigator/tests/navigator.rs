@@ -10,11 +10,11 @@ use gpui_kit::{
 // `focus_handle` comes from `Focusable`; the only call is inside the non-Linux branch below
 #[cfg(not(target_os = "linux"))]
 use gpui_kit::Focusable as _;
-use navidog_core::actions::{NewGroup, RenameGroup};
-use navidog_core::connection::Connection;
-use navidog_core::crypto::Key;
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_app_state::actions::{NewGroup, RenameGroup};
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::{Selection, Workspace};
+use navidog_model::connection::Connection;
+use navidog_model::crypto::Key;
 use navidog_navigator::NavigatorPanel;
 
 struct Host {
@@ -41,7 +41,7 @@ fn multi_select_drag_and_rename(cx: &mut TestAppContext) {
     unsafe { std::env::set_var("NAVIDOG_HOME", &home) };
     let (group, a, b) = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_navigator::init(cx);

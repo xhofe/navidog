@@ -14,8 +14,8 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window, div,
 };
-use navidog_core::json_store::JsonStore;
-use navidog_core::settings::Settings;
+use navidog_app_state::settings::Settings;
+use navidog_model::json_store::JsonStore;
 use navidog_ui::skin::{heading, truncated};
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
@@ -37,7 +37,7 @@ pub(crate) struct Autosave {
 }
 
 fn dir() -> PathBuf {
-    navidog_core::paths::config_dir().join("autosave")
+    navidog_model::paths::config_dir().join("autosave")
 }
 
 fn path_in(dir: &std::path::Path, id: &str) -> PathBuf {
@@ -210,7 +210,7 @@ impl Recover {
                     let source = match &entry.source {
                         // The saved query may be gone; then the text comes back untitled
                         QuerySource::Saved(o)
-                            if !navidog_core::queries::path(&o.scope, &o.name).exists() =>
+                            if !navidog_model::queries::path(&o.scope, &o.name).exists() =>
                         {
                             QuerySource::Untitled(crate::editor::next_untitled())
                         }
@@ -236,7 +236,7 @@ impl Recover {
             .connection
             .as_ref()
             .and_then(|id| {
-                navidog_core::store::ConnectionStore::global(cx)
+                navidog_app_state::store::ConnectionStore::global(cx)
                     .read(cx)
                     .get(id)
             })

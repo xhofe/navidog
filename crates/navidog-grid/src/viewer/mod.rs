@@ -28,11 +28,11 @@ use gpui_kit::{
     ParentElement as _, PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _,
     Styled as _, Subscription, Task, WeakEntity, Window, actions, div, img, px,
 };
-use navidog_core::object::{ObjectKind, ObjectRef, Scope};
-use navidog_core::settings::Settings;
-use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
+use navidog_app_state::settings::Settings;
+use navidog_app_state::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::dialect::Dialect;
 use navidog_db::{CancelHandle, ColumnInfo, ResultSet};
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_session::sessions::{ConnState, Sessions, SessionsEvent, SharedSession, run_on};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::{FormRow, confirm_with, truncated};
@@ -130,7 +130,7 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("shift-cmd-y", QueryTable, Some(CONTEXT)),
         KeyBinding::new(
             "secondary-d",
-            navidog_core::actions::DesignTable { object: None },
+            navidog_app_state::actions::DesignTable { object: None },
             Some(CONTEXT),
         ),
     ]);
@@ -373,7 +373,7 @@ impl BasePanel for TableViewer {
 
 impl Panel for TableViewer {
     fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let store = navidog_core::store::ConnectionStore::global(cx);
+        let store = navidog_app_state::store::ConnectionStore::global(cx);
         let (color, connection) = match store.read(cx).get(&self.object.scope.connection) {
             Some(c) => (c.color.clone(), Some(c.name.clone())),
             None => (None, None),
@@ -1321,7 +1321,7 @@ impl TableViewer {
             dialect.qualified(&self.object.scope, &self.object.name)
         );
         window.dispatch_action(
-            Box::new(navidog_core::actions::NewQueryText {
+            Box::new(navidog_app_state::actions::NewQueryText {
                 connection: self.object.scope.connection.clone().into(),
                 database: self.object.scope.database.clone().into(),
                 schema: self.object.scope.schema.clone().map(Into::into),
@@ -1673,7 +1673,10 @@ impl TableViewer {
                     .icon(lucide("scan"))
                     .tooltip(t!("viewer.focus_mode").to_string())
                     .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(navidog_core::actions::ToggleFocusMode), cx)
+                        window.dispatch_action(
+                            Box::new(navidog_app_state::actions::ToggleFocusMode),
+                            cx,
+                        )
                     }),
             )
     }
@@ -1963,8 +1966,10 @@ mod ownership_tests {
     use super::*;
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{TestAppContext, WindowOptions};
-    use navidog_core::{connection::Connection, crypto::Key, store::ConnectionStore};
+    use navidog_app_state::store::ConnectionStore;
     use navidog_db::{ConnectParams, Secrets, connect, sqlite::SqliteDriver};
+    use navidog_model::connection::Connection;
+    use navidog_model::crypto::Key;
     use std::sync::Arc;
 
     struct Host(Entity<TableViewer>);
@@ -2037,7 +2042,7 @@ mod ownership_tests {
         cx.executor().allow_parking();
         let id = cx.update(|cx| {
             gpui_kit::init(cx);
-            navidog_core::init(cx);
+            navidog_app_state::init(cx);
             navidog_ui::theme::init(cx);
             navidog_session::init(cx);
             crate::init(cx);

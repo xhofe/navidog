@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use navidog_core::connection::{Connection, SslMode};
+use navidog_model::connection::{Connection, SslMode};
 
 #[derive(Clone, Debug, Default)]
 pub struct ConnectParams {
@@ -31,7 +31,7 @@ pub struct ConnectParams {
     pub tls_host: Option<String>,
     /// PostgreSQL multiple nodes: servers tried after `host`, and which kind to settle on
     pub members: Vec<(String, u16)>,
-    pub host_preference: navidog_core::connection::HostPreference,
+    pub host_preference: navidog_model::connection::HostPreference,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -67,7 +67,7 @@ pub struct Secrets {
 fn non_empty(s: &Option<String>) -> Option<PathBuf> {
     s.as_deref()
         .filter(|v| !v.is_empty())
-        .map(navidog_core::paths::expand_home)
+        .map(navidog_model::paths::expand_home)
 }
 
 impl ConnectParams {
@@ -135,7 +135,7 @@ impl ConnectParams {
                 .databases
                 .attached
                 .iter()
-                .map(|d| (d.name.clone(), navidog_core::paths::expand_home(&d.file)))
+                .map(|d| (d.name.clone(), navidog_model::paths::expand_home(&d.file)))
                 .collect(),
             connect_timeout: a
                 .connect_timeout_secs
@@ -169,7 +169,7 @@ impl ConnectParams {
 mod tests {
     use super::*;
     use crate::driver::Driver as _;
-    use navidog_core::connection::SshAuth;
+    use navidog_model::connection::SshAuth;
 
     #[test]
     fn maps_connection_and_drops_unused_secrets() {

@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global};
 use serde::{Deserialize, Serialize};
 
-use crate::json_store::JsonStore;
-use crate::object::{ObjectKind, ObjectRef, Scope};
-use crate::paths;
+use navidog_model::json_store::JsonStore;
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
+use navidog_model::paths;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VirtualGroup {
@@ -331,7 +331,7 @@ mod tests {
             meta,
             root.join("profiles")
                 .join("c-b")
-                .join(crate::queries::encode_segment(".vgroups.json"))
+                .join(navidog_model::queries::encode_segment(".vgroups.json"))
         );
 
         let mut written = written;

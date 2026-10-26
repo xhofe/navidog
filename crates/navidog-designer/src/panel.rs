@@ -13,8 +13,7 @@ use gpui_kit::{
     Subscription, Task, WeakEntity, Window, prelude::*,
 };
 use grid::DesignerGrid;
-use navidog_core::actions::TableStructureChanged;
-use navidog_core::object::{ObjectRef, Scope};
+use navidog_app_state::actions::TableStructureChanged;
 use navidog_db::table_design::{
     ColumnProperty, DesignEntry, EntryKind, column_properties, edit_column, parse_entry,
     split_field_list,
@@ -24,6 +23,7 @@ use navidog_db::{
     dialect::Dialect,
     table_design::{self, DesignColumn, TableDesign, TableSnapshot},
 };
+use navidog_model::object::{ObjectRef, Scope};
 use navidog_session::sessions::Sessions;
 use navidog_ui::{
     assets::lucide,
@@ -265,7 +265,7 @@ impl TableDesigner {
                 .read(cx)
                 .dialect(&saved.scope.connection)
                 .or_else(|| {
-                    let driver = navidog_core::store::ConnectionStore::global(cx)
+                    let driver = navidog_app_state::store::ConnectionStore::global(cx)
                         .read(cx)
                         .get(&saved.scope.connection)?
                         .driver
@@ -435,7 +435,7 @@ impl TableDesigner {
                 object: saved.object.or_else(|| {
                     saved.baseline.as_ref().map(|old| ObjectRef {
                         scope: saved.scope.clone(),
-                        kind: navidog_core::object::ObjectKind::Table,
+                        kind: navidog_model::object::ObjectKind::Table,
                         name: old.design.name.clone(),
                     })
                 }),
@@ -871,7 +871,7 @@ impl TableDesigner {
         self.active_cell = None;
         self.object = Some(ObjectRef {
             scope: self.scope.clone(),
-            kind: navidog_core::object::ObjectKind::Table,
+            kind: navidog_model::object::ObjectKind::Table,
             name: snapshot.design.name.clone(),
         });
         self.draft = snapshot.design.clone();

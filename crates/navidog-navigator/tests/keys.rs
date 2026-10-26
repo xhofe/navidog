@@ -11,13 +11,13 @@ use gpui_kit::{
     ParentElement as _, Render, Styled as _, TestAppContext, Window, WindowBounds, WindowOptions,
     div, size,
 };
-use navidog_core::connection::Connection;
-use navidog_core::crypto::Key;
-use navidog_core::object::{ObjectKind, ObjectRef, Scope};
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::{Selection, Workspace};
 use navidog_db::sqlite::SqliteDriver;
 use navidog_db::{ConnectParams, Secrets, connect, runtime};
+use navidog_model::connection::Connection;
+use navidog_model::crypto::Key;
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_navigator::NavigatorPanel;
 use navidog_navigator::catalog::{Catalog, Load};
 use navidog_session::sessions::Sessions;
@@ -69,7 +69,7 @@ fn arrow_keys_walk_through_the_rows_under_a_table(cx: &mut TestAppContext) {
 
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_navigator::init(cx);

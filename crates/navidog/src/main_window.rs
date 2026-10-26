@@ -14,17 +14,17 @@ use gpui_kit::{
     App, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement, ParentElement as _,
     Render, Styled as _, Subscription, Window, div,
 };
-use navidog_core::actions::{
+use navidog_app_state::actions::{
     DesignTable, InsertText, NewQuery, NewQueryText, NewTable, OpenConnection, OpenConsole,
     OpenExternalQuery, OpenHistoryLog, OpenObject, RunQuery, ToggleFocusMode,
     ToggleHideObjectGroups, ToggleOnlyActive, ToggleShowHidden, ToggleShowTableProfile,
 };
-use navidog_core::favorites::Favorites;
-use navidog_core::object::{ObjectKind, ObjectRef};
-use navidog_core::registry::CommandRegistry;
-use navidog_core::settings::Settings;
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_app_state::favorites::Favorites;
+use navidog_app_state::registry::CommandRegistry;
+use navidog_app_state::settings::Settings;
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::{Selection, Workspace};
+use navidog_model::object::{ObjectKind, ObjectRef};
 use navidog_navigator::{InfoPanel, NavigatorPanel, ObjectsPanel};
 use navidog_session::sessions::{Sessions, SessionsEvent};
 use navidog_ui::assets::lucide;
@@ -190,7 +190,7 @@ impl MainWindow {
                 },
             ),
             cx.observe_window_appearance(window, |_, window, cx| {
-                if navidog_core::settings::Settings::global(cx)
+                if navidog_app_state::settings::Settings::global(cx)
                     .appearance
                     .is_dark()
                     .is_none()
@@ -732,7 +732,7 @@ impl Render for MainWindow {
                 };
                 if !Sessions::global(cx).read(cx).state(&conn).is_open() {
                     window.dispatch_action(
-                        Box::new(navidog_core::actions::OpenConnectionId {
+                        Box::new(navidog_app_state::actions::OpenConnectionId {
                             id: conn.clone().into(),
                         }),
                         cx,

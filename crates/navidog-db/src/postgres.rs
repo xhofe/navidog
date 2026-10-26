@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use futures::future::BoxFuture;
 use futures::{FutureExt as _, StreamExt as _};
 use native_tls::{Certificate, Identity, TlsConnector};
-use navidog_core::connection::{HostPreference, SslMode};
+use navidog_model::connection::{HostPreference, SslMode};
 use postgres_native_tls::MakeTlsConnector;
 use tokio_postgres::config::{SslMode as PgSslMode, TargetSessionAttrs};
 use tokio_postgres::tls::{MakeTlsConnect, TlsConnect};
@@ -35,7 +35,7 @@ impl Default for PostgresDriver {
                 id: "postgres".into(),
                 name: "PostgreSQL".into(),
                 family: Family::Relational,
-                default_port: navidog_core::connection::driver_defaults("postgres").port,
+                default_port: navidog_model::connection::driver_defaults("postgres").port,
                 icon: "icons/db/postgresql.svg",
                 dialect: Dialect::Postgres,
                 supports_ssl: true,

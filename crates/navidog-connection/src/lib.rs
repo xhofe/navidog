@@ -17,11 +17,11 @@ use std::sync::Arc;
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, InteractiveElement, SharedString, Window};
-use navidog_core::actions::*;
-use navidog_core::connection::SecretField;
-use navidog_core::registry::{CommandInfo, CommandRegistry, Source};
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_app_state::actions::*;
+use navidog_app_state::registry::{CommandInfo, CommandRegistry, Source};
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::{Selection, Workspace};
+use navidog_model::connection::SecretField;
 use navidog_session::sessions::Sessions;
 use rust_i18n::t;
 
@@ -75,9 +75,11 @@ pub fn bind_actions<E: InteractiveElement>(el: E) -> E {
             }
         })
         .on_action(|_: &DeleteConnection, window, cx| delete_selected(window, cx))
-        .on_action(|a: &navidog_core::actions::OpenConnectionId, window, cx| {
-            open_connection(a.id.to_string(), window, cx)
-        })
+        .on_action(
+            |a: &navidog_app_state::actions::OpenConnectionId, window, cx| {
+                open_connection(a.id.to_string(), window, cx)
+            },
+        )
         .on_action(|a: &ReopenConnectionId, window, cx| {
             confirm_reopen_connection(a.id.to_string(), window, cx);
         })
@@ -270,9 +272,9 @@ fn confirm_delete_connection(window: &mut Window, cx: &mut App) {
                     return false;
                 }
                 Sessions::global(cx).update(cx, |s, cx| s.close(&id, cx));
-                navidog_core::vgroups::VirtualGroups::drop_connection(&id, cx);
+                navidog_app_state::vgroups::VirtualGroups::drop_connection(&id, cx);
                 navidog_session::outline::OutlineCache::drop_connection(&id, cx);
-                let _ = std::fs::remove_dir_all(navidog_core::paths::profile_dir(&id));
+                let _ = std::fs::remove_dir_all(navidog_model::paths::profile_dir(&id));
                 Workspace::global(cx).update(cx, |w, cx| w.select(Selection::None, cx));
                 true
             })

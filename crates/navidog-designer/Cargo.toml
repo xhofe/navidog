@@ -11,7 +11,8 @@ description = "Table structure designer for navidog."
 navidog-session = { path = "../navidog-session" }
 navidog-ui.workspace = true
 navidog-util.workspace = true
-navidog-core.workspace = true
+navidog-model.workspace = true
+navidog-app-state.workspace = true
 navidog-db.workspace = true
 gpui-kit = { workspace = true, features = ["tree-sitter-sql"] }
 rust-i18n.workspace = true

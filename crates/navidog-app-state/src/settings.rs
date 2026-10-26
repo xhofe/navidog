@@ -1,7 +1,7 @@
 use gpui_kit::{App, Global};
 use serde::{Deserialize, Serialize};
 
-use crate::paths;
+use navidog_model::paths;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -308,11 +308,11 @@ impl Settings {
     }
 
     fn load_from(path: &std::path::Path) -> Self {
-        crate::json_store::JsonStore::new(path).load()
+        navidog_model::json_store::JsonStore::new(path).load()
     }
 
     pub fn save(&self) {
-        crate::json_store::JsonStore::new(Self::path()).save_lossy(self);
+        navidog_model::json_store::JsonStore::new(Self::path()).save_lossy(self);
     }
 
     pub fn global(cx: &App) -> &Self {

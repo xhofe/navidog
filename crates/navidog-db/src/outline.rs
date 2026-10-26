@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use navidog_core::object::Scope;
+use navidog_model::object::Scope;
 use serde::{Deserialize, Serialize};
 
 use crate::dialect::Dialect;

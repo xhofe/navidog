@@ -12,7 +12,7 @@ mod plan;
 mod tests;
 
 use crate::{DbError, DbResult, Relational, dialect::Dialect};
-use navidog_core::object::{ObjectKind, Scope};
+use navidog_model::object::{ObjectKind, Scope};
 pub use plan::{plan, plan_with};
 use serde::{Deserialize, Serialize};
 

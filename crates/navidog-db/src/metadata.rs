@@ -1,7 +1,7 @@
 //! Metadata queries (20-objects.md §3). Every dialect's SQL lives here and runs through
 //! `Relational::execute_read`; drivers only declare their dialect.
 
-use navidog_core::object::{ObjectKind, Scope};
+use navidog_model::object::{ObjectKind, Scope};
 
 use crate::dialect::Dialect;
 use crate::driver::{
@@ -671,7 +671,7 @@ pub fn referenced_values_sql(
 
 #[cfg(test)]
 mod tests {
-    use navidog_core::object::Scope;
+    use navidog_model::object::Scope;
 
     use super::*;
 

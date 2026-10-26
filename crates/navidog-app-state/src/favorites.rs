@@ -4,9 +4,9 @@
 use gpui_kit::{App, AppContext as _, Context, Entity, Global};
 use serde::{Deserialize, Serialize};
 
-use crate::json_store::JsonStore;
-use crate::object::ObjectRef;
-use crate::paths;
+use navidog_model::json_store::JsonStore;
+use navidog_model::object::ObjectRef;
+use navidog_model::paths;
 
 /// How many recently opened objects the File menu lists.
 const RECENT_LIMIT: usize = 10;
@@ -118,7 +118,7 @@ pub(crate) fn init(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::object::{ObjectKind, Scope};
+    use navidog_model::object::{ObjectKind, Scope};
 
     #[gpui_kit::test]
     fn recent_is_most_recent_first_and_bounded(cx: &mut gpui_kit::TestAppContext) {

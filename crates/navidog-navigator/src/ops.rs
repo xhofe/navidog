@@ -6,15 +6,15 @@ use std::collections::HashSet;
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, InteractiveElement, Window};
-use navidog_core::actions::{
+use navidog_app_state::actions::{
     DeleteObjects, DuplicateQuery, DuplicateTable, EmptyTables, OpenQueryExternally, QueryRenamed,
     ReopenConnectionId, RevealQuery, TruncateTables,
 };
-use navidog_core::object::{ObjectKind, ObjectRef};
-use navidog_core::queries;
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_app_state::workspace::{Selection, Workspace};
 use navidog_db::DbError;
 use navidog_db::dialect::Dialect;
+use navidog_model::object::{ObjectKind, ObjectRef};
+use navidog_model::queries;
 use navidog_session::sessions::{Sessions, prepare_database};
 use navidog_ui::assets::lucide;
 use rust_i18n::t;
@@ -457,7 +457,7 @@ mod recovery_tests {
         for reopen in [false, true] {
             cx.update_window(handle, |_, window, cx| {
                 let object = ObjectRef {
-                    scope: navidog_core::object::Scope::new("retired", "main", None),
+                    scope: navidog_model::object::Scope::new("retired", "main", None),
                     kind: ObjectKind::Table,
                     name: "t".into(),
                 };

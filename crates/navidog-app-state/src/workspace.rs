@@ -2,8 +2,8 @@
 
 use gpui_kit::{App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString};
 
-use crate::connection::{ConnectionId, GroupId};
-use crate::object::{ObjectKind, ObjectRef, Scope};
+use navidog_model::connection::{ConnectionId, GroupId};
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Selection {

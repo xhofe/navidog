@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use futures::future::BoxFuture;
 use gpui_kit::{App, AppContext as _, Context, Entity, EventEmitter, Global, Task};
-use navidog_core::connection::ConnectionId;
-use navidog_core::store::ConnectionStore;
+use navidog_app_state::store::ConnectionStore;
+use navidog_model::connection::ConnectionId;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 

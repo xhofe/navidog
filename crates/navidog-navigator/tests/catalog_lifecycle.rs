@@ -7,12 +7,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui_kit::TestAppContext;
-use navidog_core::connection::Connection;
-use navidog_core::crypto::Key;
-use navidog_core::object::{ObjectKind, Scope};
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::{Selection, Workspace};
 use navidog_db::{ConnectParams, Secrets, connect, runtime, sqlite::SqliteDriver};
+use navidog_model::connection::Connection;
+use navidog_model::crypto::Key;
+use navidog_model::object::{ObjectKind, Scope};
 use navidog_navigator::catalog::{Catalog, Load};
 use navidog_session::sessions::Sessions;
 
@@ -59,7 +59,7 @@ fn selection_drives_loads_and_the_session_lifecycle_clears_them(cx: &mut TestApp
     unsafe { std::env::set_var("NAVIDOG_HOME", home.path()) };
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_navigator::init(cx);

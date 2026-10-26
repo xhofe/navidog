@@ -16,17 +16,17 @@ use gpui_kit::{
     MouseDownEvent, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
     Styled as _, Subscription, UniformListScrollHandle, WeakEntity, Window, div, img, uniform_list,
 };
-use navidog_core::actions::{
+use navidog_app_state::actions::{
     DeleteObjects, DesignTable, EmptyTables, NewQuery, NewTable, OpenConnection, OpenObject,
     RunQuery, TruncateTables,
 };
-use navidog_core::object::{ObjectKind, ObjectRef, Scope};
-use navidog_core::settings::Settings;
-use navidog_core::store::ConnectionStore;
-use navidog_core::vgroups::VirtualGroups;
-use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
+use navidog_app_state::settings::Settings;
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::vgroups::VirtualGroups;
+use navidog_app_state::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::ObjectInfo;
 use navidog_db::dialect::Dialect;
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_session::sessions::{ConnState, Sessions};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;

@@ -14,7 +14,8 @@ repository = "https://github.com/xhofe/navidog"
 # `version` lets `cargo publish` rewrite the path to a crates.io requirement.
 # Keep it equal to workspace.package.version.
 navidog-ui = { version = "0.0.1", path = "crates/navidog-ui" }
-navidog-core = { version = "0.0.1", path = "crates/navidog-core" }
+navidog-model = { version = "0.0.1", path = "crates/navidog-model" }
+navidog-app-state = { version = "0.0.1", path = "crates/navidog-app-state" }
 navidog-util = { version = "0.0.1", path = "crates/navidog-util" }
 navidog-db = { version = "0.0.1", path = "crates/navidog-db" }
 navidog-connection = { version = "0.0.1", path = "crates/navidog-connection" }

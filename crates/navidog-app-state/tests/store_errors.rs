@@ -1,7 +1,7 @@
 //! The store owns its translated diagnostics independently of connection UI initialization.
 
-use navidog_core::crypto::CryptoError;
-use navidog_core::store::StoreError;
+use navidog_app_state::store::StoreError;
+use navidog_model::crypto::CryptoError;
 
 #[test]
 fn store_errors_have_english_and_chinese_messages() {

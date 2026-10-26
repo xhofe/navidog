@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
-use navidog_core::object::{ObjectKind, Scope};
+use navidog_model::object::{ObjectKind, Scope};
 
 use crate::dialect::Dialect;
 use crate::params::ConnectParams;

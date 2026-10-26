@@ -10,7 +10,8 @@ description = "Object browser for navidog."
 [dependencies]
 navidog-session = { path = "../navidog-session" }
 navidog-ui.workspace = true
-navidog-core.workspace = true
+navidog-model.workspace = true
+navidog-app-state.workspace = true
 navidog-db.workspace = true
 navidog-util.workspace = true
 gpui-kit = { workspace = true, features = ["tree-sitter-sql"] }

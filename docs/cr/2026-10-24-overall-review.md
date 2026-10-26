@@ -41,8 +41,8 @@
 | S-07 | 每 crate i18n 后端导致的复制 | P2 | 已修 |
 | S-08 | 面板标题错误 | P2 | 已修 |
 | S-09 | designer i18n 顺序 | P2 | 已修 |
-| A-01 | core god crate | P2 | 进行中 |
-| A-02 | core/db 依赖 gpui-kit | P2 | 进行中 |
+| A-01 | core god crate | P2 | 已修 |
+| A-02 | core/db 依赖 gpui-kit | P2 | 已修 |
 | A-03 | db 职责超出驱动 | P2 | 进行中 |
 | A-04 | 驱动元数据散落 | P1 | 已修 |
 | A-05 | 提交逻辑在 grid | P1 | 已修 |
@@ -76,7 +76,7 @@
 
 - **D-08（Catalog/OutlineCache）**：`ScopeCache<K, T>` 泛型化后 Catalog 的五类缓存和 OutlineCache 共用同一状态机；`Catalog` 用 typed key 和 `LoadId` 管理 tasks/generation，`invalidate_connection` 一次清空 entries/tasks/generation。
 - **S-07（每 crate i18n 后端）**：明确契约为 crate-local：`scripts/check-i18n.sh` 校验每个字面量 `t!` key 都在本 crate locales 中；跨 crate 文案必须走 `navidog_ui::db_error_text` 这类显式 helper。统一后端仍可后续合并。
-- **A-01/A-02（core/db 分层，进行中）**：A-01 已抽出纯数据层 `navidog-model`；A-02 已把 `DriverRegistry`/`Sessions`/`OutlineCache`/`scope_cache` 移到 `navidog-session`，`navidog-db` 不再依赖 gpui-kit，只留驱动/SQL/元数据/建表。`navidog-core` 的 app-state（Global/Entity/actions/Workspace）仍需拆出，才能彻底去掉 core 对 gpui-kit 的直接依赖。
+- **A-01/A-02（core/db 分层）**：`navidog-core` 已删除，GPUI 应用状态迁到新的 `navidog-app-state`，纯数据留在 `navidog-model`；`navidog-db` 只依赖 model。`navidog-headless`（model + db）与 `scripts/check-deps.sh` 守住依赖方向，CI 已接入。
 - **A-06（缓存/选择）**：`Catalog::require(Requirement)` 成为唯一加载入口，`require_selection` 由 Workspace 选择事件驱动；objects 面板的 `ensure_loaded` 和 `stalled_load` 渲染期补偿已删除，navigator/信息/DDL 面板只声明所需条目。
 - **A-07（god object，进行中）**：`app/update.rs` 的安装/替换逻辑已拆到 `update/install.rs`；viewer/results/editor/form/model 的拆分仍是纯搬家工作。
 - **A-10（profile 交换模型，进行中）**：新增 `with_active_profile` 的 Drop 守卫，reencrypt 在 panic 时也会恢复激活配置；`profiles + active` 的 schema 迁移仍未做，需兼容旧 `connections.json`。

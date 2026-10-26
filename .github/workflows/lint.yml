@@ -80,6 +80,9 @@ jobs:
       - name: i18n check
         if: matrix.target == 'aarch64-apple-darwin'
         run: scripts/check-i18n.sh
+      - name: dependency direction check
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: scripts/check-deps.sh
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test

@@ -22,14 +22,14 @@ use gpui_kit::{
     MouseDownEvent, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
     StyleRefinement, Styled as _, StyledImage as _, Subscription, WeakEntity, Window, div, img,
 };
-use navidog_core::actions::*;
-use navidog_core::connection::Connection;
-use navidog_core::object::{ObjectKind, ObjectRef, Scope};
-use navidog_core::settings::Settings;
-use navidog_core::store::ConnectionStore;
-use navidog_core::vgroups::VirtualGroups;
-use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
+use navidog_app_state::actions::*;
+use navidog_app_state::settings::Settings;
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::vgroups::VirtualGroups;
+use navidog_app_state::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::dialect::Dialect;
+use navidog_model::connection::Connection;
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_session::sessions::{ConnState, Sessions, SessionsEvent};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;

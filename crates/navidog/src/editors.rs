@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use gpui_kit::component::dock::{BasePanelView, panel_handle};
 use gpui_kit::{App, Window};
-use navidog_core::object::{ObjectKind, ObjectRef};
 use navidog_grid::TableViewer;
+use navidog_model::object::{ObjectKind, ObjectRef};
 use navidog_navigator::DdlPanel;
 use navidog_query::QueryEditor;
 

@@ -6,25 +6,27 @@ use gpui_kit::{App, AppContext as _, Context, Entity, EventEmitter, Global};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::connection::{Connection, ConnectionId, Group, GroupId, SecretField, new_group_id};
-use crate::crypto::{self, CryptoError, CryptoMode, Key};
-use crate::paths;
+use navidog_model::connection::{
+    Connection, ConnectionId, Group, GroupId, SecretField, new_group_id,
+};
+use navidog_model::crypto::{self, CryptoError, CryptoMode, Key};
+use navidog_model::paths;
 use rust_i18n::t;
 
 /// A store or key error in the interface language. `StoreError`'s own text stays English, for logs.
 fn error_message(e: &StoreError) -> String {
     match e {
-        StoreError::Locked => t!("core.store_locked").to_string(),
-        StoreError::NotFound => t!("core.not_found").to_string(),
-        StoreError::Io(detail) => t!("core.save_failed", detail = detail).to_string(),
+        StoreError::Locked => t!("app_state.store_locked").to_string(),
+        StoreError::NotFound => t!("app_state.not_found").to_string(),
+        StoreError::Io(detail) => t!("app_state.save_failed", detail = detail).to_string(),
         StoreError::Crypto(CryptoError::Decrypt | CryptoError::Format) => {
-            t!("core.secret_unreadable").to_string()
+            t!("app_state.secret_unreadable").to_string()
         }
         StoreError::Crypto(CryptoError::Keychain(detail) | CryptoError::Io(detail)) => {
-            t!("core.keychain_failed", detail = detail).to_string()
+            t!("app_state.keychain_failed", detail = detail).to_string()
         }
         StoreError::Crypto(CryptoError::Kdf(detail)) => {
-            t!("core.kdf_failed", detail = detail).to_string()
+            t!("app_state.kdf_failed", detail = detail).to_string()
         }
     }
 }
@@ -134,7 +136,7 @@ impl ConnectionsFile {
     pub fn duplicate(&mut self, id: &str, suffix: &str, key: &Key) -> Option<ConnectionId> {
         let src = self.get(id).cloned()?;
         let mut copy = src.clone();
-        copy.id = crate::connection::new_connection_id();
+        copy.id = navidog_model::connection::new_connection_id();
         copy.name = format!("{} {suffix}", src.name);
         // A field the key cannot open is left out of the copy; the source keeps it
         Self::reencrypt(&mut copy, &src.id, key, key);
@@ -510,7 +512,7 @@ pub(crate) fn init(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::connection::Connection;
+    use navidog_model::connection::Connection;
 
     fn file_with(conn: Connection) -> ConnectionsFile {
         ConnectionsFile {

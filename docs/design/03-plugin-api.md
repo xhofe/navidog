@@ -13,7 +13,7 @@ navidog 的插件是 [gpui-shell](https://gpui-kit.com/zh-CN/shell) 应用：一
 | 每个插件有独立的 `Policy`，包含自己的 capabilities 和 HostModule 注册表（`Policy::with_host_module`）。 | navidog 自有的能力（读取连接列表、执行 SQL 等）按插件分别注册：没有授权的函数不会出现在该插件的 `navidog` 模块里。 |
 | 脚本 View 需要挂在 `ShellRoot` 之下，`window.open_dialog` 等调用才能生效。 | 插件面板在 Dock Panel 内部包一层 `ShellRoot`，M5 需要先验证这样做能否与宿主的 `Root` 共存。 |
 
-## 2. 注册表（`navidog-core`，M1）
+## 2. 注册表（`navidog-app-state`，M1）
 
 内置功能和插件功能都通过同一套注册表注册。每个条目都带有 `source` 字段，取值为 `Builtin` 或 `Plugin(PluginId)`；停用插件时，按 source 批量移除它注册的条目。
 
@@ -41,7 +41,7 @@ impl<K: Eq + Hash + Clone, V> Registry<K, V> {
 | `CellFormatterRegistry` | `FormatterId` | 声明式格式化规则 | 时间戳显示为日期 |
 | `PanelRegistry` | `PanelId` | 面板元数据（标题、默认停靠位置、尺寸）和构造函数 | 导航窗格、信息窗格 |
 
-注册表是 `navidog-core` 中的 GPUI `Global`；修改时调用 `cx.refresh_windows()`，菜单栏通过 `cx.set_menus` 重建。
+注册表是 `navidog-app-state` 中的 GPUI `Global`；修改时调用 `cx.refresh_windows()`，菜单栏通过 `cx.set_menus` 重建。
 
 ## 3. 插件目录
 

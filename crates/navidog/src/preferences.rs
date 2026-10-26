@@ -16,9 +16,9 @@ use gpui_kit::{
     IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
     Styled as _, Window, WindowBounds, WindowOptions, div,
 };
-use navidog_core::object::ObjectRef;
-use navidog_core::settings::{Appearance, Language, RowShade, Settings, ThemeFamily};
-use navidog_core::store::ConnectionStore;
+use navidog_app_state::settings::{Appearance, Language, RowShade, Settings, ThemeFamily};
+use navidog_app_state::store::ConnectionStore;
+use navidog_model::object::ObjectRef;
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::{FormRow, confirm_with, form_note, heading, truncated};
 use navidog_ui::{palette, tokens};
@@ -440,7 +440,7 @@ impl Preferences {
 
     fn render_advanced(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
-        let dir = navidog_core::paths::config_dir().display().to_string();
+        let dir = navidog_model::paths::config_dir().display().to_string();
         let is_master = ConnectionStore::global(cx).read(cx).is_master();
         v_flex()
             .gap(tokens::form::ROW_GAP.rems())
@@ -454,7 +454,7 @@ impl Preferences {
                 Button::new("reveal")
                     .label(t!("prefs.reveal").to_string())
                     .on_click(|_, _, cx| {
-                        cx.reveal_path(&navidog_core::paths::config_dir());
+                        cx.reveal_path(&navidog_model::paths::config_dir());
                     }),
             )
             .child(Self::section(t!("prefs.master_password").to_string()))

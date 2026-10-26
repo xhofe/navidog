@@ -13,10 +13,10 @@ use gpui_kit::{
     Global, InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
     Styled as _, Subscription, WeakEntity, Window, div,
 };
-use navidog_core::object::{ObjectKind, ObjectRef};
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::{Selection, Workspace};
 use navidog_db::ColumnInfo;
+use navidog_model::object::{ObjectKind, ObjectRef};
 use navidog_session::sessions::{ConnState, Sessions};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::{heading, truncated};
@@ -138,9 +138,10 @@ impl InfoPanel {
         let identifiers = crate::identifiers::IdentifiersPage::new(window, cx);
         let panel = cx.new(|cx: &mut Context<Self>| {
             let subs = vec![
-                cx.observe(&navidog_core::snippets::Snippets::global(cx), |_, _, cx| {
-                    cx.notify()
-                }),
+                cx.observe(
+                    &navidog_app_state::snippets::Snippets::global(cx),
+                    |_, _, cx| cx.notify(),
+                ),
                 cx.observe(
                     &navidog_session::outline::OutlineCache::global(cx),
                     |_, _, cx| cx.notify(),
@@ -235,7 +236,7 @@ impl InfoPanel {
         }
         let text = obj
             .as_ref()
-            .and_then(|o| navidog_core::queries::read(&o.scope, &o.name).ok())
+            .and_then(|o| navidog_model::queries::read(&o.scope, &o.name).ok())
             .unwrap_or_default();
         self.preview
             .update(cx, |s, cx| s.set_value(text, window, cx));
@@ -360,7 +361,7 @@ impl InfoPanel {
             }
             Selection::Connection(c) => conn_fields(c),
             Selection::Object(o) if o.kind == ObjectKind::Query => {
-                let path = navidog_core::queries::path(&o.scope, &o.name);
+                let path = navidog_model::queries::path(&o.scope, &o.name);
                 let mut f = vec![
                     (t!("info.object").to_string(), o.name.clone().into()),
                     (
@@ -699,7 +700,7 @@ impl Share {
             .sel
             .connection_id()
             .and_then(|id| ConnectionStore::global(cx).read(cx).get(id));
-        conn.map(|c| navidog_core::uri::of_selection(&self.sel, c, self.hide_host))
+        conn.map(|c| navidog_app_state::uri::of_selection(&self.sel, c, self.hide_host))
             .unwrap_or_default()
     }
 }

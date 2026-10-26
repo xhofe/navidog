@@ -37,7 +37,7 @@ impl MySqlDriver {
                 id: id.into(),
                 name: name.into(),
                 family: Family::Relational,
-                default_port: navidog_core::connection::driver_defaults(id).port,
+                default_port: navidog_model::connection::driver_defaults(id).port,
                 icon: if id == "mariadb" {
                     "icons/db/mariadb.svg"
                 } else {

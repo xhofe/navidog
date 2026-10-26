@@ -27,7 +27,7 @@ impl Default for SqliteDriver {
                 id: "sqlite".into(),
                 name: "SQLite".into(),
                 family: Family::Relational,
-                default_port: navidog_core::connection::driver_defaults("sqlite").port,
+                default_port: navidog_model::connection::driver_defaults("sqlite").port,
                 icon: "icons/db/sqlite.svg",
                 dialect: Dialect::Sqlite,
                 supports_ssl: false,

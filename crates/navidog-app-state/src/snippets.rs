@@ -6,8 +6,8 @@ use std::sync::LazyLock;
 use gpui_kit::{App, AppContext as _, Context, Entity, Global};
 use serde::{Deserialize, Serialize};
 
-use crate::json_store::JsonStore;
-use crate::paths;
+use navidog_model::json_store::JsonStore;
+use navidog_model::paths;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Snippet {

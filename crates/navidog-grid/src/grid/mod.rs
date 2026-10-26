@@ -17,9 +17,9 @@ use gpui_kit::{
     MouseUpEvent, ParentElement as _, Pixels, Render, SharedString, Styled as _, Subscription,
     TextAlign, WeakEntity, Window, actions, div, px,
 };
-use navidog_core::object::Scope;
-use navidog_core::settings::{RowShade, Settings};
+use navidog_app_state::settings::{RowShade, Settings};
 use navidog_db::dialect::Dialect;
+use navidog_model::object::Scope;
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::{confirm_with, truncated};
 use navidog_ui::{palette, tokens};
@@ -509,7 +509,7 @@ impl ResultGrid {
         if changed.is_empty() {
             return;
         }
-        navidog_core::column_widths::store(&target.scope, &target.table, &changed);
+        navidog_model::column_widths::store(&target.scope, &target.table, &changed);
     }
 
     pub fn scroll_to_row(&self, row: usize, cx: &mut App) {
@@ -855,7 +855,7 @@ fn grid_font_pt(cx: &App) -> Option<f32> {
 }
 
 fn load_widths(target: &GridTarget, _: &App) -> BTreeMap<SharedString, Pixels> {
-    navidog_core::column_widths::load(&target.scope, &target.table)
+    navidog_model::column_widths::load(&target.scope, &target.table)
         .into_iter()
         .map(|(name, width)| {
             // raw-px: persisted column widths are already pixels

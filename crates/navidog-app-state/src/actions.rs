@@ -4,7 +4,7 @@
 
 use gpui_kit::{Action, SharedString};
 
-use crate::object::ObjectRef;
+use navidog_model::object::ObjectRef;
 
 gpui_kit::actions!(
     connection,
@@ -201,5 +201,5 @@ pub struct DesignTable {
 #[derive(Clone, PartialEq, Debug, Action)]
 #[action(namespace = designer, no_json)]
 pub struct TableStructureChanged {
-    pub scope: crate::object::Scope,
+    pub scope: navidog_model::object::Scope,
 }

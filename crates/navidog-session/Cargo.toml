@@ -8,7 +8,8 @@ repository.workspace = true
 description = "Open connection runtime state, metadata cache and code-completion outline."
 
 [dependencies]
-navidog-core.workspace = true
+navidog-model.workspace = true
+navidog-app-state.workspace = true
 navidog-db = { path = "../navidog-db" }
 gpui-kit.workspace = true
 tokio.workspace = true

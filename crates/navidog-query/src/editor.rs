@@ -24,12 +24,12 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity, Window, actions,
     div, px,
 };
-use navidog_core::actions::OpenConnectionId;
-use navidog_core::object::{ObjectRef, Scope};
-use navidog_core::settings::{ResultsPosition, Settings, ShowAfterRun};
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_app_state::actions::OpenConnectionId;
+use navidog_app_state::settings::{ResultsPosition, Settings, ShowAfterRun};
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::{Selection, Workspace};
 use navidog_db::dialect::Dialect;
+use navidog_model::object::{ObjectRef, Scope};
 use navidog_session::sessions::{ConnState, Sessions, SessionsEvent};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
@@ -466,7 +466,7 @@ impl QueryEditor {
         this.update(cx, |this, cx| {
             this.file_mtime = this
                 .file_path()
-                .and_then(|p| navidog_core::queries::modified(&p));
+                .and_then(|p| navidog_model::queries::modified(&p));
             this.load_schemas(cx);
             this.ensure_outline(false, cx);
         });
@@ -546,7 +546,7 @@ impl QueryEditor {
 
     /// Opens a saved query (double-click in the navigator, favorites, recent objects).
     pub fn open_saved(object: ObjectRef, window: &mut Window, cx: &mut App) -> Entity<Self> {
-        let text = navidog_core::queries::read(&object.scope, &object.name).unwrap_or_default();
+        let text = navidog_model::queries::read(&object.scope, &object.name).unwrap_or_default();
         let target = Target {
             connection: Some(object.scope.connection.clone()),
             database: Some(object.scope.database.clone()),
@@ -916,7 +916,7 @@ impl QueryEditor {
 
     /// Tells the info pane where this (active) editor points.
     pub(crate) fn publish_context(&self, cx: &mut Context<Self>) {
-        let context = navidog_core::workspace::QueryContext {
+        let context = navidog_app_state::workspace::QueryContext {
             connection: self.target.connection.clone(),
             database: self.target.database.clone(),
             schema: self.target.schema.clone(),
@@ -1114,8 +1114,10 @@ impl QueryEditor {
                             t!("query.snippets").to_string(),
                         )
                         .on_click(|_, window, cx| {
-                            window
-                                .dispatch_action(Box::new(navidog_core::actions::ShowSnippets), cx)
+                            window.dispatch_action(
+                                Box::new(navidog_app_state::actions::ShowSnippets),
+                                cx,
+                            )
                         }),
                     )
                     .child(
@@ -1131,7 +1133,7 @@ impl QueryEditor {
                             .tooltip(t!("query.focus_mode").to_string())
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(
-                                    Box::new(navidog_core::actions::ToggleFocusMode),
+                                    Box::new(navidog_app_state::actions::ToggleFocusMode),
                                     cx,
                                 )
                             }),
@@ -1336,7 +1338,7 @@ fn context_menu(menu: NativeMenu, state: &Entity<EditorState>, cx: &App) -> Nati
         .separator()
         .menu(
             t!("query.create_snippet").to_string(),
-            Box::new(navidog_core::actions::CreateSnippet {
+            Box::new(navidog_app_state::actions::CreateSnippet {
                 code: selected.into(),
             }),
         )
@@ -1498,11 +1500,11 @@ impl Render for QueryEditor {
             }))
             // Snippets and identifiers dragged from the info pane land at the caret (a recorded
             // deviation: the editor does not map a drop point to a text position)
-            .on_drop(
-                cx.listener(|this, a: &navidog_core::actions::InsertText, window, cx| {
+            .on_drop(cx.listener(
+                |this, a: &navidog_app_state::actions::InsertText, window, cx| {
                     this.insert_text(&a.text, a.snippet, window, cx)
-                }),
-            )
+                },
+            ))
             .on_action(cx.listener(|this, _: &crate::save::SaveQuery, window, cx| {
                 this.save_query(false, window, cx)
             }))

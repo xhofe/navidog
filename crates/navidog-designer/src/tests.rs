@@ -4,7 +4,7 @@ use gpui_kit::{
     AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
     TestAppContext, Window, WindowOptions,
 };
-use navidog_core::object::Scope;
+use navidog_model::object::Scope;
 
 fn isolate_home(name: &str) -> (std::sync::MutexGuard<'static, ()>, std::path::PathBuf) {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -30,7 +30,7 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
     let (_guard, _) = isolate_home("draft");
     cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
         navidog_session::init(cx);
@@ -265,8 +265,10 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn saves_only_after_preview_and_keeps_failed_draft(cx: &mut TestAppContext) {
     let (_guard, home) = isolate_home("save");
-    use navidog_core::{connection::Connection, crypto::Key, store::ConnectionStore};
+    use navidog_app_state::store::ConnectionStore;
     use navidog_db::{ConnectParams, Secrets};
+    use navidog_model::connection::Connection;
+    use navidog_model::crypto::Key;
     use navidog_session::sessions::Sessions;
     use std::sync::Arc;
     cx.executor().allow_parking();
@@ -298,7 +300,7 @@ fn saves_only_after_preview_and_keeps_failed_draft(cx: &mut TestAppContext) {
     sql("SELECT 1");
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
         navidog_session::init(cx);
@@ -441,8 +443,10 @@ fn saves_only_after_preview_and_keeps_failed_draft(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn cascades_real_reference_metadata_and_preserves_drafts(cx: &mut TestAppContext) {
     use crate::panel::ChooseValue;
-    use navidog_core::{connection::Connection, crypto::Key, store::ConnectionStore};
+    use navidog_app_state::store::ConnectionStore;
     use navidog_db::{ConnectParams, Secrets};
+    use navidog_model::connection::Connection;
+    use navidog_model::crypto::Key;
     use navidog_session::sessions::Sessions;
     use std::sync::Arc;
     let (_guard, home) = isolate_home("references");
@@ -461,7 +465,7 @@ fn cascades_real_reference_metadata_and_preserves_drafts(cx: &mut TestAppContext
     });
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
         navidog_session::init(cx);
@@ -630,11 +634,13 @@ fn cascades_real_reference_metadata_and_preserves_drafts(cx: &mut TestAppContext
 
 #[gpui_kit::test]
 fn option_forms_use_saved_dialect_and_guard_invalid_previews(cx: &mut TestAppContext) {
-    use navidog_core::{connection::Connection, crypto::Key, store::ConnectionStore};
+    use navidog_app_state::store::ConnectionStore;
+    use navidog_model::connection::Connection;
+    use navidog_model::crypto::Key;
     let (_guard, _home) = isolate_home("option-forms");
     cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
         navidog_session::init(cx);
@@ -724,12 +730,14 @@ fn option_forms_use_saved_dialect_and_guard_invalid_previews(cx: &mut TestAppCon
 #[gpui_kit::test]
 fn postgres_comments_edit_in_the_grid_preview_and_restore(cx: &mut TestAppContext) {
     use gpui_kit::component::dock::{BasePanel as _, PanelInfo};
-    use navidog_core::{connection::Connection, crypto::Key, store::ConnectionStore};
+    use navidog_app_state::store::ConnectionStore;
     use navidog_db::table_design::TableDesign;
+    use navidog_model::connection::Connection;
+    use navidog_model::crypto::Key;
     let (_guard, _home) = isolate_home("pg-comments");
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
         navidog_session::init(cx);
@@ -861,7 +869,7 @@ fn reload_rebuilds_entry_forms_and_clears_validation(cx: &mut TestAppContext) {
     let (_guard, _) = isolate_home("review-reload");
     cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
         navidog_session::init(cx);
@@ -956,7 +964,7 @@ fn reload_while_previewing_replaces_stale_sql(cx: &mut TestAppContext) {
     let (_guard, _) = isolate_home("preview-reload");
     cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
         navidog_session::init(cx);

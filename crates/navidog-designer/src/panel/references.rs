@@ -1,6 +1,6 @@
 use super::structured::{REFERENCE_FIELDS, REFERENCE_SCHEMA, REFERENCE_TABLE};
 use super::*;
-use navidog_core::object::ObjectKind;
+use navidog_model::object::ObjectKind;
 
 #[derive(Default)]
 pub(super) struct ReferenceChoices {

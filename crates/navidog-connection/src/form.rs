@@ -13,13 +13,13 @@ use gpui_kit::{
     ParentElement as _, PathPromptOptions, Render, SharedString, Styled as _, Task,
     TestSupportExt as _, Window, div,
 };
-use navidog_core::connection::{
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::{Selection, Workspace};
+use navidog_db::{ConnectParams, Secrets, runtime};
+use navidog_model::connection::{
     AttachedDatabase, Connection, DatabaseItem, HostPreference, Member, SecretField, SshAuth,
     SslMode,
 };
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::{Selection, Workspace};
-use navidog_db::{ConnectParams, Secrets, runtime};
 use navidog_session::DriverRegistry;
 use navidog_ui::skin::{FormRow, confirm_with, form_note};
 use navidog_ui::{palette, tokens};
@@ -36,7 +36,7 @@ pub fn open_new(driver: SharedString, window: &mut Window, cx: &mut App) {
 }
 
 /// New connection prefilled from a URI (F-CONN-016).
-pub fn open_from_uri(uri: navidog_core::uri::DatabaseUri, window: &mut Window, cx: &mut App) {
+pub fn open_from_uri(uri: navidog_app_state::uri::DatabaseUri, window: &mut Window, cx: &mut App) {
     let mut conn = Connection::new(&uri.driver);
     conn.name = match &uri.database {
         Some(db) if !uri.host.is_empty() => format!("{}/{db}", uri.host),
@@ -889,7 +889,7 @@ impl ConnectionForm {
             FormRow::new(
                 t!("conn.settings_location").to_string(),
                 div().text_color(palette(cx).label_secondary).child(
-                    navidog_core::paths::profile_dir(&self.draft.id)
+                    navidog_model::paths::profile_dir(&self.draft.id)
                         .display()
                         .to_string(),
                 ),
@@ -1364,7 +1364,7 @@ impl ConnectionForm {
     }
 }
 
-fn depth(groups: &[navidog_core::connection::Group], id: &str) -> usize {
+fn depth(groups: &[navidog_model::connection::Group], id: &str) -> usize {
     let mut d = 0;
     let mut cur = groups
         .iter()

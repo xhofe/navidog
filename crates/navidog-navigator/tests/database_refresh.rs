@@ -9,12 +9,12 @@ use gpui_kit::{
     AppContext as _, Bounds, Context, Entity, IntoElement, ParentElement as _, Render, Role,
     Styled as _, TestAppContext, Window, WindowBounds, WindowOptions, div, px, size,
 };
-use navidog_core::connection::Connection;
-use navidog_core::crypto::Key;
-use navidog_core::object::{ObjectKind, ObjectRef, Scope};
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::Workspace;
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::Workspace;
 use navidog_db::{ConnectParams, Secrets, connect, runtime, sqlite::SqliteDriver};
+use navidog_model::connection::Connection;
+use navidog_model::crypto::Key;
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_navigator::DdlPanel;
 use navidog_navigator::catalog::{Catalog, Load, Requirement};
 use navidog_session::sessions::Sessions;
@@ -91,7 +91,7 @@ fn database_changes_reload_cached_metadata_and_open_ddl_without_touching_other_c
     unsafe { std::env::set_var("NAVIDOG_HOME", home.path()) };
     let (first, other) = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_navigator::init(cx);

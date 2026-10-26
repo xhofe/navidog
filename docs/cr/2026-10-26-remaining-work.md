@@ -13,8 +13,8 @@
 | --- | --- | --- | --- | --- | --- |
 | R-04 / D-05 | 统一 SQL 扫描/词法 | 已完成 | SQL lexer | 无 | 大 |
 | D-08 | Catalog/OutlineCache 统一缓存 | 已完成 | ScopeCache | 无 | 中 |
-| A-01 | `navidog-core` 拆 app-state | 部分完成 | app-state split | 无 | 大 |
-| A-02 | core 去掉 gpui-kit | 部分完成 | 随 A-01 | A-01 | 中 |
+| A-01 | `navidog-core` 拆 app-state | 已完成 | app-state split | 无 | 大 |
+| A-02 | core 去掉 gpui-kit | 已完成 | 随 A-01 | A-01 | 中 |
 | A-03 | `navidog-db` 去掉 table_design | 部分完成 | schema crate | R-04 | 大 |
 | A-06 | 缓存/选择状态收口 | 已完成 | Cache/selection | D-08 | 中 |
 | A-07 | god object/超长文件 | 部分完成 | file splits | 无 | 大 |
@@ -146,6 +146,13 @@ pub fn spans(sql: &str, dialect: Dialect) -> Vec<Span>;
 ### 主要文件
 
 `crates/navidog-core/src/{settings,store,workspace,favorites,snippets,vgroups,actions,registry,uri}.rs`、`crates/navidog-core/Cargo.toml`。
+
+### 完成情况（2026-10-26，`refactor/remaining-work`）
+
+- `navidog-core` 整体改名为 `navidog-app-state`：9 个 GPUI 模块（settings/store/workspace/favorites/snippets/vgroups/actions/registry/uri）加 `init` 迁入新 crate，内部 `crate::object` 等纯数据引用改为 `navidog_model::…`，i18n 域从 `core.*` 改为 `app_state.*`（`locales/app_state.yml`）。
+- `navidog-core` 已删除，没有兼容 facade：71 个文件里的 322 处 `navidog_core::…` 按模块直接迁到 `navidog_model::…`（connection/crypto/object/paths/queries/json_store/column_widths）或 `navidog_app_state::…`，Cargo 依赖按实际使用拆成 `navidog-model` / `navidog-app-state` 两条。
+- A-02：`navidog-db` 只依赖 `navidog-model`，`cargo check -p navidog-db` 不再出现 gpui；新增 `crates/navidog-headless`（只依赖 model + db）证明驱动栈可以脱离 GPUI 编译并运行 SQLite；`scripts/check-deps.sh` 断言 model/db/sql/util/sql-log/headless 的 normal 依赖里没有 `gpui`，并禁止 `crates/navidog-core` 回潮，已接入 `lint.yml`。
+- `docs/design/00-overview.md` 的 crate 表、依赖规则和里程碑 crate 列已同步；M7 的 ER 图 crate 暂记作 `navidog-er`，因为 `navidog-model` 已是纯数据层。
 
 ## 4. A-02：core 去掉 `gpui-kit`
 

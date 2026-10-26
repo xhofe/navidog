@@ -31,10 +31,10 @@ mod test_env {
 }
 
 use gpui_kit::{Action, App, SharedString};
-use navidog_core::object::ObjectKind;
-use navidog_core::registry::{CommandInfo, CommandRegistry, Source};
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_app_state::registry::{CommandInfo, CommandRegistry, Source};
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::{Selection, Workspace};
+use navidog_model::object::ObjectKind;
 use rust_i18n::t;
 
 pub use ddl::DdlPanel;
@@ -68,7 +68,7 @@ pub fn init(cx: &mut App) {
 }
 
 /// Scope the category buttons act on: the database for MySQL / SQLite; PostgreSQL needs a schema.
-fn category_scope(cx: &App) -> Option<navidog_core::object::Scope> {
+fn category_scope(cx: &App) -> Option<navidog_model::object::Scope> {
     let scope = Workspace::global(cx).read(cx).selection().scope()?;
     let dialect = navidog_session::sessions::Sessions::global(cx)
         .read(cx)

@@ -9,13 +9,13 @@ use gpui_kit::{
     AnyWindowHandle, AppContext as _, Bounds, ElementId, Role, TestAppContext, WindowBounds,
     WindowOptions, px, size,
 };
-use navidog_core::connection::Connection;
-use navidog_core::crypto::Key;
-use navidog_core::object::{ObjectKind, ObjectRef, Scope};
-use navidog_core::settings::Settings;
-use navidog_core::store::ConnectionStore;
+use navidog_app_state::settings::Settings;
+use navidog_app_state::store::ConnectionStore;
 use navidog_db::{ConnectParams, Secrets, connect, runtime, sqlite::SqliteDriver};
 use navidog_grid::TableViewer;
+use navidog_model::connection::Connection;
+use navidog_model::crypto::Key;
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_navigator::DdlPanel;
 use navidog_query::{QueryEditor, Target};
 use navidog_session::sessions::Sessions;

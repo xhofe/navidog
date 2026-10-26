@@ -50,7 +50,7 @@ fn sqlite_create_attach_execute_and_error_codes() {
         // Code completion info: tables, views and their columns in one go
         let outline = navidog_db::outline::fetch(
             session.relational().unwrap(),
-            &navidog_core::object::Scope::new("c", "main", None),
+            &navidog_model::object::Scope::new("c", "main", None),
             false,
         )
         .await
@@ -72,8 +72,8 @@ fn sqlite_create_attach_execute_and_error_codes() {
 
 #[test]
 fn sqlite_metadata_and_change_sets() {
-    use navidog_core::object::{ObjectKind, Scope};
     use navidog_db::dialect::{ChangeSet, RowKey, RowUpdate, Written};
+    use navidog_model::object::{ObjectKind, Scope};
 
     let dir = tempfile::tempdir().unwrap();
     let params = ConnectParams {

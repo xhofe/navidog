@@ -11,7 +11,7 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Styled as _, Window,
     div,
 };
-use navidog_core::settings::Settings;
+use navidog_app_state::settings::Settings;
 use navidog_ui::skin::{form_note, truncated};
 use navidog_ui::theme::{SYNTAX_KEYS, syntax_color, to_hex};
 use navidog_ui::{palette, tokens};

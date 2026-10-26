@@ -60,7 +60,7 @@ impl Picker {
 
     fn next_from_uri(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.uri.read(cx).value().to_string();
-        let Some(uri) = navidog_core::uri::DatabaseUri::parse_any(&text) else {
+        let Some(uri) = navidog_app_state::uri::DatabaseUri::parse_any(&text) else {
             window.push_notification(t!("conn.uri_invalid").to_string(), cx);
             return;
         };

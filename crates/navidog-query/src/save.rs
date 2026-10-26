@@ -12,9 +12,9 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, Global, IntoElement, ParentElement as _, Render,
     Styled as _, WeakEntity, Window, actions, div,
 };
-use navidog_core::object::{ObjectKind, ObjectRef, Scope};
-use navidog_core::queries;
-use navidog_core::workspace::Workspace;
+use navidog_app_state::workspace::Workspace;
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
+use navidog_model::queries;
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::{confirm_with, heading};
 use navidog_ui::{palette, tokens};
@@ -52,7 +52,7 @@ pub fn editor_for(object: &ObjectRef, cx: &mut App) -> Option<Entity<QueryEditor
 }
 
 pub(crate) fn init(cx: &mut App) {
-    cx.on_action(|a: &navidog_core::actions::QueryRenamed, cx| {
+    cx.on_action(|a: &navidog_app_state::actions::QueryRenamed, cx| {
         for editor in open_editors(cx) {
             editor.update(cx, |e, cx| {
                 if e.source == QuerySource::Saved(a.from.clone()) {
@@ -261,7 +261,7 @@ impl QueryEditor {
         cx: &mut Context<Self>,
     ) -> bool {
         let text = self.text(cx);
-        match navidog_core::paths::write_atomic(path, text.as_bytes()) {
+        match navidog_model::paths::write_atomic(path, text.as_bytes()) {
             Ok(()) => {
                 self.file_mtime = queries::modified(path);
                 true

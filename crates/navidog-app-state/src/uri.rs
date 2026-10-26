@@ -3,7 +3,7 @@
 //! The format is our own and not compatible with Navicat URIs. Standard database URIs
 //! (`mysql://user:password@host:port/db`, `postgres://…`) prefill new connections (F-CONN-016).
 
-use crate::object::ObjectKind;
+use navidog_model::object::ObjectKind;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ObjectUri {
@@ -62,7 +62,7 @@ impl ObjectUri {
 /// The navidog URI of a selection (`hide_host` leaves out host and port).
 pub fn of_selection(
     sel: &crate::workspace::Selection,
-    conn: &crate::connection::Connection,
+    conn: &navidog_model::connection::Connection,
     hide_host: bool,
 ) -> String {
     use crate::workspace::Selection;
@@ -248,9 +248,9 @@ mod tests {
 
     #[test]
     fn shared_uris_prefill_new_connections() {
-        use crate::connection::Connection;
-        use crate::object::{ObjectRef, Scope};
         use crate::workspace::Selection;
+        use navidog_model::connection::Connection;
+        use navidog_model::object::{ObjectRef, Scope};
         let mut conn = Connection::new("postgres");
         conn.name = "prod".into();
         let sel = Selection::Object(ObjectRef {

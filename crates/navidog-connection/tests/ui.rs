@@ -8,11 +8,11 @@ use gpui_kit::{
     AppContext as _, Context, FocusHandle, InteractiveElement as _, IntoElement, Render,
     Styled as _, TestAppContext, Window, WindowBounds, WindowOptions, div, size,
 };
-use navidog_core::actions::{
+use navidog_app_state::actions::{
     ManageConnections, NewConnectionOf, NewProfile, OpenConnection, SwitchProfile,
 };
-use navidog_core::crypto::Key;
-use navidog_core::store::ConnectionStore;
+use navidog_app_state::store::ConnectionStore;
+use navidog_model::crypto::Key;
 use navidog_session::sessions::{ConnState, Sessions};
 
 struct Host {
@@ -53,7 +53,7 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
 
     cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_connection::init(cx);

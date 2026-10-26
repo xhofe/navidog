@@ -55,10 +55,10 @@ impl Render for TableViewer {
             .on_action(cx.listener(|this, _: &RollbackTransaction, _, cx| this.rollback(cx)))
             .on_action(cx.listener(|this, _: &QueryTable, window, cx| this.query_table(window, cx)))
             .on_action(cx.listener(
-                |this, action: &navidog_core::actions::DesignTable, window, cx| {
+                |this, action: &navidog_app_state::actions::DesignTable, window, cx| {
                     if action.object.is_none() {
                         window.dispatch_action(
-                            Box::new(navidog_core::actions::DesignTable {
+                            Box::new(navidog_app_state::actions::DesignTable {
                                 object: Some(this.object.clone()),
                             }),
                             cx,
