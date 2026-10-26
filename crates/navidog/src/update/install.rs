@@ -13,6 +13,10 @@ pub enum Delivery {
 }
 
 /// What the installer is doing after the file is on disk. The dialog names the step.
+///
+/// Each platform emits only some steps: macOS mounts, copies, verifies and replaces, while
+/// Windows and Linux just hand the installer to the OS. The dialog still matches all of them.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum InstallPhase {
     Mounting,
