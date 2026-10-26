@@ -16,7 +16,7 @@ use navidog_core::store::ConnectionStore;
 use navidog_core::workspace::Workspace;
 use navidog_db::{ConnectParams, Secrets, connect, runtime, sqlite::SqliteDriver};
 use navidog_navigator::DdlPanel;
-use navidog_navigator::catalog::{Catalog, Load};
+use navidog_navigator::catalog::{Catalog, Load, Requirement};
 use navidog_session::sessions::Sessions;
 
 struct Host {
@@ -150,12 +150,32 @@ fn database_changes_reload_cached_metadata_and_open_ddl_without_touching_other_c
     cx.update(|cx| {
         Catalog::global(cx).update(cx, |catalog, cx| {
             for scope in [&scope, &other_scope] {
-                catalog.ensure_schemas(&scope.connection, &scope.database, false, cx);
-                catalog.ensure_objects(scope, ObjectKind::Table, false, cx);
-                catalog.ensure_objects(scope, ObjectKind::View, false, cx);
-                catalog.ensure_columns(scope, "items", false, cx);
-                catalog.ensure_table_children(scope, "items", false, cx);
-                catalog.ensure_ddl(&view(scope), false, cx);
+                catalog.require_all(
+                    [
+                        Requirement::Schemas {
+                            connection: scope.connection.clone(),
+                            database: scope.database.clone(),
+                        },
+                        Requirement::Objects {
+                            scope: scope.clone(),
+                            kind: ObjectKind::Table,
+                        },
+                        Requirement::Objects {
+                            scope: scope.clone(),
+                            kind: ObjectKind::View,
+                        },
+                        Requirement::Columns {
+                            scope: scope.clone(),
+                            table: "items".into(),
+                        },
+                        Requirement::Children {
+                            scope: scope.clone(),
+                            table: "items".into(),
+                        },
+                        Requirement::Ddl(view(scope)),
+                    ],
+                    cx,
+                );
             }
         });
     });

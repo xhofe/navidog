@@ -17,7 +17,7 @@ use navidog_session::sessions::{Sessions, SessionsEvent};
 use navidog_ui::assets::lucide;
 use navidog_ui::{palette, tabs};
 
-use crate::catalog::{Catalog, Load};
+use crate::catalog::{Catalog, Load, Requirement};
 
 const PANEL: &str = "DdlPanel";
 
@@ -113,7 +113,9 @@ impl DdlPanel {
                 cx.subscribe(&Sessions::global(cx), |this, _, e: &SessionsEvent, cx| {
                     if matches!(e, SessionsEvent::Opened(id) if *id == this.object.scope.connection)
                     {
-                        this.load(cx);
+                        Catalog::global(cx).update(cx, |c, cx| {
+                            c.require(Requirement::Ddl(this.object.clone()), cx)
+                        });
                     }
                 }),
             ];
@@ -123,14 +125,11 @@ impl DdlPanel {
                 editor,
                 _subscriptions: subs,
             };
-            this.load(cx);
+            Catalog::global(cx).update(cx, |c, cx| {
+                c.require(Requirement::Ddl(this.object.clone()), cx)
+            });
             this
         })
-    }
-
-    fn load(&self, cx: &mut App) {
-        let obj = self.object.clone();
-        Catalog::global(cx).update(cx, |c, cx| c.ensure_ddl(&obj, false, cx));
     }
 
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {

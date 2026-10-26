@@ -21,7 +21,11 @@ pub enum Token {
 /// PostgreSQL's rules: no `#` comments, `E'…'` strings and protected dollar bodies, which is
 /// what the generic scan did before there was a shared lexer.
 fn lexer(mysql: bool) -> Dialect {
-    if mysql { Dialect::MySql } else { Dialect::Postgres }
+    if mysql {
+        Dialect::MySql
+    } else {
+        Dialect::Postgres
+    }
 }
 
 /// Spans of `sql` that are strings, quoted identifiers, dollar bodies or comments:

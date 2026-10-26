@@ -1,42 +1,115 @@
-//! Metadata cache: schemas, object lists, DDL, fields and table children. Loads only start when a
-//! node expands or the selection changes (never in render), and are invalidated when the
-//! connection closes or refreshes.
+//! Metadata cache: schemas, object lists, DDL, fields and table children. A pane states what it
+//! needs with a [`Requirement`]; [`Catalog::require`] decides whether that starts a query. Loads
+//! never start in render, and are invalidated when the connection closes or refreshes.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
-use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
+use gpui_kit::{App, AppContext as _, Context, Entity, Global};
 use navidog_core::object::{ObjectKind, ObjectRef, Scope};
 use navidog_core::store::{ConnectionStore, StoreEvent};
-use navidog_core::workspace::{Workspace, WorkspaceEvent};
+use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::{ColumnInfo, DbResult, ObjectInfo, TableChildren};
+use navidog_session::scope_cache::ScopeCache;
 use navidog_session::sessions::{Sessions, SessionsEvent};
 use tokio::task::JoinHandle;
 
 pub use navidog_session::scope_cache::Load;
 
+/// Cache key of one database's schema list.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct SchemaKey {
+    connection: String,
+    database: String,
+}
+
+/// Cache key of one object category of a scope.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ObjectsKey {
+    scope: Scope,
+    kind: ObjectKind,
+}
+
+/// Cache key of a table's fields or children.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct TableKey {
+    scope: Scope,
+    table: String,
+}
+
+/// One in-flight load, typed per cache: a fields load and a children load of the same table both
+/// use a `(scope, table)` key and must not finish each other's entry.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum LoadId {
+    Schemas(SchemaKey),
+    Objects(ObjectsKey),
+    Ddl(ObjectRef),
+    Columns(TableKey),
+    Children(TableKey),
+}
+
+impl LoadId {
+    fn connection(&self) -> &str {
+        match self {
+            Self::Schemas(key) => &key.connection,
+            Self::Objects(key) => &key.scope.connection,
+            Self::Ddl(object) => &object.scope.connection,
+            Self::Columns(key) | Self::Children(key) => &key.scope.connection,
+        }
+    }
+
+    fn scope(&self) -> Option<&Scope> {
+        match self {
+            Self::Schemas(_) => None,
+            Self::Objects(key) => Some(&key.scope),
+            Self::Ddl(object) => Some(&object.scope),
+            Self::Columns(key) | Self::Children(key) => Some(&key.scope),
+        }
+    }
+}
+
+/// What a pane shows from the metadata cache. Sending a requirement is how a pane asks for data;
+/// whether a query starts is the cache's decision, so a pane never checks "is it loaded" itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Requirement {
+    Schemas {
+        connection: String,
+        database: String,
+    },
+    Objects {
+        scope: Scope,
+        kind: ObjectKind,
+    },
+    Ddl(ObjectRef),
+    Columns {
+        scope: Scope,
+        table: String,
+    },
+    Children {
+        scope: Scope,
+        table: String,
+    },
+}
+
 #[derive(Default)]
 pub struct Catalog {
-    schemas: HashMap<(String, String), Load<Vec<String>>>,
-    objects: HashMap<(Scope, ObjectKind), Load<Vec<ObjectInfo>>>,
-    ddl: HashMap<ObjectRef, Load<String>>,
-    columns: HashMap<(Scope, String), Load<Vec<ColumnInfo>>>,
-    children: HashMap<(Scope, String), Load<TableChildren>>,
-    tasks: HashMap<String, Task<()>>,
+    schemas: ScopeCache<SchemaKey, Vec<String>>,
+    objects: ScopeCache<ObjectsKey, Vec<ObjectInfo>>,
+    ddl: ScopeCache<ObjectRef, String>,
+    columns: ScopeCache<TableKey, Vec<ColumnInfo>>,
+    children: ScopeCache<TableKey, TableChildren>,
+    /// One token per in-flight load, so a result from a load that an invalidation already
+    /// replaced cannot overwrite the new one.
+    generation: HashMap<LoadId, u64>,
+    generation_clock: u64,
     /// Bumps on every cache change. Panes that draw from a snapshot (the
     /// navigator tree) compare this, because a catalog read during render
     /// makes gpui skip observers and only redraw the pane that read it.
     revision: u64,
-    /// One token per in-flight load, so a result from a load that
-    /// `invalidate_connection` already replaced cannot overwrite the new one.
-    generation: HashMap<String, u64>,
-    generation_clock: u64,
 }
 
 struct GlobalCatalog(Entity<Catalog>);
 impl Global for GlobalCatalog {}
-
-type Slot<K, T> = fn(&mut Catalog) -> &mut HashMap<K, Load<T>>;
 
 impl Catalog {
     pub fn global(cx: &App) -> Entity<Self> {
@@ -44,11 +117,17 @@ impl Catalog {
     }
 
     pub fn schemas(&self, conn: &str, db: &str) -> Option<&Load<Vec<String>>> {
-        self.schemas.get(&(conn.to_string(), db.to_string()))
+        self.schemas.get(&SchemaKey {
+            connection: conn.to_string(),
+            database: db.to_string(),
+        })
     }
 
     pub fn objects(&self, scope: &Scope, kind: ObjectKind) -> Option<&Load<Vec<ObjectInfo>>> {
-        self.objects.get(&(scope.clone(), kind))
+        self.objects.get(&ObjectsKey {
+            scope: scope.clone(),
+            kind,
+        })
     }
 
     pub fn object(&self, obj: &ObjectRef) -> Option<&ObjectInfo> {
@@ -63,11 +142,17 @@ impl Catalog {
     }
 
     pub fn columns(&self, scope: &Scope, table: &str) -> Option<&Load<Vec<ColumnInfo>>> {
-        self.columns.get(&(scope.clone(), table.to_string()))
+        self.columns.get(&TableKey {
+            scope: scope.clone(),
+            table: table.to_string(),
+        })
     }
 
     pub fn table_children(&self, scope: &Scope, table: &str) -> Option<&Load<TableChildren>> {
-        self.children.get(&(scope.clone(), table.to_string()))
+        self.children.get(&TableKey {
+            scope: scope.clone(),
+            table: table.to_string(),
+        })
     }
 
     pub fn revision(&self) -> u64 {
@@ -78,33 +163,180 @@ impl Catalog {
         self.revision = self.revision.wrapping_add(1);
     }
 
+    /// Loads `requirements` that are not cached yet. A cached entry starts no query.
+    pub fn require_all(
+        &mut self,
+        requirements: impl IntoIterator<Item = Requirement>,
+        cx: &mut Context<Self>,
+    ) {
+        for requirement in requirements {
+            self.require(requirement, cx);
+        }
+    }
+
+    /// Loads a missing entry; a cached entry starts no query.
+    pub fn require(&mut self, requirement: Requirement, cx: &mut Context<Self>) {
+        self.require_with(requirement, false, cx);
+    }
+
+    /// Loads `requirements` again, even when they are cached (Refresh).
+    pub fn reload_all(
+        &mut self,
+        requirements: impl IntoIterator<Item = Requirement>,
+        cx: &mut Context<Self>,
+    ) {
+        for requirement in requirements {
+            self.require_with(requirement, true, cx);
+        }
+    }
+
+    fn require_with(&mut self, requirement: Requirement, force: bool, cx: &mut Context<Self>) {
+        match requirement {
+            Requirement::Schemas {
+                connection,
+                database,
+            } => {
+                let key = SchemaKey {
+                    connection,
+                    database,
+                };
+                let (c, d) = (key.connection.clone(), key.database.clone());
+                let job = move |cx: &App| {
+                    Sessions::global(cx)
+                        .read(cx)
+                        .run_rel(&c, Some(&d), |r| r.list_schemas())
+                };
+                self.start(
+                    LoadId::Schemas(key.clone()),
+                    key,
+                    |c| &mut c.schemas,
+                    job,
+                    force,
+                    cx,
+                );
+            }
+            Requirement::Objects { scope, kind } => {
+                let key = ObjectsKey { scope, kind };
+                let id = LoadId::Objects(key.clone());
+                // Saved queries are files in the profile folder: listed here, never by the driver
+                if kind == ObjectKind::Query {
+                    if force || !self.objects.contains(&key) {
+                        let list = query_infos(&key.scope);
+                        self.objects.insert(key, Load::Ready(list));
+                        self.bump();
+                        cx.notify();
+                    }
+                    return;
+                }
+                let (conn, db) = (key.scope.connection.clone(), key.scope.database.clone());
+                let job_scope = key.scope.clone();
+                let job = move |cx: &App| {
+                    Sessions::global(cx)
+                        .read(cx)
+                        .run_rel(&conn, Some(&db), move |r| {
+                            Box::pin(async move { r.list_objects(&job_scope, kind).await })
+                        })
+                };
+                self.start(id, key, |c| &mut c.objects, job, force, cx);
+            }
+            Requirement::Ddl(object) => {
+                let id = LoadId::Ddl(object.clone());
+                let (conn, db) = (
+                    object.scope.connection.clone(),
+                    object.scope.database.clone(),
+                );
+                let job_object = object.clone();
+                let job = move |cx: &App| {
+                    Sessions::global(cx)
+                        .read(cx)
+                        .run_rel(&conn, Some(&db), move |r| {
+                            Box::pin(async move {
+                                r.object_ddl(&job_object.scope, job_object.kind, &job_object.name)
+                                    .await
+                            })
+                        })
+                };
+                self.start(id, object, |c| &mut c.ddl, job, force, cx);
+            }
+            Requirement::Columns { scope, table } => {
+                let key = TableKey { scope, table };
+                let id = LoadId::Columns(key.clone());
+                let (conn, db) = (key.scope.connection.clone(), key.scope.database.clone());
+                let (job_scope, job_table) = (key.scope.clone(), key.table.clone());
+                let job = move |cx: &App| {
+                    Sessions::global(cx)
+                        .read(cx)
+                        .run_rel(&conn, Some(&db), move |r| {
+                            Box::pin(async move { r.table_columns(&job_scope, &job_table).await })
+                        })
+                };
+                self.start(id, key, |c| &mut c.columns, job, force, cx);
+            }
+            Requirement::Children { scope, table } => {
+                let key = TableKey { scope, table };
+                let id = LoadId::Children(key.clone());
+                let (conn, db) = (key.scope.connection.clone(), key.scope.database.clone());
+                let (job_scope, job_table) = (key.scope.clone(), key.table.clone());
+                let job = move |cx: &App| {
+                    Sessions::global(cx)
+                        .read(cx)
+                        .run_rel(&conn, Some(&db), move |r| {
+                            Box::pin(async move { r.table_children(&job_scope, &job_table).await })
+                        })
+                };
+                self.start(id, key, |c| &mut c.children, job, force, cx);
+            }
+        }
+    }
+
+    /// Loads the entries the workspace selection shows: a database's schema list, or the object
+    /// list of the selected category. Panes no longer decide this themselves.
+    pub fn require_selection(&mut self, cx: &mut Context<Self>) {
+        let selection = Workspace::global(cx).read(cx).selection().clone();
+        let mut requirements = Vec::new();
+        if let Selection::Database(c, d) = &selection {
+            match Sessions::global(cx).read(cx).dialect(c) {
+                Some(dialect) if dialect.has_schemas() => requirements.push(Requirement::Schemas {
+                    connection: c.clone(),
+                    database: d.clone(),
+                }),
+                Some(_) => requirements.push(Requirement::Objects {
+                    scope: Scope::new(c.clone(), d.clone(), None),
+                    kind: ObjectKind::Table,
+                }),
+                None => {}
+            }
+        }
+        if let Some((scope, kind)) = listed_kind(&selection) {
+            requirements.push(Requirement::Objects { scope, kind });
+        }
+        self.require_all(requirements, cx);
+    }
+
     /// `job` starts the query, so it runs only on a cache miss: `run_rel` begins executing as
     /// soon as it is called.
-    fn load<K, T>(
+    fn start<K, T>(
         &mut self,
-        slot_name: &'static str,
+        id: LoadId,
         key: K,
-        slot: Slot<K, T>,
+        slot: fn(&mut Self) -> &mut ScopeCache<K, T>,
         job: impl FnOnce(&App) -> Option<JoinHandle<DbResult<T>>>,
         force: bool,
         cx: &mut Context<Self>,
     ) where
-        K: Hash + Eq + Clone + std::fmt::Debug + 'static,
+        K: Clone + Eq + Hash + 'static,
         T: Send + 'static,
     {
-        if !force && slot(self).contains_key(&key) {
+        if !force && slot(self).contains(&key) {
             return;
         }
         let Some(job) = job(cx) else { return };
         self.generation_clock = self.generation_clock.wrapping_add(1);
         let generation = self.generation_clock;
-        // Columns and table children use the same `(scope, table)` key. The task map
-        // drops the previous task, which cancels it, so the slot name has to be part of the id.
-        let task_key = format!("{slot_name}:{key:?}");
-        self.generation.insert(task_key.clone(), generation);
-        slot(self).insert(key.clone(), Load::Loading);
+        self.generation.insert(id.clone(), generation);
+        slot(self).insert_loading(key.clone());
         self.bump();
-        let task_key_for_task = task_key.clone();
+        let task_key = key.clone();
         let task = cx.spawn(async move |this, cx| {
             let result = match job.await {
                 Ok(Ok(v)) => Load::Ready(v),
@@ -113,156 +345,111 @@ impl Catalog {
             };
             let _ = this.update(cx, |this, cx| {
                 // A newer load, or an invalidation, owns this key now.
-                if this.generation.get(&task_key_for_task) != Some(&generation)
-                    || !slot(this).contains_key(&key)
-                {
+                if this.generation.get(&id) != Some(&generation) {
                     return;
                 }
-                slot(this).insert(key, result);
+                this.generation.remove(&id);
+                slot(this).insert(task_key, result);
                 this.bump();
                 cx.notify();
             });
         });
-        self.tasks.insert(task_key, task);
+        slot(self).set_task(key, task);
         cx.notify();
-    }
-
-    pub fn ensure_schemas(&mut self, conn: &str, db: &str, force: bool, cx: &mut Context<Self>) {
-        let (c, d) = (conn.to_string(), db.to_string());
-        let job = move |cx: &App| {
-            Sessions::global(cx)
-                .read(cx)
-                .run_rel(&c, Some(&d), |r| r.list_schemas())
-        };
-        let key = (conn.to_string(), db.to_string());
-        self.load("schemas", key, |c| &mut c.schemas, job, force, cx);
-    }
-
-    pub fn ensure_objects(
-        &mut self,
-        scope: &Scope,
-        kind: ObjectKind,
-        force: bool,
-        cx: &mut Context<Self>,
-    ) {
-        // Saved queries are files in the profile folder: listed here, never by the driver
-        if kind == ObjectKind::Query {
-            let key = (scope.clone(), kind);
-            if force || !self.objects.contains_key(&key) {
-                self.objects.insert(key, Load::Ready(query_infos(scope)));
-                self.bump();
-                cx.notify();
-            }
-            return;
-        }
-        let s = scope.clone();
-        let job = move |cx: &App| {
-            let (conn, db) = (s.connection.clone(), s.database.clone());
-            Sessions::global(cx)
-                .read(cx)
-                .run_rel(&conn, Some(&db), move |r| {
-                    Box::pin(async move { r.list_objects(&s, kind).await })
-                })
-        };
-        let key = (scope.clone(), kind);
-        self.load("objects", key, |c| &mut c.objects, job, force, cx);
-    }
-
-    pub fn ensure_ddl(&mut self, obj: &ObjectRef, force: bool, cx: &mut Context<Self>) {
-        let o = obj.clone();
-        let job = move |cx: &App| {
-            let (conn, db) = (o.scope.connection.clone(), o.scope.database.clone());
-            Sessions::global(cx)
-                .read(cx)
-                .run_rel(&conn, Some(&db), move |r| {
-                    Box::pin(async move { r.object_ddl(&o.scope, o.kind, &o.name).await })
-                })
-        };
-        self.load("ddl", obj.clone(), |c| &mut c.ddl, job, force, cx);
-    }
-
-    pub fn ensure_columns(
-        &mut self,
-        scope: &Scope,
-        table: &str,
-        force: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let (s, t) = (scope.clone(), table.to_string());
-        let job = move |cx: &App| {
-            let (conn, db) = (s.connection.clone(), s.database.clone());
-            Sessions::global(cx)
-                .read(cx)
-                .run_rel(&conn, Some(&db), move |r| {
-                    Box::pin(async move { r.table_columns(&s, &t).await })
-                })
-        };
-        let key = (scope.clone(), table.to_string());
-        self.load("columns", key, |c| &mut c.columns, job, force, cx);
-    }
-
-    pub fn ensure_table_children(
-        &mut self,
-        scope: &Scope,
-        table: &str,
-        force: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let (s, t) = (scope.clone(), table.to_string());
-        let job = move |cx: &App| {
-            let (conn, db) = (s.connection.clone(), s.database.clone());
-            Sessions::global(cx)
-                .read(cx)
-                .run_rel(&conn, Some(&db), move |r| {
-                    Box::pin(async move { r.table_children(&s, &t).await })
-                })
-        };
-        let key = (scope.clone(), table.to_string());
-        self.load("children", key, |c| &mut c.children, job, force, cx);
     }
 
     /// Drops caches for connections that no longer exist in the store.
     pub fn retain_connections(&mut self, live: &HashSet<String>, cx: &mut Context<Self>) {
         self.bump();
-        self.schemas.retain(|(c, _), _| live.contains(c));
+        self.schemas.retain(|key| live.contains(&key.connection));
         self.objects
-            .retain(|(s, _), _| live.contains(&s.connection));
-        self.ddl.retain(|o, _| live.contains(&o.scope.connection));
+            .retain(|key| live.contains(&key.scope.connection));
+        self.ddl.retain(|key| live.contains(&key.scope.connection));
         self.columns
-            .retain(|(s, _), _| live.contains(&s.connection));
+            .retain(|key| live.contains(&key.scope.connection));
         self.children
-            .retain(|(s, _), _| live.contains(&s.connection));
+            .retain(|key| live.contains(&key.scope.connection));
+        self.generation
+            .retain(|id, _| live.contains(id.connection()));
         cx.notify();
     }
 
     /// Drops everything cached for a connection (closed or refreshed).
     pub fn invalidate_connection(&mut self, conn: &str, cx: &mut Context<Self>) {
         self.bump();
-        self.schemas.retain(|(c, _), _| c != conn);
-        self.objects.retain(|(s, _), _| s.connection != conn);
-        self.ddl.retain(|o, _| o.scope.connection != conn);
-        self.columns.retain(|(s, _), _| s.connection != conn);
-        self.children.retain(|(s, _), _| s.connection != conn);
+        self.schemas.retain(|key| key.connection != conn);
+        self.objects.retain(|key| key.scope.connection != conn);
+        self.ddl.retain(|key| key.scope.connection != conn);
+        self.columns.retain(|key| key.scope.connection != conn);
+        self.children.retain(|key| key.scope.connection != conn);
+        self.generation.retain(|id, _| id.connection() != conn);
         cx.notify();
     }
 
     /// Reloads what is loaded under a scope (a database or schema).
     pub fn refresh_scope(&mut self, scope: &Scope, cx: &mut Context<Self>) {
         self.bump();
-        let kinds: Vec<_> = self
+        let kinds: Vec<ObjectKind> = self
             .objects
             .keys()
-            .filter(|(s, _)| s == scope)
-            .map(|(_, k)| *k)
+            .filter(|key| &key.scope == scope)
+            .map(|key| key.kind)
             .collect();
-        self.ddl.retain(|o, _| &o.scope != scope);
-        self.columns.retain(|(s, _), _| s != scope);
-        self.children.retain(|(s, _), _| s != scope);
+        let tables: Vec<String> = self
+            .columns
+            .keys()
+            .filter(|key| &key.scope == scope)
+            .map(|key| key.table.clone())
+            .collect();
+        let children: Vec<String> = self
+            .children
+            .keys()
+            .filter(|key| &key.scope == scope)
+            .map(|key| key.table.clone())
+            .collect();
+        self.ddl.retain(|key| &key.scope != scope);
+        self.columns.retain(|key| &key.scope != scope);
+        self.children.retain(|key| &key.scope != scope);
+        self.generation.retain(|id, _| id.scope() != Some(scope));
         for kind in kinds {
-            self.ensure_objects(scope, kind, true, cx);
+            self.require_with(
+                Requirement::Objects {
+                    scope: scope.clone(),
+                    kind,
+                },
+                true,
+                cx,
+            );
+        }
+        for table in tables {
+            self.require_with(
+                Requirement::Columns {
+                    scope: scope.clone(),
+                    table,
+                },
+                true,
+                cx,
+            );
+        }
+        for table in children {
+            self.require_with(
+                Requirement::Children {
+                    scope: scope.clone(),
+                    table,
+                },
+                true,
+                cx,
+            );
         }
         if scope.schema.is_none() && self.schemas(&scope.connection, &scope.database).is_some() {
-            self.ensure_schemas(&scope.connection, &scope.database, true, cx);
+            self.require_with(
+                Requirement::Schemas {
+                    connection: scope.connection.clone(),
+                    database: scope.database.clone(),
+                },
+                true,
+                cx,
+            );
         }
     }
 
@@ -270,51 +457,69 @@ impl Catalog {
     fn refresh_connection(&mut self, conn: &str, cx: &mut Context<Self>) {
         // The catalog only owns metadata; the shell decides whether a database
         // switch also refreshes the session (see `init` below).
-        let schemas: Vec<_> = self
+        let schemas: Vec<(String, String)> = self
             .schemas
             .keys()
-            .filter(|(c, _)| c == conn)
-            .cloned()
+            .filter(|key| key.connection == conn)
+            .map(|key| (key.connection.clone(), key.database.clone()))
             .collect();
-        let objects: Vec<_> = self
+        let objects: Vec<(Scope, ObjectKind)> = self
             .objects
             .keys()
-            .filter(|(s, kind)| s.connection == conn && *kind != ObjectKind::Query)
-            .cloned()
+            .filter(|key| key.scope.connection == conn && key.kind != ObjectKind::Query)
+            .map(|key| (key.scope.clone(), key.kind))
             .collect();
-        let ddl: Vec<_> = self
+        let ddl: Vec<ObjectRef> = self
             .ddl
             .keys()
-            .filter(|o| o.scope.connection == conn)
+            .filter(|object| object.scope.connection == conn)
             .cloned()
             .collect();
-        let columns: Vec<_> = self
+        let columns: Vec<(Scope, String)> = self
             .columns
             .keys()
-            .filter(|(s, _)| s.connection == conn)
-            .cloned()
+            .filter(|key| key.scope.connection == conn)
+            .map(|key| (key.scope.clone(), key.table.clone()))
             .collect();
-        let children: Vec<_> = self
+        let children: Vec<(Scope, String)> = self
             .children
             .keys()
-            .filter(|(s, _)| s.connection == conn)
-            .cloned()
+            .filter(|key| key.scope.connection == conn)
+            .map(|key| (key.scope.clone(), key.table.clone()))
             .collect();
         for (connection, database) in schemas {
-            self.ensure_schemas(&connection, &database, true, cx);
+            self.require_with(
+                Requirement::Schemas {
+                    connection,
+                    database,
+                },
+                true,
+                cx,
+            );
         }
         for (scope, kind) in objects {
-            self.ensure_objects(&scope, kind, true, cx);
+            self.require_with(Requirement::Objects { scope, kind }, true, cx);
         }
         for object in ddl {
-            self.ensure_ddl(&object, true, cx);
+            self.require_with(Requirement::Ddl(object), true, cx);
         }
         for (scope, table) in columns {
-            self.ensure_columns(&scope, &table, true, cx);
+            self.require_with(Requirement::Columns { scope, table }, true, cx);
         }
         for (scope, table) in children {
-            self.ensure_table_children(&scope, &table, true, cx);
+            self.require_with(Requirement::Children { scope, table }, true, cx);
         }
+    }
+}
+
+/// The object category to show for the selection's scope: the selected category or the selected
+/// object's category, otherwise tables by default.
+pub(crate) fn listed_kind(selection: &Selection) -> Option<(Scope, ObjectKind)> {
+    match selection {
+        Selection::Category(s, k) => Some((s.clone(), *k)),
+        Selection::Object(o) => Some((o.scope.clone(), o.kind)),
+        Selection::Schema(s) => Some((s.clone(), ObjectKind::Table)),
+        _ => None,
     }
 }
 
@@ -353,14 +558,21 @@ pub(crate) fn init(cx: &mut App) {
                     let scopes: Vec<Scope> = this
                         .objects
                         .keys()
-                        .filter(|(_, k)| *k == ObjectKind::Query)
-                        .map(|(s, _)| s.clone())
+                        .filter(|key| key.kind == ObjectKind::Query)
+                        .map(|key| key.scope.clone())
                         .collect();
                     for scope in scopes {
-                        this.ensure_objects(&scope, ObjectKind::Query, true, cx);
+                        this.require_with(
+                            Requirement::Objects {
+                                scope,
+                                kind: ObjectKind::Query,
+                            },
+                            true,
+                            cx,
+                        );
                     }
                 }
-                WorkspaceEvent::SelectionChanged => {}
+                WorkspaceEvent::SelectionChanged => this.require_selection(cx),
             },
         )
         .detach();
@@ -378,11 +590,19 @@ pub(crate) fn init(cx: &mut App) {
         )
         .detach();
         cx.subscribe(&Sessions::global(cx), |this, _, e: &SessionsEvent, cx| {
-            if let SessionsEvent::Closed(id)
+            let open = if let SessionsEvent::Closed(id)
             | SessionsEvent::Reopening(id)
             | SessionsEvent::Opened(id) = e
             {
                 this.invalidate_connection(id, cx);
+                matches!(e, SessionsEvent::Opened(_))
+            } else {
+                false
+            };
+            // Opening dropped the entries already; restart what the panes show so they do not
+            // stay on "Loading…" waiting for an event that will not come again.
+            if open {
+                this.require_selection(cx);
             }
         })
         .detach();
@@ -407,26 +627,138 @@ mod tests {
         }
     }
 
+    fn key(scope: &Scope, table: &str) -> TableKey {
+        TableKey {
+            scope: scope.clone(),
+            table: table.into(),
+        }
+    }
+
     /// A cached key must not even start the query: `run_rel` executes as soon as it is called.
     #[gpui_kit::test]
     fn a_cache_hit_starts_no_query(cx: &mut gpui_kit::TestAppContext) {
         let catalog = cx.new(|_| Catalog::default());
         let scope = Scope::new("c", "db", None);
-        let key = (scope.clone(), "actor".to_string());
         catalog.update(cx, |cat, cx| {
             cat.columns
-                .insert(key.clone(), Load::Ready(vec![column("id")]));
-            cat.load(
-                "columns",
-                key,
-                |c| &mut c.columns,
-                |_| -> Option<JoinHandle<DbResult<Vec<ColumnInfo>>>> {
-                    panic!("a cached load started a query")
+                .insert(key(&scope, "actor"), Load::Ready(vec![column("id")]));
+            let revision = cat.revision();
+            cat.require(
+                Requirement::Columns {
+                    scope: scope.clone(),
+                    table: "actor".into(),
                 },
+                cx,
+            );
+            assert_eq!(cat.revision(), revision, "a cache hit is not a change");
+            assert!(matches!(
+                cat.columns(&scope, "actor"),
+                Some(Load::Ready(columns)) if columns[0].name == "id"
+            ));
+            assert!(!cat.columns.has_pending_tasks());
+        });
+    }
+
+    /// Invalidation drops the entries, the in-flight tasks and their generation tokens.
+    #[gpui_kit::test]
+    fn invalidation_drops_entries_tasks_and_generations(cx: &mut gpui_kit::TestAppContext) {
+        let catalog = cx.new(|_| Catalog::default());
+        let scope = Scope::new("c", "db", None);
+        let (release, pending) = tokio::sync::oneshot::channel::<DbResult<Vec<ColumnInfo>>>();
+        let job = runtime::spawn(async move {
+            let _ = pending.await;
+            Ok(Vec::new())
+        });
+        catalog.update(cx, |cat, cx| {
+            cat.start(
+                LoadId::Columns(key(&scope, "actor")),
+                key(&scope, "actor"),
+                |c| &mut c.columns,
+                move |_| Some(job),
+                false,
+                cx,
+            );
+            assert!(cat.columns.task_pending(&key(&scope, "actor")));
+            assert_eq!(cat.generation.len(), 1);
+            cat.invalidate_connection("c", cx);
+            assert!(cat.columns(&scope, "actor").is_none());
+            assert!(!cat.columns.task_pending(&key(&scope, "actor")));
+            assert!(cat.generation.is_empty());
+            // The released result must not recreate the entry.
+            let _ = release.send(Ok(vec![column("late")]));
+        });
+        cx.run_until_parked();
+        catalog.read_with(cx, |cat, _| {
+            assert!(cat.columns(&scope, "actor").is_none());
+        });
+    }
+
+    /// A failed load stays until someone reloads it: `require` never silently retries.
+    #[gpui_kit::test]
+    fn a_failed_entry_is_kept_until_a_reload(cx: &mut gpui_kit::TestAppContext) {
+        cx.executor().allow_parking();
+        let catalog = cx.new(|_| Catalog::default());
+        let scope = Scope::new("c", "db", None);
+        let failed = runtime::spawn(async { Err(navidog_db::DbError::msg("boom")) });
+        catalog.update(cx, |cat, cx| {
+            cat.start(
+                LoadId::Columns(key(&scope, "actor")),
+                key(&scope, "actor"),
+                |c| &mut c.columns,
+                move |_| Some(failed),
                 false,
                 cx,
             );
         });
+        for _ in 0..50 {
+            cx.run_until_parked();
+            if catalog.read_with(cx, |cat, _| {
+                matches!(cat.columns(&scope, "actor"), Some(Load::Failed(_)))
+            }) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        catalog.update(cx, |cat, cx| {
+            let before = cat.generation.len();
+            cat.require(
+                Requirement::Columns {
+                    scope: scope.clone(),
+                    table: "actor".into(),
+                },
+                cx,
+            );
+            assert_eq!(
+                cat.generation.len(),
+                before,
+                "require does not retry a failure"
+            );
+            assert!(matches!(
+                cat.columns(&scope, "actor"),
+                Some(Load::Failed(_))
+            ));
+        });
+        let good = runtime::spawn(async { Ok(vec![column("id")]) });
+        catalog.update(cx, |cat, cx| {
+            cat.start(
+                LoadId::Columns(key(&scope, "actor")),
+                key(&scope, "actor"),
+                |c| &mut c.columns,
+                move |_| Some(good),
+                true,
+                cx,
+            );
+        });
+        for _ in 0..50 {
+            cx.run_until_parked();
+            if catalog.read_with(cx, |cat, _| {
+                matches!(cat.columns(&scope, "actor"), Some(Load::Ready(columns)) if columns[0].name == "id")
+            }) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the reload did not replace the failure");
     }
 
     /// Fields and the other table children share a `(scope, table)` key. Both loads must finish.
@@ -446,17 +778,17 @@ mod tests {
             })
         });
         catalog.update(cx, |cat, cx| {
-            cat.load(
-                "columns",
-                (scope.clone(), "actor".into()),
+            cat.start(
+                LoadId::Columns(key(&scope, "actor")),
+                key(&scope, "actor"),
                 |c| &mut c.columns,
                 move |_| Some(columns),
                 true,
                 cx,
             );
-            cat.load(
-                "children",
-                (scope.clone(), "actor".into()),
+            cat.start(
+                LoadId::Children(key(&scope, "actor")),
+                key(&scope, "actor"),
                 |c| &mut c.children,
                 move |_| Some(children),
                 true,
@@ -506,9 +838,9 @@ mod tests {
         let newer = runtime::spawn(async { Ok(vec![column("newer")]) });
         catalog.update(cx, |catalog, cx| {
             for job in [older, newer] {
-                catalog.load(
-                    "columns",
-                    (scope.clone(), "items".into()),
+                catalog.start(
+                    LoadId::Columns(key(&scope, "items")),
+                    key(&scope, "items"),
                     |catalog| &mut catalog.columns,
                     move |_| Some(job),
                     true,
@@ -557,7 +889,14 @@ mod tests {
         std::fs::write(&path, "SELECT 1").unwrap();
         let catalog = cx.new(|_| Catalog::default());
         catalog.update(cx, |cat, cx| {
-            cat.ensure_objects(&scope, ObjectKind::Query, true, cx);
+            cat.require_with(
+                Requirement::Objects {
+                    scope: scope.clone(),
+                    kind: ObjectKind::Query,
+                },
+                true,
+                cx,
+            );
         });
         let names: Vec<String> =
             catalog.read_with(cx, |cat, _| match cat.objects(&scope, ObjectKind::Query) {

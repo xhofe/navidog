@@ -50,7 +50,7 @@ pub type OutlineState = crate::scope_cache::Load<Arc<Outline>>;
 /// Outlines by scope, for the query editor's completion and the info pane's identifiers page.
 #[derive(Default)]
 pub struct OutlineCache {
-    cache: crate::scope_cache::ScopeCache<Arc<Outline>>,
+    cache: crate::scope_cache::ScopeCache<Scope, Arc<Outline>>,
 }
 
 struct GlobalOutlines(Entity<OutlineCache>);
@@ -139,7 +139,7 @@ impl OutlineCache {
     /// Drops cached outlines for a connection that is about to be deleted, so a finished fetch
     /// does not recreate `.outline` after the profile directory is removed.
     pub fn forget_connection(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.cache.retain_connection(id);
+        self.cache.retain(|scope| scope.connection != id);
         cx.notify();
     }
 

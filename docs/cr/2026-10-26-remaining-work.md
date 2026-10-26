@@ -12,11 +12,11 @@
 | 编号 | 主题 | 当前状态 | 建议 PR | 依赖 | 规模 |
 | --- | --- | --- | --- | --- | --- |
 | R-04 / D-05 | 统一 SQL 扫描/词法 | 已完成 | SQL lexer | 无 | 大 |
-| D-08 | Catalog/OutlineCache 统一缓存 | 部分完成 | ScopeCache | 无 | 中 |
+| D-08 | Catalog/OutlineCache 统一缓存 | 已完成 | ScopeCache | 无 | 中 |
 | A-01 | `navidog-core` 拆 app-state | 部分完成 | app-state split | 无 | 大 |
 | A-02 | core 去掉 gpui-kit | 部分完成 | 随 A-01 | A-01 | 中 |
 | A-03 | `navidog-db` 去掉 table_design | 部分完成 | schema crate | R-04 | 大 |
-| A-06 | 缓存/选择状态收口 | 部分完成 | Cache/selection | D-08 | 中 |
+| A-06 | 缓存/选择状态收口 | 已完成 | Cache/selection | D-08 | 中 |
 | A-07 | god object/超长文件 | 部分完成 | file splits | 无 | 大 |
 | A-10 | Connection `profiles + active` | 部分完成 | connection model | 无 | 中 |
 | S-07 | 共享 i18n 后端（可选） | 契约已收敛，后端未合并 | i18n backend | 无 | 中 |
@@ -100,6 +100,13 @@ pub fn spans(sql: &str, dialect: Dialect) -> Vec<Span>;
 ### 主要文件
 
 `crates/navidog-session/src/scope_cache.rs`、`crates/navidog-navigator/src/catalog.rs`、`crates/navidog-session/src/outline.rs`。
+
+### 完成情况（2026-10-26，`refactor/remaining-work` 分支）
+
+- `ScopeCache<K, T>` 泛型化到任意 `K: Eq + Hash`，entries/tasks 同一键；`retain` 同时清理两者。
+- `Catalog` 的五类缓存全部换成 `ScopeCache` + typed key（`SchemaKey`/`ObjectsKey`/`TableKey`/`ObjectRef`），`tasks`/`generation` 用 `LoadId` 枚举（每类一个变体），`invalidate_connection`/`retain_connections`/`refresh_scope` 同时清理 entries、tasks、generation，不再手写五套 map 清理。
+- 面板不再判断“是否要 load”：`Catalog::require(Requirement)` / `require_all` / `reload_all` 是唯一入口，`Catalog::require_selection` 由 Workspace 的 `SelectionChanged` 驱动；objects 面板的 `ensure_loaded` 与渲染期 `stalled_load` 补偿已删除，navigator/信息/DDL 面板只声明 `Requirement`。Session 打开后 Catalog 自己重启当前选择需要的加载。
+- 测试：`catalog.rs` 覆盖缓存命中不查询、invalidate 清理 entries/tasks/generation、延迟结果不能覆盖新代际、失败条目只在 reload 时重试；`tests/catalog_lifecycle.rs` 覆盖选择驱动加载、关闭连接清空、重开恢复、删除连接清空；`tests/database_refresh.rs` 覆盖切库刷新和打开中的 DDL 面板。
 
 ## 3. A-01：拆开 `navidog-core` 的 app-state
 

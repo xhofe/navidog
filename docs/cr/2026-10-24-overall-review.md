@@ -27,7 +27,7 @@
 | D-05 | SQL 扫描重复 | P1 | 已修 |
 | D-06 | 对话框 footer 复制 | P2 | 已修 |
 | D-07 | driver_name/db_text/kind_label 等 | P1 | 已修 |
-| D-08 | Catalog 与 OutlineCache 双缓存 | P2 | 进行中 |
+| D-08 | Catalog 与 OutlineCache 双缓存 | P2 | 已修 |
 | D-09 | nav.* locale 死块 | P0 | 已修 |
 | D-10 | 测试 helper 复制 | P2 | 已修 |
 | D-11 | 更新清单 Rust/CI 双份 | P1 | 已修 |
@@ -46,7 +46,7 @@
 | A-03 | db 职责超出驱动 | P2 | 进行中 |
 | A-04 | 驱动元数据散落 | P1 | 已修 |
 | A-05 | 提交逻辑在 grid | P1 | 已修 |
-| A-06 | 缓存/选择状态复制与倒挂 | P2 | 进行中 |
+| A-06 | 缓存/选择状态复制与倒挂 | P2 | 已修 |
 | A-07 | god object/超长文件 | P2 | 进行中 |
 | A-08 | 提前抽象与死代码 | P1 | 已修 |
 | A-09 | 测试架构 | P2 | 已修 |
@@ -74,10 +74,10 @@
 
 - **R-04 / D-05（SQL 扫描统一）**：`navidog-sql` 的 `span::spans` 成为唯一词法层（字符串、引号标识符、注释、`$tag$`、参数、括号深度、语句边界）；六个消费者全部改为消费它，各自的跳过函数已删除，跨消费者一致性测试在 `navidog-grid/src/filter/consistency_tests.rs`。
 
-- **D-08（Catalog/OutlineCache，进行中）**：`Load<T>` 与 `ScopeCache<T>` 已引入，OutlineCache 已迁移；Catalog 的五类不同 key/失效代际仍需继续迁移。
+- **D-08（Catalog/OutlineCache）**：`ScopeCache<K, T>` 泛型化后 Catalog 的五类缓存和 OutlineCache 共用同一状态机；`Catalog` 用 typed key 和 `LoadId` 管理 tasks/generation，`invalidate_connection` 一次清空 entries/tasks/generation。
 - **S-07（每 crate i18n 后端）**：明确契约为 crate-local：`scripts/check-i18n.sh` 校验每个字面量 `t!` key 都在本 crate locales 中；跨 crate 文案必须走 `navidog_ui::db_error_text` 这类显式 helper。统一后端仍可后续合并。
 - **A-01/A-02（core/db 分层，进行中）**：A-01 已抽出纯数据层 `navidog-model`；A-02 已把 `DriverRegistry`/`Sessions`/`OutlineCache`/`scope_cache` 移到 `navidog-session`，`navidog-db` 不再依赖 gpui-kit，只留驱动/SQL/元数据/建表。`navidog-core` 的 app-state（Global/Entity/actions/Workspace）仍需拆出，才能彻底去掉 core 对 gpui-kit 的直接依赖。
-- **A-06（缓存/选择，进行中）**：navigator 的多选快照改为每帧从 Workspace 派生；`Catalog::refresh_connection` 不再调用 `Sessions::refresh`，由 shell 处理数据库切换。`ScopeCache<T>` 和 `Catalog::require()` 仍是缓存层重构。
+- **A-06（缓存/选择）**：`Catalog::require(Requirement)` 成为唯一加载入口，`require_selection` 由 Workspace 选择事件驱动；objects 面板的 `ensure_loaded` 和 `stalled_load` 渲染期补偿已删除，navigator/信息/DDL 面板只声明所需条目。
 - **A-07（god object，进行中）**：`app/update.rs` 的安装/替换逻辑已拆到 `update/install.rs`；viewer/results/editor/form/model 的拆分仍是纯搬家工作。
 - **A-10（profile 交换模型，进行中）**：新增 `with_active_profile` 的 Drop 守卫，reencrypt 在 panic 时也会恢复激活配置；`profiles + active` 的 schema 迁移仍未做，需兼容旧 `connections.json`。
 

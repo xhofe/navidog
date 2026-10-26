@@ -19,7 +19,7 @@ use navidog_session::sessions::{Sessions, prepare_database};
 use navidog_ui::assets::lucide;
 use rust_i18n::t;
 
-use crate::catalog::{Catalog, Load};
+use crate::catalog::{Catalog, Load, Requirement};
 use crate::navigator::kind_label;
 
 pub(crate) fn selected_objects(cx: &App) -> Vec<ObjectRef> {
@@ -283,12 +283,13 @@ fn connections_unchanged(generations: &[(String, u64)], cx: &App) -> bool {
 }
 
 fn refresh<'a>(objects: impl Iterator<Item = &'a ObjectRef>, cx: &mut App) {
-    let lists: HashSet<_> = objects.map(|o| (o.scope.clone(), o.kind)).collect();
-    Catalog::global(cx).update(cx, |c, cx| {
-        for (scope, kind) in lists {
-            c.ensure_objects(&scope, kind, true, cx);
-        }
-    });
+    let requirements: Vec<_> = objects
+        .map(|o| Requirement::Objects {
+            scope: o.scope.clone(),
+            kind: o.kind,
+        })
+        .collect();
+    Catalog::global(cx).update(cx, |c, cx| c.reload_all(requirements, cx));
 }
 
 fn show_error(message: String, window: &mut Window, cx: &mut App) {

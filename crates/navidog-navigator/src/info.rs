@@ -23,7 +23,7 @@ use navidog_ui::skin::{heading, truncated};
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
 
-use crate::catalog::{Catalog, Load};
+use crate::catalog::{Catalog, Load, Requirement};
 
 const PANEL: &str = "InfoPanel";
 
@@ -154,7 +154,7 @@ impl InfoPanel {
                     cx.notify();
                 }),
                 cx.observe_in(&Workspace::global(cx), window, |this, _, window, cx| {
-                    this.ensure_loaded(cx);
+                    this.require_page(cx);
                     this.sync_ddl(window, cx);
                     this.sync_preview(window, cx);
                     this.follow_query_editor(cx);
@@ -190,18 +190,21 @@ impl InfoPanel {
         self.on_toggle_maximize = Some(Rc::new(f));
     }
 
-    fn ensure_loaded(&self, cx: &mut App) {
+    /// Loads what the current page shows. The body only names the entry; the catalog decides
+    /// whether that starts a query.
+    fn require_page(&self, cx: &mut App) {
         let Some(obj) = selected_object(cx) else {
             return;
         };
-        let catalog = Catalog::global(cx);
-        match self.page {
-            Page::Ddl => catalog.update(cx, |c, cx| c.ensure_ddl(&obj, false, cx)),
-            Page::Fields if obj.kind == ObjectKind::Table => catalog.update(cx, |c, cx| {
-                c.ensure_columns(&obj.scope, &obj.name, false, cx)
-            }),
-            _ => {}
-        }
+        let requirement = match self.page {
+            Page::Ddl => Requirement::Ddl(obj),
+            Page::Fields if obj.kind == ObjectKind::Table => Requirement::Columns {
+                scope: obj.scope,
+                table: obj.name,
+            },
+            _ => return,
+        };
+        Catalog::global(cx).update(cx, |c, cx| c.require(requirement, cx));
     }
 
     /// The snippets and identifiers pages come with an active query editor and go with it,
@@ -528,7 +531,7 @@ impl InfoPanel {
             .when(self.page == page, |b| b.selected(true))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.page = page;
-                this.ensure_loaded(cx);
+                this.require_page(cx);
                 this.sync_ddl(window, cx);
                 if page == Page::Identifiers {
                     this.ensure_identifiers(cx);
