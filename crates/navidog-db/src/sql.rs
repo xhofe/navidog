@@ -77,7 +77,7 @@ pub fn split_script(sql: &str, dialect: Dialect) -> Vec<Statement> {
     let mut out = Vec::new();
     let mut start = 0;
     let mut code = false;
-    for span in span::spans(sql, dialect) {
+    for span in span::spans(sql, dialect.lex()) {
         match span.kind {
             SpanKind::DelimiterLine => {
                 if !code {

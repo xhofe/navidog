@@ -1,4 +1,5 @@
-//! The dialect-aware SQL scanner.
+//! The shared SQL scanner. Callers pass a [`Lex`] from their dialect; this module does not name
+//! a database product.
 //!
 //! [`spans`] turns a script into an ordered list of non-whitespace spans: words and other
 //! punctuation, strings, quoted identifiers, PostgreSQL dollar-quoted bodies, comments,
@@ -12,7 +13,29 @@
 
 use std::ops::Range;
 
-use crate::dialect::Dialect;
+/// Lexical switches for the one shared scanner. A dialect supplies these; the scanner does not
+/// name MySQL, PostgreSQL or SQLite.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Lex {
+    /// `` `ident` `` is a quoted identifier.
+    pub backtick_idents: bool,
+    /// `#` starts a line comment.
+    pub hash_comments: bool,
+    /// `$$` / `$tag$` dollar quotes.
+    pub dollar_quotes: bool,
+    /// `[ident]` is a quoted identifier.
+    pub bracket_idents: bool,
+    /// A backslash escapes the next character inside ordinary `'...'` strings.
+    pub backslash_strings: bool,
+    /// An `E` prefix (`E'...'`) turns on backslash escapes for that string.
+    pub escape_string_prefix: bool,
+    /// `"` starts a string rather than an identifier, and backslashes escape inside it.
+    pub double_quote_strings: bool,
+    /// `/* */` comments nest.
+    pub nested_block_comments: bool,
+    /// A `DELIMITER` line at the start of a statement changes the terminator.
+    pub delimiter_command: bool,
+}
 
 /// What a span is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,13 +112,13 @@ pub enum LexError {
 }
 
 /// Every non-whitespace span of `sql`, in order. Never fails: unterminated spans run to the end.
-pub fn spans(sql: &str, dialect: Dialect) -> Vec<Span> {
-    Scanner::new(sql, dialect).run().0
+pub fn spans(sql: &str, lex: Lex) -> Vec<Span> {
+    Scanner::new(sql, lex).run().0
 }
 
 /// Like [`spans`], but reports unterminated strings, comments and unbalanced parentheses.
-pub fn check(sql: &str, dialect: Dialect) -> Result<(), LexError> {
-    match Scanner::new(sql, dialect).run().1 {
+pub fn check(sql: &str, lex: Lex) -> Result<(), LexError> {
+    match Scanner::new(sql, lex).run().1 {
         Some(error) => Err(error),
         None => Ok(()),
     }
@@ -103,11 +126,11 @@ pub fn check(sql: &str, dialect: Dialect) -> Result<(), LexError> {
 
 /// Byte offsets where `delimiter` separates top-level text: outside strings, identifiers and
 /// comments, and at parenthesis depth 0. `delimiter` must be ASCII.
-pub fn separators(sql: &str, dialect: Dialect, delimiter: u8) -> Vec<usize> {
+pub fn separators(sql: &str, lex: Lex, delimiter: u8) -> Vec<usize> {
     let mut out = Vec::new();
     let mut depth = 0u32;
     let mut i = 0;
-    let mut spans = spans(sql, dialect).into_iter().peekable();
+    let mut spans = spans(sql, lex).into_iter().peekable();
     while i < sql.len() {
         let Some(span) = spans.peek() else {
             push_delimiters(&mut out, &sql[i..], i, delimiter);
@@ -148,7 +171,7 @@ fn push_delimiters(out: &mut Vec<usize>, text: &str, offset: usize, delimiter: u
 struct Scanner<'a> {
     sql: &'a str,
     bytes: &'a [u8],
-    dialect: Dialect,
+    lex: Lex,
     spans: Vec<Span>,
     /// Parenthesis nesting
     depth: u32,
@@ -171,11 +194,11 @@ struct Scanner<'a> {
 }
 
 impl<'a> Scanner<'a> {
-    fn new(sql: &'a str, dialect: Dialect) -> Self {
+    fn new(sql: &'a str, lex: Lex) -> Self {
         Self {
             sql,
             bytes: sql.as_bytes(),
-            dialect,
+            lex,
             spans: Vec::new(),
             depth: 0,
             block: 0,
@@ -191,7 +214,7 @@ impl<'a> Scanner<'a> {
     fn run(mut self) -> (Vec<Span>, Option<LexError>) {
         let mut i = 0;
         while i < self.bytes.len() {
-            if self.dialect == Dialect::MySql
+            if self.lex.delimiter_command
                 && !self.has_code
                 && at_line_start(self.bytes, i)
                 && let Some((end, next)) = delimiter_line(self.sql, i)
@@ -220,24 +243,26 @@ impl<'a> Scanner<'a> {
             }
             match self.bytes[i] {
                 b'\'' => {
-                    let escapes = self.dialect == Dialect::MySql
-                        || (self.dialect == Dialect::Postgres && e_prefix(self.bytes, i));
+                    let escapes = self.lex.backslash_strings
+                        || (self.lex.escape_string_prefix && e_prefix(self.bytes, i));
                     i = self.quoted(i, b'\'', escapes, SpanKind::String);
                 }
                 b'"' => {
-                    let (kind, escapes) = if self.dialect == Dialect::MySql {
+                    let (kind, escapes) = if self.lex.double_quote_strings {
                         (SpanKind::String, true)
                     } else {
                         (SpanKind::QuotedIdent, false)
                     };
                     i = self.quoted(i, b'"', escapes, kind);
                 }
-                b'`' => i = self.quoted(i, b'`', false, SpanKind::QuotedIdent),
+                b'`' if self.lex.backtick_idents => {
+                    i = self.quoted(i, b'`', false, SpanKind::QuotedIdent);
+                }
                 b'[' => i = self.bracket(i),
                 b'-' if self.bytes.get(i + 1) == Some(&b'-') => i = self.line_comment(i),
-                b'#' if self.dialect == Dialect::MySql => i = self.line_comment(i),
+                b'#' if self.lex.hash_comments => i = self.line_comment(i),
                 b'/' if self.bytes.get(i + 1) == Some(&b'*') => i = self.block_comment(i),
-                b'$' if self.dialect == Dialect::Postgres && is_dollar_quote_start(self.sql, i) => {
+                b'$' if self.lex.dollar_quotes && is_dollar_quote_start(self.sql, i) => {
                     i = self.dollar_quoted(i);
                 }
                 b'(' => {
@@ -326,7 +351,7 @@ impl<'a> Scanner<'a> {
             self.push(start..end, SpanKind::Param);
             return end;
         }
-        if self.dialect != Dialect::Sqlite {
+        if !self.lex.bracket_idents {
             return self.other(start);
         }
         let mut i = start + 1;
@@ -356,7 +381,7 @@ impl<'a> Scanner<'a> {
     }
 
     fn block_comment(&mut self, start: usize) -> usize {
-        let nested = self.dialect == Dialect::Postgres;
+        let nested = self.lex.nested_block_comments;
         let mut i = start + 2;
         let mut depth = 1usize;
         while i < self.bytes.len() {
@@ -411,7 +436,7 @@ impl<'a> Scanner<'a> {
                     self.case += 1;
                 }
             } else if word.eq_ignore_ascii_case("END") {
-                match next_word(&self.sql[i..], self.dialect) {
+                match next_word(&self.sql[i..], self.lex) {
                     // `END IF`, `END LOOP`, … close the inner construct, not the routine.
                     Some(next)
                         if ["IF", "LOOP", "WHILE", "REPEAT"]
@@ -444,8 +469,8 @@ impl<'a> Scanner<'a> {
                 || matches!(b, b'\'' | b'"' | b'`' | b'[' | b'(' | b')' | b';')
                 || (b == b'-' && self.bytes.get(i + 1) == Some(&b'-'))
                 || (b == b'/' && self.bytes.get(i + 1) == Some(&b'*'))
-                || (b == b'#' && self.dialect == Dialect::MySql)
-                || (b == b'$' && self.dialect == Dialect::Postgres);
+                || (b == b'#' && self.lex.hash_comments)
+                || (b == b'$' && self.lex.dollar_quotes);
             if special {
                 break;
             }
@@ -532,13 +557,13 @@ fn is_routine(prefix: &str) -> bool {
 
 /// The first word after `rest`, skipping whitespace and comments: the word that decides whether
 /// an `END` closes an `IF`, names a `CASE` terminator or closes the routine itself.
-fn next_word(rest: &str, dialect: Dialect) -> Option<&str> {
+fn next_word(rest: &str, lex: Lex) -> Option<&str> {
     let mut s = rest;
     loop {
         s = s.trim_start();
         if let Some(after) = s.strip_prefix("--") {
             s = after.find('\n').map_or("", |n| &after[n + 1..]);
-        } else if dialect == Dialect::MySql
+        } else if lex.hash_comments
             && let Some(after) = s.strip_prefix('#')
         {
             s = after.find('\n').map_or("", |n| &after[n + 1..]);

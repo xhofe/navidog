@@ -9,3 +9,4 @@ pub mod keywords;
 pub mod span;
 
 pub use dialect::Dialect;
+pub use span::Lex;

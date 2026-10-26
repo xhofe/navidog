@@ -61,7 +61,7 @@ pub struct Param {
 
 /// `[$name]` markers outside strings, quoted identifiers and comments.
 pub fn find_params(sql: &str, dialect: Dialect) -> Vec<Param> {
-    span::spans(sql, dialect)
+    span::spans(sql, dialect.lex())
         .into_iter()
         .filter(|s| s.kind == SpanKind::Param)
         .map(|s| Param {

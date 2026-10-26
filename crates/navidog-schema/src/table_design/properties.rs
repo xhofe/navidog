@@ -47,7 +47,7 @@ pub struct ColumnProperties {
 
 fn words(s: &str, d: Dialect) -> Vec<(usize, usize)> {
     // Top-level words: whitespace separates them, except inside quotes and parentheses.
-    let spans = sql_span::spans(s, d);
+    let spans = sql_span::spans(s, d.lex());
     let mut out = Vec::new();
     let mut depth = 0u32;
     let mut next = 0;

@@ -464,7 +464,7 @@ fn split_joins(sql: &str, dialect: Dialect) -> Vec<(bool, String)> {
     let mut or_flag = false;
     // `BETWEEN 1 AND 2` uses AND as its second value, not as a join.
     let mut pending_between = 0i32;
-    for span in span::spans(sql, dialect) {
+    for span in span::spans(sql, dialect.lex()) {
         if span.kind != SpanKind::Word || span.depth != 0 {
             continue;
         }
@@ -792,7 +792,7 @@ fn parse_ident(s: &str, dialect: Dialect) -> Option<(String, &str)> {
 fn split_commas(sql: &str, dialect: Dialect) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;
-    for pos in span::separators(sql, dialect, b',') {
+    for pos in span::separators(sql, dialect.lex(), b',') {
         parts.push(&sql[start..pos]);
         start = pos + 1;
     }
@@ -804,7 +804,7 @@ fn paren_end(sql: &str, dialect: Dialect) -> Option<usize> {
     if !sql.starts_with('(') {
         return None;
     }
-    let spans = span::spans(sql, dialect);
+    let spans = span::spans(sql, dialect.lex());
     let level = spans
         .iter()
         .find(|s| s.kind == SpanKind::OpenParen && s.range.start == 0)?

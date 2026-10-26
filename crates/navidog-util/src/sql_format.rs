@@ -31,7 +31,7 @@ fn lexer(mysql: bool) -> Dialect {
 /// Spans of `sql` that are strings, quoted identifiers, dollar bodies or comments:
 /// (range, is_comment).
 fn protected_spans(sql: &str, dialect: Dialect) -> Vec<(Range<usize>, bool)> {
-    span::spans(sql, dialect)
+    span::spans(sql, dialect.lex())
         .into_iter()
         .filter(|s| s.kind.is_protected() || s.kind.is_comment())
         .map(|s| (s.range, s.kind.is_comment()))

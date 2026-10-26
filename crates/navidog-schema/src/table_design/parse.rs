@@ -4,12 +4,12 @@ use navidog_sql::span::{self, LexError, SpanKind};
 /// Top-level separators, ignoring quoted text, SQL comments and nested expressions.
 pub(super) fn positions(text: &str, delimiter: u8, dialect: Dialect) -> DbResult<Vec<usize>> {
     validate(text, dialect)?;
-    Ok(span::separators(text, dialect, delimiter))
+    Ok(span::separators(text, dialect.lex(), delimiter))
 }
 
 /// Rejects unterminated strings and comments and unbalanced parentheses.
 fn validate(text: &str, dialect: Dialect) -> DbResult<()> {
-    span::check(text, dialect).map_err(|error| {
+    span::check(text, dialect.lex()).map_err(|error| {
         DbError::msg(match error {
             LexError::UnclosedQuote => "Unclosed SQL quote.",
             LexError::UnclosedComment => "Unclosed SQL comment.",
@@ -26,7 +26,7 @@ pub(super) fn fragment(text: &str, dialect: Dialect) -> DbResult<()> {
         ));
     }
     validate(text, dialect)?;
-    let spans = span::spans(text, dialect);
+    let spans = span::spans(text, dialect.lex());
     if spans.iter().any(|s| s.kind == SpanKind::StatementEnd) {
         return Err(DbError::msg(
             "A SQL definition cannot contain extra statements.",

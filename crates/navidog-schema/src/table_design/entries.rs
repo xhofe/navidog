@@ -185,7 +185,7 @@ fn group(s: &str, d: Dialect) -> Option<(String, &str)> {
     if !s.starts_with('(') {
         return None;
     }
-    let close = sql_span::spans(s, d)
+    let close = sql_span::spans(s, d.lex())
         .into_iter()
         .find(|sp| sp.kind == SpanKind::CloseParen && sp.depth == 1)?
         .range
@@ -300,7 +300,7 @@ pub fn parse_entry(s: &str, d: Dialect) -> Option<DesignEntry> {
         rest = r;
     }
     if let Some(r) = take(rest, "COMMENT") {
-        let literal = sql_span::spans(r, d)
+        let literal = sql_span::spans(r, d.lex())
             .into_iter()
             .next()
             .filter(|sp| sp.kind == SpanKind::String && sp.range.start == 0)?;

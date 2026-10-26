@@ -46,7 +46,7 @@ struct Token {
 /// belong to. The shared scanner decides where those end for this dialect.
 fn tokens(s: &str, d: Dialect) -> DbResult<Vec<Token>> {
     parse::fragment(s, d)?;
-    let mut protected = navidog_sql::span::spans(s, d)
+    let mut protected = navidog_sql::span::spans(s, d.lex())
         .into_iter()
         .filter(|span| span.kind.is_protected())
         .map(|span| span.range)

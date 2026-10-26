@@ -1,14 +1,16 @@
 use super::*;
 
+use crate::Dialect;
+
 fn kinds(sql: &str, dialect: Dialect) -> Vec<(SpanKind, &str)> {
-    spans(sql, dialect)
+    spans(sql, dialect.lex())
         .iter()
         .map(|s| (s.kind, s.text(sql)))
         .collect()
 }
 
 fn ends(sql: &str, dialect: Dialect) -> Vec<&str> {
-    spans(sql, dialect)
+    spans(sql, dialect.lex())
         .iter()
         .filter(|s| s.kind == SpanKind::StatementEnd)
         .map(|s| s.text(sql))
@@ -16,7 +18,7 @@ fn ends(sql: &str, dialect: Dialect) -> Vec<&str> {
 }
 
 fn comments(sql: &str, dialect: Dialect) -> Vec<&str> {
-    spans(sql, dialect)
+    spans(sql, dialect.lex())
         .iter()
         .filter(|s| s.kind.is_comment())
         .map(|s| s.text(sql))
@@ -60,7 +62,7 @@ fn quotes_and_identifiers_follow_the_dialect() {
     );
     // `[$name]` wins over a bracket identifier in every dialect
     let sql = "SELECT [$x] FROM [t]";
-    let found = spans(sql, Dialect::Sqlite);
+    let found = spans(sql, Dialect::Sqlite.lex());
     assert!(
         found
             .iter()
@@ -73,7 +75,7 @@ fn quotes_and_identifiers_follow_the_dialect() {
     );
     // ... but MySQL has no bracket identifiers
     assert!(
-        !spans("[t]", Dialect::MySql)
+        !spans("[t]", Dialect::MySql.lex())
             .iter()
             .any(|s| s.kind == SpanKind::QuotedIdent)
     );
@@ -82,7 +84,7 @@ fn quotes_and_identifiers_follow_the_dialect() {
 #[test]
 fn dollar_quotes_are_postgres_only_and_never_inside_identifiers() {
     let sql = "SELECT $$ [$x] $$, $tag$body$tag$, foo$tag$, $1";
-    let found = spans(sql, Dialect::Postgres);
+    let found = spans(sql, Dialect::Postgres.lex());
     let dollars: Vec<_> = found
         .iter()
         .filter(|s| s.kind == SpanKind::DollarQuoted)
@@ -94,7 +96,7 @@ fn dollar_quotes_are_postgres_only_and_never_inside_identifiers() {
         "a parameter marker inside a dollar body is text"
     );
     assert_eq!(
-        check(sql, Dialect::Postgres),
+        check(sql, Dialect::Postgres.lex()),
         Ok(()),
         "`$1` is a parameter, not an unterminated quote"
     );
@@ -105,7 +107,7 @@ fn dollar_quotes_are_postgres_only_and_never_inside_identifiers() {
     ));
     // MySQL has no dollar quoting, so `[$x]` is a parameter there
     assert!(
-        spans("SELECT $$ [$x] $$", Dialect::MySql)
+        spans("SELECT $$ [$x] $$", Dialect::MySql.lex())
             .iter()
             .any(|s| s.kind == SpanKind::Param)
     );
@@ -139,7 +141,7 @@ fn statement_ends_skip_routine_bodies_and_custom_delimiters() {
     let found = ends(sql, Dialect::MySql);
     assert_eq!(found.len(), 2);
     assert_eq!(
-        spans(sql, Dialect::MySql)
+        spans(sql, Dialect::MySql.lex())
             .iter()
             .filter(|s| s.kind == SpanKind::DelimiterLine)
             .count(),
@@ -192,13 +194,13 @@ fn statement_ends_ignore_case_expressions_inside_routines() {
 #[test]
 fn separators_ignore_quotes_comments_and_groups() {
     let sql = "a, 'x,y', f(1, 2), -- c,\n b /* , */";
-    assert_eq!(separators(sql, Dialect::MySql, b','), [1, 8, 17]);
+    assert_eq!(separators(sql, Dialect::MySql.lex(), b','), [1, 8, 17]);
     assert_eq!(
-        separators("TEXT DEFAULT 'a b' NOT NULL", Dialect::Postgres, b' '),
+        separators("TEXT DEFAULT 'a b' NOT NULL", Dialect::Postgres.lex(), b' '),
         [4, 12, 18, 22]
     );
     assert_eq!(
-        separators("decimal(10, 2)", Dialect::Postgres, b',').len(),
+        separators("decimal(10, 2)", Dialect::Postgres.lex(), b',').len(),
         0
     );
 }
@@ -206,30 +208,30 @@ fn separators_ignore_quotes_comments_and_groups() {
 #[test]
 fn check_reports_unterminated_and_unbalanced_text() {
     assert_eq!(
-        check("SELECT 'x", Dialect::Postgres),
+        check("SELECT 'x", Dialect::Postgres.lex()),
         Err(LexError::UnclosedQuote)
     );
-    assert_eq!(check("SELECT 'x' -- c", Dialect::Postgres), Ok(()));
+    assert_eq!(check("SELECT 'x' -- c", Dialect::Postgres.lex()), Ok(()));
     assert_eq!(
-        check("/* x", Dialect::MySql),
+        check("/* x", Dialect::MySql.lex()),
         Err(LexError::UnclosedComment)
     );
     assert_eq!(
-        check("f(1", Dialect::Postgres),
+        check("f(1", Dialect::Postgres.lex()),
         Err(LexError::UnbalancedParentheses)
     );
     assert_eq!(
-        check("f(1))", Dialect::Postgres),
+        check("f(1))", Dialect::Postgres.lex()),
         Err(LexError::UnbalancedParentheses)
     );
-    assert_eq!(check("[x", Dialect::Sqlite), Err(LexError::UnclosedQuote));
-    assert_eq!(check("SELECT 1", Dialect::Sqlite), Ok(()));
+    assert_eq!(check("[x", Dialect::Sqlite.lex()), Err(LexError::UnclosedQuote));
+    assert_eq!(check("SELECT 1", Dialect::Sqlite.lex()), Ok(()));
 }
 
 #[test]
 fn depth_tracks_parentheses() {
     let sql = "f(g(1), 2)";
-    let found: Vec<_> = spans(sql, Dialect::Sqlite)
+    let found: Vec<_> = spans(sql, Dialect::Sqlite.lex())
         .into_iter()
         .filter(|s| matches!(s.kind, SpanKind::OpenParen | SpanKind::CloseParen))
         .map(|s| (s.kind, s.depth))
