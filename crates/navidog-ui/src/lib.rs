@@ -155,8 +155,6 @@ mod tests {
     }
     #[test]
     fn a_missing_sqlite_file_keeps_its_path() {
-        let previous = rust_i18n::locale().to_string();
-        rust_i18n::set_locale("en");
         let text = db_error_text_with(
             Some("navidog.database_missing"),
             "/tmp/navidog-missing.db",
@@ -166,6 +164,5 @@ mod tests {
             |_| unreachable!(),
         );
         assert!(text.contains("/tmp/navidog-missing.db"), "{text}");
-        rust_i18n::set_locale(&previous);
     }
 }
