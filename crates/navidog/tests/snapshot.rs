@@ -18,13 +18,15 @@ mod macos {
     use gpui_kit::{AppContext as _, Focusable as _, HeadlessAppContext, InputEvent as _};
     use navidog::main_window::MainWindow;
     use navidog::state::AppState;
-    use navidog_core::actions::{NewConnection, NewConnectionOf, OpenObject, ReopenConnectionId};
-    use navidog_core::connection::Connection;
-    use navidog_core::crypto::Key;
-    use navidog_core::object::{ObjectKind, ObjectRef, Scope};
-    use navidog_core::settings::Settings;
-    use navidog_core::store::ConnectionStore;
-    use navidog_core::workspace::{Selection, Workspace};
+    use navidog_app_state::actions::{
+        NewConnection, NewConnectionOf, OpenObject, ReopenConnectionId,
+    };
+    use navidog_app_state::settings::Settings;
+    use navidog_app_state::store::ConnectionStore;
+    use navidog_app_state::workspace::{Selection, Workspace};
+    use navidog_model::connection::Connection;
+    use navidog_model::crypto::Key;
+    use navidog_model::object::{ObjectKind, ObjectRef, Scope};
     use navidog_session::sessions::Sessions;
     use navidog_ui::NavidogAssets;
 
@@ -390,7 +392,7 @@ mod macos {
                 w.select(Selection::Database(lite.clone(), "main".into()), cx)
             })
         });
-        dispatch(&mut cx, Box::new(navidog_core::actions::NewQuery));
+        dispatch(&mut cx, Box::new(navidog_app_state::actions::NewQuery));
         cx.run_until_parked();
         let editor = cx
             .update(|cx| navidog_query::active_editor(cx))
@@ -432,7 +434,10 @@ mod macos {
         .unwrap();
         wait(&mut cx, |_| false);
         shot(&mut cx, "query-explain.png");
-        dispatch(&mut cx, Box::new(navidog_core::actions::OpenHistoryLog));
+        dispatch(
+            &mut cx,
+            Box::new(navidog_app_state::actions::OpenHistoryLog),
+        );
         for _ in 0..3 {
             cx.advance_clock(std::time::Duration::from_millis(300));
             cx.run_until_parked();
@@ -460,7 +465,7 @@ mod macos {
         // M4: open an existing table design and preview a pending field addition.
         dispatch(
             &mut cx,
-            Box::new(navidog_core::actions::DesignTable {
+            Box::new(navidog_app_state::actions::DesignTable {
                 object: Some(actor_ref.clone()),
             }),
         );
@@ -579,7 +584,10 @@ mod macos {
             });
             saved
         });
-        dispatch(&mut cx, Box::new(navidog_core::actions::ToggleFocusMode));
+        dispatch(
+            &mut cx,
+            Box::new(navidog_app_state::actions::ToggleFocusMode),
+        );
         dispatch(
             &mut cx,
             Box::new(OpenObject {
@@ -664,7 +672,10 @@ mod macos {
             window.click("row-discard", cx);
         })
         .unwrap();
-        dispatch(&mut cx, Box::new(navidog_core::actions::ToggleFocusMode));
+        dispatch(
+            &mut cx,
+            Box::new(navidog_app_state::actions::ToggleFocusMode),
+        );
         cx.update(|cx| {
             Theme::change(ThemeMode::Light, None, cx);
             Settings::update(cx, |settings| {
@@ -674,7 +685,10 @@ mod macos {
         });
 
         // Manage Connections, searching highlights the matches
-        dispatch(&mut cx, Box::new(navidog_core::actions::ManageConnections));
+        dispatch(
+            &mut cx,
+            Box::new(navidog_app_state::actions::ManageConnections),
+        );
         cx.run_until_parked();
         let manage = cx
             .update(|cx| {
@@ -1194,7 +1208,7 @@ mod macos {
             pg.group = Some(group);
             let mut lite = Connection::new("sqlite");
             lite.name = "app.db".into();
-            let file = navidog_core::paths::config_dir().join("app.db");
+            let file = navidog_model::paths::config_dir().join("app.db");
             sample_db(&file);
             lite.general.file = Some(file.to_string_lossy().into());
             for c in [my, pg, lite] {

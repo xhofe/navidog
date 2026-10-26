@@ -5022,11 +5022,12 @@ version = "0.0.1"
 dependencies = [
  "gpui-kit",
  "mimalloc",
+ "navidog-app-state",
  "navidog-connection",
- "navidog-core",
  "navidog-db",
  "navidog-designer",
  "navidog-grid",
+ "navidog-model",
  "navidog-navigator",
  "navidog-query",
  "navidog-session",
@@ -5048,40 +5049,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "navidog-app-state"
+version = "0.0.1"
+dependencies = [
+ "gpui-kit",
+ "navidog-model",
+ "rust-i18n",
+ "serde",
+ "serde_json",
+ "sys-locale",
+ "thiserror 2.0.21",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "navidog-connection"
 version = "0.0.1"
 dependencies = [
  "gpui-kit",
- "navidog-core",
+ "navidog-app-state",
  "navidog-db",
+ "navidog-model",
  "navidog-session",
  "navidog-ui",
  "rust-i18n",
  "serde_json",
  "tracing",
-]
-
-[[package]]
-name = "navidog-core"
-version = "0.0.1"
-dependencies = [
- "argon2 0.5.3",
- "base64 0.22.1",
- "chacha20poly1305",
- "dirs 6.0.0",
- "gpui-kit",
- "keyring",
- "navidog-model",
- "rust-i18n",
- "serde",
- "serde_json",
- "shellexpand",
- "strum",
- "sys-locale",
- "tempfile",
- "thiserror 2.0.21",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -5092,8 +5086,9 @@ dependencies = [
  "futures",
  "mysql_async",
  "native-tls",
- "navidog-core",
+ "navidog-model",
  "navidog-session",
+ "navidog-sql",
  "navidog-sql-log",
  "navidog-util",
  "postgres-native-tls",
@@ -5114,8 +5109,10 @@ name = "navidog-designer"
 version = "0.0.1"
 dependencies = [
  "gpui-kit",
- "navidog-core",
+ "navidog-app-state",
  "navidog-db",
+ "navidog-model",
+ "navidog-schema",
  "navidog-session",
  "navidog-ui",
  "navidog-util",
@@ -5130,9 +5127,12 @@ version = "0.0.1"
 dependencies = [
  "chrono",
  "gpui-kit",
- "navidog-core",
+ "navidog-app-state",
  "navidog-db",
+ "navidog-model",
+ "navidog-schema",
  "navidog-session",
+ "navidog-sql",
  "navidog-test-support",
  "navidog-ui",
  "navidog-util",
@@ -5140,6 +5140,17 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "navidog-headless"
+version = "0.0.1"
+dependencies = [
+ "navidog-db",
+ "navidog-model",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -5167,8 +5178,9 @@ version = "0.0.1"
 dependencies = [
  "chrono",
  "gpui-kit",
- "navidog-core",
+ "navidog-app-state",
  "navidog-db",
+ "navidog-model",
  "navidog-session",
  "navidog-test-support",
  "navidog-ui",
@@ -5189,9 +5201,10 @@ dependencies = [
  "chrono",
  "gpui-kit",
  "lsp-types",
- "navidog-core",
+ "navidog-app-state",
  "navidog-db",
  "navidog-grid",
+ "navidog-model",
  "navidog-session",
  "navidog-test-support",
  "navidog-ui",
@@ -5206,18 +5219,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "navidog-schema"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "navidog-db",
+ "navidog-model",
+ "navidog-sql",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "navidog-session"
 version = "0.0.1"
 dependencies = [
  "chrono",
  "futures",
  "gpui-kit",
- "navidog-core",
+ "navidog-app-state",
  "navidog-db",
+ "navidog-model",
  "serde",
  "tempfile",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "navidog-sql"
+version = "0.0.1"
+dependencies = [
+ "navidog-model",
 ]
 
 [[package]]
@@ -5254,6 +5288,7 @@ version = "0.0.1"
 dependencies = [
  "chrono",
  "hex",
+ "navidog-sql",
  "semver",
  "serde",
  "serde_json",

@@ -10,13 +10,13 @@ use gpui_kit::{
     AnyWindowHandle, AppContext as _, Context, ElementId, Entity, IntoElement, ParentElement as _,
     Render, Styled as _, TestAppContext, Window, WindowBounds, WindowOptions, div, size,
 };
-use navidog_core::connection::Connection;
-use navidog_core::crypto::Key;
-use navidog_core::object::{ObjectKind, ObjectRef, Scope};
-use navidog_core::settings::Settings;
-use navidog_core::store::ConnectionStore;
+use navidog_app_state::settings::Settings;
+use navidog_app_state::store::ConnectionStore;
 use navidog_db::Secrets;
 use navidog_grid::TableViewer;
+use navidog_model::connection::Connection;
+use navidog_model::crypto::Key;
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_session::sessions::Sessions;
 use navidog_ui::tokens;
 
@@ -84,7 +84,7 @@ fn paging_commits_first_and_auto_transaction_still_loads(cx: &mut TestAppContext
 
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_grid::init(cx);

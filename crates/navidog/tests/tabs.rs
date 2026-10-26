@@ -7,10 +7,10 @@ use gpui_kit::{AppContext as _, Focusable as _, TestAppContext};
 use navidog::actions::AddFavoriteWithId;
 use navidog::main_window::MainWindow;
 use navidog::state::AppState;
-use navidog_core::actions::OpenObject;
-use navidog_core::favorites::Favorites;
-use navidog_core::object::{ObjectKind, ObjectRef, Scope};
-use navidog_core::settings::Settings;
+use navidog_app_state::actions::OpenObject;
+use navidog_app_state::favorites::Favorites;
+use navidog_app_state::settings::Settings;
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_ui::tabs::{self, AddToStartup, Close, CloseTab, CloseTabs, PopOutTab};
 
 fn view(name: &str) -> ObjectRef {
@@ -160,14 +160,14 @@ fn close_tabs(cx: &mut TestAppContext) {
     };
     dispatch(
         cx,
-        Box::new(navidog_core::actions::DesignTable {
+        Box::new(navidog_app_state::actions::DesignTable {
             object: Some(object.clone()),
         }),
     );
     assert_eq!(tab_count(cx), 2);
     dispatch(
         cx,
-        Box::new(navidog_core::actions::DesignTable {
+        Box::new(navidog_app_state::actions::DesignTable {
             object: Some(object.clone()),
         }),
     );
@@ -181,7 +181,7 @@ fn close_tabs(cx: &mut TestAppContext) {
     assert_eq!(tab_count(cx), 3, "data and design are separate editors");
     dispatch(
         cx,
-        Box::new(navidog_core::actions::DesignTable {
+        Box::new(navidog_app_state::actions::DesignTable {
             object: Some(object.clone()),
         }),
     );
@@ -222,7 +222,7 @@ fn close_tabs(cx: &mut TestAppContext) {
     assert_eq!(tab_count(cx), 2);
     dispatch(
         cx,
-        Box::new(navidog_core::actions::DesignTable {
+        Box::new(navidog_app_state::actions::DesignTable {
             object: Some(object),
         }),
     );

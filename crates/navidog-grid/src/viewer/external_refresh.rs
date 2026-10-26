@@ -5,7 +5,7 @@ use super::*;
 impl TableViewer {
     /// Unlike an explicit page command, a database notification never commits local input.
     fn external_refresh_blocked(&self, cx: &App) -> bool {
-        let grid = self.grid.read(cx);
+        let grid = self.view.grid.read(cx);
         if self.in_transaction
             || self.transaction_pending
             || grid.is_editing(cx)
@@ -13,25 +13,34 @@ impl TableViewer {
         {
             return true;
         }
-        if let Some(row) = self.form_for {
+        if let Some(row) = self.view.form_for {
             let dialect = self.dialect.unwrap_or(Dialect::Sqlite);
-            if self.form_inputs.iter().enumerate().any(|(column, input)| {
-                input.read(cx).value().as_ref()
-                    != grid
-                        .model(cx)
-                        .raw_text(row, column, self.grid.read(cx).raw_mode(), dialect)
-            }) {
+            if self
+                .view
+                .form_inputs
+                .iter()
+                .enumerate()
+                .any(|(column, input)| {
+                    input.read(cx).value().as_ref()
+                        != grid.model(cx).raw_text(
+                            row,
+                            column,
+                            self.view.grid.read(cx).raw_mode(),
+                            dialect,
+                        )
+                })
+            {
                 return true;
             }
         }
-        let editor_text = match self.editor {
-            Some(Kind::Json) => Some(self.json_input.read(cx).value().to_string()),
+        let editor_text = match self.view.editor {
+            Some(Kind::Json) => Some(self.view.json_input.read(cx).value().to_string()),
             Some(Kind::Text | Kind::Hex | Kind::Web) => {
-                Some(self.editor_input.read(cx).value().to_string())
+                Some(self.view.editor_input.read(cx).value().to_string())
             }
             _ => None,
         };
-        editor_text.is_some_and(|text| text != self.editor_baseline)
+        editor_text.is_some_and(|text| text != self.view.editor_baseline)
     }
 
     pub(super) fn accept_catalog(
@@ -44,7 +53,8 @@ impl TableViewer {
         let names = foreign_keys.iter().map(|key| key.column.clone()).collect();
         self.foreign_keys = foreign_keys;
         self.metadata_stale = false;
-        self.grid
+        self.view
+            .grid
             .update(cx, |grid, cx| grid.set_foreign_keys(names, cx));
     }
 
@@ -56,7 +66,7 @@ impl TableViewer {
         }
         self.external_refresh_pending = false;
         if self.external_refresh_blocked(cx) {
-            self.status = t!("viewer.external_refresh_pending").into();
+            self.view.status = t!("viewer.external_refresh_pending").into();
             cx.notify();
             return;
         }
@@ -65,8 +75,8 @@ impl TableViewer {
         };
         let generation = self.session_generation;
         let (scope, table) = (self.object.scope.clone(), self.object.name.clone());
-        let filter = self.filter.read(cx).value().to_string();
-        let order = self.order.read(cx).value().to_string();
+        let filter = self.view.filter.read(cx).value().to_string();
+        let order = self.view.order.read(cx).value().to_string();
         let sql = dialect.select_page(
             &scope,
             &table,
@@ -74,10 +84,10 @@ impl TableViewer {
             &order,
             self.limit,
             self.page * self.limit.unwrap_or(0),
-            self.grid.read(cx).show_rowid,
+            self.view.grid.read(cx).show_rowid,
         );
         let count_sql = dialect.count(&scope, &table, &filter);
-        self.status = sql.clone().into();
+        self.view.status = sql.clone().into();
         self.set_busy(true, cx);
         cx.notify();
         // Keep metadata and rows together on the existing session. Reconnecting here would
@@ -110,9 +120,9 @@ impl TableViewer {
                     // Form and field-editor inputs can still receive text while the grid is locked.
                     if this.external_refresh_blocked(cx) {
                         this.set_busy(false, cx);
-                        this.status = t!("viewer.external_refresh_pending").into();
+                        this.view.status = t!("viewer.external_refresh_pending").into();
                         cx.notify();
-                        return this.close_after_commit;
+                        return this.after_commit == AfterCommit::Close;
                     }
                     match result {
                         Ok((columns, foreign_keys, page, total)) => {
@@ -122,7 +132,7 @@ impl TableViewer {
                         }
                         Err(error) => {
                             this.fail(error, cx);
-                            this.close_after_commit
+                            this.after_commit == AfterCommit::Close
                         }
                     }
                 })

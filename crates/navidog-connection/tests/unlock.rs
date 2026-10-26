@@ -5,10 +5,10 @@ use gpui_kit::{
     AppContext as _, Context, FocusHandle, InteractiveElement as _, IntoElement, Render,
     Styled as _, TestAppContext, Window, WindowBounds, WindowOptions, div, size,
 };
-use navidog_core::actions::OpenConnection;
-use navidog_core::connection::{Connection, SecretField};
-use navidog_core::store::{ConnectionStore, ConnectionsFile};
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_app_state::actions::OpenConnection;
+use navidog_app_state::store::{ConnectionStore, ConnectionsFile};
+use navidog_app_state::workspace::{Selection, Workspace};
+use navidog_model::connection::{Connection, SecretField};
 
 struct Host {
     focus: FocusHandle,
@@ -25,7 +25,7 @@ fn one_enter_is_one_unlock_attempt(cx: &mut TestAppContext) {
     let home = std::env::temp_dir().join(format!("navidog-unlock-test-{}", std::process::id()));
     std::fs::create_dir_all(&home).unwrap();
     // A master-password file with one saved password, so opening asks to unlock first
-    let (crypto, key) = navidog_core::crypto::new_master("right").unwrap();
+    let (crypto, key) = navidog_model::crypto::new_master("right").unwrap();
     let mut conn = Connection::new("mysql");
     conn.general.save_password = true;
     ConnectionsFile::set_secret(&mut conn, SecretField::Password, Some("pw"), &key);
@@ -45,7 +45,7 @@ fn one_enter_is_one_unlock_attempt(cx: &mut TestAppContext) {
 
     cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_connection::init(cx);

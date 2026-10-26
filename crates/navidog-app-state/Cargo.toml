@@ -1,0 +1,22 @@
+[package]
+name = "navidog-app-state"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GPUI application state for navidog: settings, connection store, workspace selection, favorites, snippets and cross-feature actions. Domain data lives in navidog-model."
+
+[dependencies]
+navidog-model = { path = "../navidog-model" }
+gpui-kit.workspace = true
+rust-i18n.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+sys-locale = "0.3"
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }

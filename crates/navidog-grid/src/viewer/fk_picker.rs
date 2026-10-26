@@ -8,6 +8,7 @@ impl TableViewer {
             return;
         };
         let name = self
+            .view
             .grid
             .read(cx)
             .model(cx)

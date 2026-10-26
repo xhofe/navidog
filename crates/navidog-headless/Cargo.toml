@@ -1,0 +1,17 @@
+[package]
+name = "navidog-headless"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Compile check that navidog-model and navidog-db work without the GPUI stack."
+
+[dependencies]
+navidog-model = { path = "../navidog-model" }
+navidog-db = { path = "../navidog-db" }
+tokio.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile = "3"

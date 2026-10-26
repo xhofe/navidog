@@ -12,8 +12,8 @@ use gpui_kit::{
     IntoElement, ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
     Window, div,
 };
-use navidog_core::actions::InsertText;
-use navidog_core::workspace::Workspace;
+use navidog_app_state::actions::InsertText;
+use navidog_app_state::workspace::Workspace;
 use navidog_db::dialect::Dialect;
 use navidog_session::outline::{OutlineCache, OutlineState};
 use navidog_session::sessions::Sessions;

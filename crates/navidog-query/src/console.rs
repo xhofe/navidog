@@ -15,7 +15,7 @@ use gpui_kit::{
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, Styled as _,
     Subscription, Task, WeakEntity, Window, div,
 };
-use navidog_core::store::ConnectionStore;
+use navidog_app_state::store::ConnectionStore;
 use navidog_db::dialect::Dialect;
 use navidog_db::{CancelHandle, DbError, ResultSet};
 use navidog_session::sessions::{Sessions, SessionsEvent, SharedSession, run_on};

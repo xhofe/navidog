@@ -8,11 +8,11 @@ use gpui_kit::{
     AppContext as _, Context, FocusHandle, InteractiveElement as _, IntoElement, Render,
     Styled as _, TestAppContext, Window, WindowBounds, WindowOptions, div, size,
 };
-use navidog_core::actions::{
+use navidog_app_state::actions::{
     ManageConnections, NewConnectionOf, NewProfile, OpenConnection, SwitchProfile,
 };
-use navidog_core::crypto::Key;
-use navidog_core::store::ConnectionStore;
+use navidog_app_state::store::ConnectionStore;
+use navidog_model::crypto::Key;
 use navidog_session::sessions::{ConnState, Sessions};
 
 struct Host {
@@ -53,7 +53,7 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
 
     cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_connection::init(cx);
@@ -160,13 +160,13 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
                 .get(&id)
                 .cloned()
                 .unwrap();
-            (c.profile, c.profiles.len())
+            (c.active_profile_name().to_string(), c.profiles.len())
         })
     };
-    assert_eq!(profile(cx), ("只读".into(), 1));
+    assert_eq!(profile(cx), ("只读".into(), 2));
     dispatch(cx, Box::new(SwitchProfile { name: "".into() }));
     wait_open(cx, &id);
-    assert_eq!(profile(cx), ("".into(), 1));
+    assert_eq!(profile(cx), ("".into(), 2));
 
     // A failed profile save leaves the form and current live session available for retry.
     if block_writes(&home.join("connections.json"), true) {
@@ -192,7 +192,7 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
                 name: "只读".into(),
             }),
         );
-        assert_eq!(profile(cx), ("".into(), 1));
+        assert_eq!(profile(cx), ("".into(), 2));
         assert_eq!(reconnects.get(), 0);
         dispatch(cx, Box::new(NewProfile));
         cx.update_window(handle, |_, window, cx| {
@@ -207,7 +207,7 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
             );
         })
         .unwrap();
-        assert_eq!(profile(cx), ("".into(), 1));
+        assert_eq!(profile(cx), ("".into(), 2));
         assert_eq!(
             reconnects.get(),
             0,
@@ -228,7 +228,7 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
         })
         .unwrap();
         wait_open(cx, &id);
-        assert_eq!(profile(cx), ("retry".into(), 2));
+        assert_eq!(profile(cx), ("retry".into(), 3));
         assert_eq!(reconnects.get(), 1);
     }
 

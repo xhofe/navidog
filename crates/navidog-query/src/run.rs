@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::highlighter::{Diagnostic, DiagnosticSeverity};
 use gpui_kit::component::{RopeExt as _, WindowExt as _};
 use gpui_kit::{App, AsyncWindowContext, Context, WeakEntity, Window};
-use navidog_core::actions::OpenConnectionId;
-use navidog_core::settings::{ResultsPosition, Settings};
-use navidog_core::workspace::Workspace;
+use navidog_app_state::actions::OpenConnectionId;
+use navidog_app_state::settings::{ResultsPosition, Settings};
+use navidog_app_state::workspace::Workspace;
 use navidog_db::dialect::Dialect;
 use navidog_db::sql::{Statement, session_setup, split_script};
 use navidog_db::{CancelHandle, DbError, DbResult, Relational, ResultSet};
@@ -282,7 +282,7 @@ impl QueryEditor {
         }
         let names: Vec<String> = statements
             .iter()
-            .flat_map(|s| sql_text::param_names(&s.text))
+            .flat_map(|s| sql_text::param_names(&s.text, dialect))
             .fold(Vec::new(), |mut acc, n| {
                 if !acc.contains(&n) {
                     acc.push(n);
@@ -316,7 +316,7 @@ impl QueryEditor {
         statements
             .into_iter()
             .map(|s| Planned {
-                sql: sql_text::substitute_params(&s.text, |name| {
+                sql: sql_text::substitute_params(&s.text, dialect, |name| {
                     let (v, raw) = self.params.get(name).cloned().unwrap_or_default();
                     param_value(dialect, &v, raw)
                 }),

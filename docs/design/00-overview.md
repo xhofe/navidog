@@ -103,10 +103,14 @@ flowchart TD
   featGrid --> util[navidog-util]
   featQuery --> featGrid
   featQuery --> db
-  plugin --> core[navidog-core]
+  plugin --> appState[navidog-app-state]
   plugin --> gpuiShell[gpui-shell]
-  db --> core
-  ui --> kit["gpui-kit 0.8"]
+  appState --> model[navidog-model]
+  db --> model
+  db --> sql[navidog-sql]
+  sql --> model
+  util --> sql
+  appState --> kit["gpui-kit 0.8"]
 ```
 
 ### 4.1 crate 划分
@@ -115,7 +119,13 @@ flowchart TD
 | --- | --- | --- |
 | `navidog` | 应用外壳：初始化、窗口、Dock 默认布局、菜单栏、主工具栏骨架、组合各 feature crate。不放功能逻辑。 | M1 |
 | `navidog-ui` | Navicat 主题 JSON、具名 token、AppKit 外观皮肤、图标资源 | M1 |
-| `navidog-core` | 领域模型（连接、分组）、配置目录、加密存储、注册表 | M1 |
+| `navidog-model` | 纯数据模型：连接、分组、对象引用、密钥与加密、配置路径、保存的查询、列宽。不依赖 GPUI，可被 headless 工具和驱动直接使用 | M1 |
+| `navidog-app-state` | GPUI 应用状态：`Settings`、`ConnectionStore`、`Workspace` 选择、收藏、虚拟组、代码段、跨 feature 命令、对象 URI、驱动注册表 | M1 |
+| `navidog-sql` | 方言（标识符/字面量/分页/变更 SQL）、关键字表、唯一的 SQL 扫描器（`span::spans`） | M2 |
+| `navidog-session` | 驱动注册表与会话、元数据缓存状态机（`ScopeCache`）、代码补全信息缓存 | M1 |
+| `navidog-schema` | 表草稿的解析与编辑、约束/索引/选项表单、三种方言的迁移计划与执行。不依赖界面，也不承担驱动协议 | M4 |
+| `navidog-sql-log` | SQL 日志文件的写入与轮转 | M3 |
+| `navidog-headless` | 只依赖 `navidog-model` + `navidog-db` 的编译与运行检查，证明驱动栈不链接 GPUI | M2 |
 | `navidog-util` | 不依赖界面和驱动的纯函数：SQL 类型名归类、enum/set 列表、十六进制和 JSON 文本 | M2 |
 | `navidog-db` | 驱动 trait、三类数据库 trait、tokio 运行时、内置驱动、SSL 和 SSH 隧道 | M1 |
 | `navidog-plugin` | gpui-shell 宿主：manifest、授权、HostModule `navidog` | M1 建空壳，M5 实现 |
@@ -131,7 +141,8 @@ flowchart TD
 | `navidog-ai` | AI 助手 | M11 |
 
 规则：
-- 依赖只能向下：feature crate 可以依赖 `navidog-ui`、`navidog-core`、`navidog-db`、`navidog-util`，**不能依赖其他 feature crate**。feature 之间通过 `navidog-core` 中的命令、事件和领域 ID 协作。`navidog-util` 不依赖本仓库的其他 crate。唯一的例外是 `navidog-query` 依赖 `navidog-grid`，复用结果网格和提交流程；`navidog-grid` 不能反过来依赖它。
+- 依赖只能向下：feature crate 可以依赖 `navidog-ui`、`navidog-app-state`、`navidog-model`、`navidog-db`、`navidog-sql`、`navidog-schema`、`navidog-session`、`navidog-util`，**不能依赖其他 feature crate**。feature 之间通过 `navidog-app-state::actions` 中的命令、事件和领域 ID 协作。`navidog-util` 只依赖 `navidog-sql`。唯一的例外是 `navidog-query` 依赖 `navidog-grid`，复用结果网格和提交流程；`navidog-grid` 不能反过来依赖它。
+- GPUI 只出现在 `navidog-app-state`、`navidog-session`、`navidog-ui` 和 feature crate 里。`navidog-model`、`navidog-db`、`navidog-sql`、`navidog-schema`、`navidog-util`、`navidog-sql-log` 的 normal 依赖不允许出现 `gpui-kit`，由 `scripts/check-deps.sh` 检查；`navidog-headless` 提供只用 model + db 的编译/运行回归。
 - 每个 feature crate 把自己的 model、service、view、command、dialog 放在一起，禁止建立全局的 `models/`、`views/`、`commands/` 目录。
 - 小能力先作为 module 留在最接近的 crate 里，等边界有实际收益再拆成 crate。不依赖界面、也不需要驱动的纯函数例外，直接放 `navidog-util`。
 - feature crate 对外只暴露 `init(cx)`、需要被外壳放进 Dock 的 Panel 类型，以及少量公开的 Entity 或命令。
@@ -165,6 +176,10 @@ gpui-kit 的[编码指南](https://gpui-kit.com/zh-CN/docs/coding-guides)和[设
 - **render 纯声明**：render 里不调 `cx.notify()`、不启动任务。
 - **大数据**：导航树、对象列表、结果网格必须虚拟化，数据、排序筛选、选择、视口和行渲染分开。
 - **i18n**：使用 rust-i18n。每个 crate 根部写 `i18n!("locales", fallback = "en")`，外壳在 `gpui_kit::init` 之前调用 `rust_i18n::extend!(gpui_component)`。切换语言后调用 `cx.refresh_windows()`。
+  - 契约是 **crate-local**：每个后端只加载自己 crate 的 `locales/*.yml`，`scripts/check-i18n.sh` 要求字面量 `t!("…")` 的 key 在本 crate 定义，并且每个 key 同时有 `en` 和 `zh-CN`。
+  - 跨 crate 的文案只能通过显式 helper（如 `navidog_ui::db_error_text`）或调用方传入的字符串复用，不能依赖另一个 crate 的 key。
+  - 动态 key（`t!(format!("…"))`、`t!(key)`、`t!(if … { "a" } else { "b" })`）不参与静态检查，必须逐条登记在 `scripts/i18n-dynamic-keys.txt`（`<path> TAB <第一个参数>`），否则 `check-i18n.sh` 失败。这份清单就是动态 key 的完整清单，新增时要说明理由。
+  - 统一 backend（构建期合并所有 locale、跨 crate 复用 key）没有采用：它要改每个 crate 的初始化和测试，收益只在大规模共享文案时才出现。改走这条路线时先更新本段和 `scripts/check-i18n.sh`。
 - **测试**：UI 测试用 `#[gpui_kit::test]` 加 `TestAppContext`，通过 `gpui_kit::test::{TestWindowExt, TestAppContextExt}` 驱动真实的点击、键盘和焦点。像素测试（`Window::render_to_image`）只在 macOS 上可用，暂不使用。
 - **偏离设计指南**：设计指南要求英文用 sentence case、选中态不用左侧竖条等。凡是 Navicat 的做法与之冲突的，以 Navicat 为准，并在模块规格的“偏差”一节说明。
 
@@ -173,18 +188,18 @@ gpui-kit 的[编码指南](https://gpui-kit.com/zh-CN/docs/coding-guides)和[设
 | 里程碑 | 内容 | 主要 crate |
 | --- | --- | --- |
 | M0 | 参考资料工具、总览、功能清单、token 表、插件 API、M1 规格 | 文档、`xtask` |
-| M1 | 应用外壳和连接管理 | `navidog`、`navidog-ui`、`navidog-core`、`navidog-db`、`navidog-connection` |
+| M1 | 应用外壳和连接管理 | `navidog`、`navidog-ui`、`navidog-model`、`navidog-app-state`、`navidog-db`、`navidog-connection` |
 | M2 | 对象树、对象选项卡、信息窗格、表查看器和结果网格 | `navidog-navigator`、`navidog-grid` |
 | M3 | 查询编辑器、结果、执行计划、SQL 美化、代码段、历史日志、命令列界面 | `navidog-query` |
 | M4 | 表设计器及其他对象设计器 | `navidog-designer` |
 | M5 | 插件体系 | `navidog-plugin` |
 | M6 | 导入导出向导、导入 `.ncx` 连接 | `navidog-transfer` |
-| M7 | 模型和 ER 图；查询创建工具（与 ER 图共用画布，画布放在哪个 crate 在 M7 规格中确定） | `navidog-model`、`navidog-query` |
+| M7 | 模型和 ER 图；查询创建工具（与 ER 图共用画布，画布放在哪个 crate 在 M7 规格中确定）。ER 图 crate 暂记作 `navidog-er`：`navidog-model` 已是纯数据模型 | `navidog-er`、`navidog-query` |
 | M8 | 数据传输、数据同步、结构同步 | `navidog-transfer` |
 | M9 | 备份还原、自动运行 | `navidog-automation` |
 | M10 | BI | `navidog-bi` |
 | M11 | AI 助手 | `navidog-ai` |
-| M12 | 同步（本地目录或 Git），替代 Navicat Cloud | `navidog-core` |
+| M12 | 同步（本地目录或 Git），替代 Navicat Cloud | `navidog-app-state` |
 | M13 | HTTP 隧道 | `navidog-db` |
 | M14 | 其他数据库，按类别接入 | `navidog-db` 及各 feature crate |
 | M15 | 发布：签名、公证、多平台安装包、应用内更新。打包和应用内更新已提前落地；里程碑未关闭，因为公证和配置迁移还没做 | 打包脚本、`navidog` |

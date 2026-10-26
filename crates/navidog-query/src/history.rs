@@ -13,7 +13,7 @@ use gpui_kit::{
     InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, Styled as _, Task,
     WeakEntity, Window, actions, div, point, px,
 };
-use navidog_core::settings::{HistoryHeader, Settings};
+use navidog_app_state::settings::{HistoryHeader, Settings};
 use navidog_db::log::{self, Header, LogEntry};
 use navidog_ui::assets::lucide;
 use navidog_ui::{palette, tabs, tokens};

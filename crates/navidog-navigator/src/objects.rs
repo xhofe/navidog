@@ -16,24 +16,24 @@ use gpui_kit::{
     MouseDownEvent, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
     Styled as _, Subscription, UniformListScrollHandle, WeakEntity, Window, div, img, uniform_list,
 };
-use navidog_core::actions::{
+use navidog_app_state::actions::{
     DeleteObjects, DesignTable, EmptyTables, NewQuery, NewTable, OpenConnection, OpenObject,
     RunQuery, TruncateTables,
 };
-use navidog_core::object::{ObjectKind, ObjectRef, Scope};
-use navidog_core::settings::Settings;
-use navidog_core::store::ConnectionStore;
-use navidog_core::vgroups::VirtualGroups;
-use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
+use navidog_app_state::settings::Settings;
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::vgroups::VirtualGroups;
+use navidog_app_state::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::ObjectInfo;
 use navidog_db::dialect::Dialect;
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_session::sessions::{ConnState, Sessions};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
 use navidog_ui::{palette, tabs, tokens};
 use rust_i18n::t;
 
-use crate::catalog::{Catalog, Load};
+use crate::catalog::{Catalog, Load, listed_kind};
 use crate::navigator::kind_icon;
 
 const PANEL: &str = "ObjectsPanel";
@@ -161,17 +161,6 @@ impl Panel for ObjectsPanel {
     }
 }
 
-/// The object category to show for the selection's scope: the selected category or the selected
-/// object's category, otherwise tables by default.
-fn listed_kind(selection: &Selection) -> Option<(Scope, ObjectKind)> {
-    match selection {
-        Selection::Category(s, k) => Some((s.clone(), *k)),
-        Selection::Object(o) => Some((o.scope.clone(), o.kind)),
-        Selection::Schema(s) => Some((s.clone(), ObjectKind::Table)),
-        _ => None,
-    }
-}
-
 impl ObjectsPanel {
     /// Reuses the same instance when the Dock restores its layout.
     pub fn shared(_: &mut Window, cx: &mut App) -> Entity<Self> {
@@ -185,12 +174,10 @@ impl ObjectsPanel {
                     cx.notify();
                 }),
                 cx.observe(&Sessions::global(cx), |_, _, cx| {
-                    Self::ensure_loaded(cx);
                     Self::defer_recount(cx);
                     cx.notify();
                 }),
                 cx.observe(&Catalog::global(cx), |_, _, cx| {
-                    Self::ensure_loaded(cx);
                     Self::defer_recount(cx);
                     cx.notify();
                 }),
@@ -198,7 +185,6 @@ impl ObjectsPanel {
                     if !matches!(e, WorkspaceEvent::SelectionChanged) {
                         return;
                     }
-                    Self::ensure_loaded(cx);
                     Self::defer_recount(cx);
                     cx.notify();
                 }),
@@ -242,60 +228,6 @@ impl ObjectsPanel {
             }
             _ => None,
         };
-    }
-
-    /// Loads the object list when the selection changes (for MySQL / SQLite, selecting a database lists
-    /// its tables).
-    fn ensure_loaded(cx: &mut App) {
-        let selection = Workspace::global(cx).read(cx).selection().clone();
-        let catalog = Catalog::global(cx);
-        if let Selection::Database(c, d) = &selection {
-            match Sessions::global(cx).read(cx).dialect(c) {
-                Some(dialect) if dialect.has_schemas() => {
-                    catalog.update(cx, |cat, cx| cat.ensure_schemas(c, d, false, cx))
-                }
-                Some(_) => {
-                    let scope = Scope::new(c.clone(), d.clone(), None);
-                    catalog.update(cx, |cat, cx| {
-                        cat.ensure_objects(&scope, ObjectKind::Table, false, cx)
-                    });
-                }
-                None => {}
-            }
-        }
-        if let Some((scope, kind)) = listed_kind(&selection) {
-            catalog.update(cx, |cat, cx| cat.ensure_objects(&scope, kind, false, cx));
-        }
-    }
-
-    /// True when the selection wants a catalog entry that was wiped (the connection
-    /// opened and dropped in-flight loads) and the session can serve it again.
-    fn stalled_load(cx: &App) -> bool {
-        let selection = Workspace::global(cx).read(cx).selection().clone();
-        let catalog = Catalog::global(cx).read(cx);
-        let sessions = Sessions::global(cx).read(cx);
-        let missing = |scope: &Scope, kind: ObjectKind| {
-            catalog.objects(scope, kind).is_none()
-                && sessions.state(&scope.connection).is_open()
-                && sessions.dialect(&scope.connection).is_some()
-        };
-        if let Selection::Database(c, d) = &selection {
-            match sessions.dialect(c) {
-                Some(dialect) if dialect.has_schemas() => {
-                    if catalog.schemas(c, d).is_none() && sessions.state(c).is_open() {
-                        return true;
-                    }
-                }
-                Some(_) => {
-                    let scope = Scope::new(c.clone(), d.clone(), None);
-                    if missing(&scope, ObjectKind::Table) {
-                        return true;
-                    }
-                }
-                None => {}
-            }
-        }
-        listed_kind(&selection).is_some_and(|(scope, kind)| missing(&scope, kind))
     }
 
     /// The row count of the last render, or `None` until the panel rendered once.
@@ -842,12 +774,7 @@ impl ObjectsPanel {
 }
 
 impl Render for ObjectsPanel {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // A load that was wiped when the connection opened leaves an empty
-        // slot. The pane then stays on "Loading…" because nothing asks again.
-        if Self::stalled_load(cx) {
-            cx.defer_in(window, |_, _, cx| Self::ensure_loaded(cx));
-        }
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
         let content = Self::content(cx);
         let selection = Workspace::global(cx).read(cx).selection().clone();

@@ -48,13 +48,13 @@ impl TableDesigner {
             .constraints
             .iter()
             .enumerate()
-            .map(|(ix, s)| (false, ix, s.clone(), parse_entry(s)))
+            .map(|(ix, s)| (false, ix, s.clone(), parse_entry(s, self.dialect)))
             .chain(
                 self.draft
                     .indexes
                     .iter()
                     .enumerate()
-                    .map(|(ix, s)| (true, ix, s.clone(), parse_entry(s))),
+                    .map(|(ix, s)| (true, ix, s.clone(), parse_entry(s, self.dialect))),
             )
             .filter(|(_, _, _, e)| match self.page {
                 Page::Indexes => e.as_ref().is_some_and(|e| {
@@ -123,7 +123,7 @@ impl TableDesigner {
                 .columns
                 .iter()
                 .map(|c| {
-                    let p = column_properties(&c.definition);
+                    let p = column_properties(&c.definition, self.dialect);
                     vec![
                         c.name.clone(),
                         p.data_type,
@@ -325,15 +325,15 @@ impl TableDesigner {
             .columns
             .iter()
             .find(|c| c.name == name)
-            .is_some_and(|c| column_properties(&c.definition).primary_key)
+            .is_some_and(|c| column_properties(&c.definition, self.dialect).primary_key)
             || self
                 .draft
                 .constraints
                 .iter()
-                .filter_map(|s| parse_entry(s))
+                .filter_map(|s| parse_entry(s, self.dialect))
                 .any(|e| {
                     e.kind == EntryKind::Primary
-                        && split_field_list(&e.fields)
+                        && split_field_list(&e.fields, self.dialect)
                             .unwrap_or_default()
                             .iter()
                             .any(|s| s.trim().trim_matches(['`', '"', '[', ']']) == name)
@@ -373,7 +373,7 @@ impl TableDesigner {
         };
         self.select(c.id, window, cx);
         if col == 6 {
-            if column_properties(&c.definition).primary_key {
+            if column_properties(&c.definition, self.dialect).primary_key {
                 if !checked {
                     match edit_column(
                         &c.definition,
@@ -390,15 +390,13 @@ impl TableDesigner {
                 }
                 return;
             }
-            let primary = self
-                .draft
-                .constraints
-                .iter()
-                .position(|s| parse_entry(s).is_some_and(|e| e.kind == EntryKind::Primary));
+            let primary = self.draft.constraints.iter().position(|s| {
+                parse_entry(s, self.dialect).is_some_and(|e| e.kind == EntryKind::Primary)
+            });
             let mut entry = primary
-                .and_then(|ix| parse_entry(&self.draft.constraints[ix]))
+                .and_then(|ix| parse_entry(&self.draft.constraints[ix], self.dialect))
                 .unwrap_or_else(|| DesignEntry::new(EntryKind::Primary));
-            let mut fields = split_field_list(&entry.fields).unwrap_or_default();
+            let mut fields = split_field_list(&entry.fields, self.dialect).unwrap_or_default();
             fields.retain(|s| s.trim_matches(['`', '"', '[', ']']) != c.name);
             if checked {
                 fields.push(self.dialect.quote_ident(&c.name));
@@ -471,7 +469,7 @@ impl TableDesigner {
             else {
                 return;
             };
-            if !column_properties(&column.definition)
+            if !column_properties(&column.definition, self.dialect)
                 .data_type
                 .eq_ignore_ascii_case("INTEGER")
             {
@@ -479,16 +477,14 @@ impl TableDesigner {
                 cx.notify();
                 return;
             }
-            if !column_properties(&column.definition).primary_key {
-                let primary = self
-                    .draft
-                    .constraints
-                    .iter()
-                    .position(|s| parse_entry(s).is_some_and(|e| e.kind == EntryKind::Primary));
+            if !column_properties(&column.definition, self.dialect).primary_key {
+                let primary = self.draft.constraints.iter().position(|s| {
+                    parse_entry(s, self.dialect).is_some_and(|e| e.kind == EntryKind::Primary)
+                });
                 let single = primary
-                    .and_then(|ix| parse_entry(&self.draft.constraints[ix]))
+                    .and_then(|ix| parse_entry(&self.draft.constraints[ix], self.dialect))
                     .is_some_and(|e| {
-                        split_field_list(&e.fields).unwrap_or_default()
+                        split_field_list(&e.fields, self.dialect).unwrap_or_default()
                             == vec![self.dialect.quote_ident(&column.name)]
                             || e.fields.trim() == column.name
                     });
@@ -768,7 +764,7 @@ impl TableDesigner {
             let value = if ix == 1 || ix == REFERENCE_FIELDS {
                 let field = self.dialect.quote_ident(&action.value);
                 let old = input.read(cx).value().to_string();
-                let fields = split_field_list(&old).unwrap_or_default();
+                let fields = split_field_list(&old, self.dialect).unwrap_or_default();
                 if fields
                     .iter()
                     .any(|s| s.trim().trim_matches(['`', '"', '[', ']']) == action.value)

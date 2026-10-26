@@ -13,17 +13,17 @@ use gpui_kit::{
     Global, InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
     Styled as _, Subscription, WeakEntity, Window, div,
 };
-use navidog_core::object::{ObjectKind, ObjectRef};
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::{Selection, Workspace};
 use navidog_db::ColumnInfo;
+use navidog_model::object::{ObjectKind, ObjectRef};
 use navidog_session::sessions::{ConnState, Sessions};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::{heading, truncated};
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
 
-use crate::catalog::{Catalog, Load};
+use crate::catalog::{Catalog, Load, Requirement};
 
 const PANEL: &str = "InfoPanel";
 
@@ -138,9 +138,10 @@ impl InfoPanel {
         let identifiers = crate::identifiers::IdentifiersPage::new(window, cx);
         let panel = cx.new(|cx: &mut Context<Self>| {
             let subs = vec![
-                cx.observe(&navidog_core::snippets::Snippets::global(cx), |_, _, cx| {
-                    cx.notify()
-                }),
+                cx.observe(
+                    &navidog_app_state::snippets::Snippets::global(cx),
+                    |_, _, cx| cx.notify(),
+                ),
                 cx.observe(
                     &navidog_session::outline::OutlineCache::global(cx),
                     |_, _, cx| cx.notify(),
@@ -154,7 +155,7 @@ impl InfoPanel {
                     cx.notify();
                 }),
                 cx.observe_in(&Workspace::global(cx), window, |this, _, window, cx| {
-                    this.ensure_loaded(cx);
+                    this.require_page(cx);
                     this.sync_ddl(window, cx);
                     this.sync_preview(window, cx);
                     this.follow_query_editor(cx);
@@ -190,18 +191,21 @@ impl InfoPanel {
         self.on_toggle_maximize = Some(Rc::new(f));
     }
 
-    fn ensure_loaded(&self, cx: &mut App) {
+    /// Loads what the current page shows. The body only names the entry; the catalog decides
+    /// whether that starts a query.
+    fn require_page(&self, cx: &mut App) {
         let Some(obj) = selected_object(cx) else {
             return;
         };
-        let catalog = Catalog::global(cx);
-        match self.page {
-            Page::Ddl => catalog.update(cx, |c, cx| c.ensure_ddl(&obj, false, cx)),
-            Page::Fields if obj.kind == ObjectKind::Table => catalog.update(cx, |c, cx| {
-                c.ensure_columns(&obj.scope, &obj.name, false, cx)
-            }),
-            _ => {}
-        }
+        let requirement = match self.page {
+            Page::Ddl => Requirement::Ddl(obj),
+            Page::Fields if obj.kind == ObjectKind::Table => Requirement::Columns {
+                scope: obj.scope,
+                table: obj.name,
+            },
+            _ => return,
+        };
+        Catalog::global(cx).update(cx, |c, cx| c.require(requirement, cx));
     }
 
     /// The snippets and identifiers pages come with an active query editor and go with it,
@@ -232,7 +236,7 @@ impl InfoPanel {
         }
         let text = obj
             .as_ref()
-            .and_then(|o| navidog_core::queries::read(&o.scope, &o.name).ok())
+            .and_then(|o| navidog_model::queries::read(&o.scope, &o.name).ok())
             .unwrap_or_default();
         self.preview
             .update(cx, |s, cx| s.set_value(text, window, cx));
@@ -288,11 +292,11 @@ impl InfoPanel {
                     navidog_session::DriverRegistry::name(cx, &c.driver),
                 ),
             ];
-            if !c.profiles.is_empty() {
-                let name = if c.profile.is_empty() {
+            if c.profiles.len() > 1 {
+                let name = if c.active_profile_name().is_empty() {
                     t!("nav.profile_default").to_string()
                 } else {
-                    c.profile.clone()
+                    c.active_profile_name().to_string()
                 };
                 f.push((t!("info.profile").to_string(), name.into()));
             }
@@ -357,7 +361,7 @@ impl InfoPanel {
             }
             Selection::Connection(c) => conn_fields(c),
             Selection::Object(o) if o.kind == ObjectKind::Query => {
-                let path = navidog_core::queries::path(&o.scope, &o.name);
+                let path = navidog_model::queries::path(&o.scope, &o.name);
                 let mut f = vec![
                     (t!("info.object").to_string(), o.name.clone().into()),
                     (
@@ -528,7 +532,7 @@ impl InfoPanel {
             .when(self.page == page, |b| b.selected(true))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.page = page;
-                this.ensure_loaded(cx);
+                this.require_page(cx);
                 this.sync_ddl(window, cx);
                 if page == Page::Identifiers {
                     this.ensure_identifiers(cx);
@@ -696,7 +700,7 @@ impl Share {
             .sel
             .connection_id()
             .and_then(|id| ConnectionStore::global(cx).read(cx).get(id));
-        conn.map(|c| navidog_core::uri::of_selection(&self.sel, c, self.hide_host))
+        conn.map(|c| navidog_app_state::uri::of_selection(&self.sel, c, self.hide_host))
             .unwrap_or_default()
     }
 }

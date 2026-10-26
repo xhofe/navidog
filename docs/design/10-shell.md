@@ -15,7 +15,7 @@
    1. `gpui_kit::init(cx)`；
    2. `cx.set_app_identity(...)`，Bundle ID 为 `ci.nn.navidog`。Dock 图标用 `crates/navidog/resources/navidog.svg`；`scripts/bundle-macos.sh` 把它做成 `navidog.icns` 放进应用包，`cargo run` 启动时用同一张图调用 `setApplicationIconImage`（gpui 在 macOS 上忽略窗口的 `icon`）；
    3. 加载主题（默认 Navicat；偏好设置可选 gpui-kit 的 Default），`font_size` 设为 13，外观跟随系统或使用偏好设置中固定的外观；
-   4. 初始化各 crate：`navidog_core::init`、`navidog_db::init`（启动 tokio 运行时）、`navidog_connection::init`；
+   4. 初始化各 crate：`navidog_app_state::init`、`navidog_db::init`（启动 tokio 运行时）、`navidog_connection::init`；
    5. 先 `cx.bind_keys(...)`，再 `cx.set_menus(...)`；
    6. 打开主窗口。
 5. 主窗口打开后，自动打开设置了“自动连接”的连接（F-CONN-012）。
@@ -187,11 +187,11 @@ M1 实现以下菜单。各菜单的完整结构参考 `reference/tree/MainMenu.
 
 | 文件 | 内容 | 所属 |
 | --- | --- | --- |
-| `settings.json` | 偏好设置（主题、外观、语言、记录、编辑器、启动画面、对象列表隐藏列等）。不含某一个连接的列宽 | `navidog-core` |
+| `settings.json` | 偏好设置（主题、外观、语言、记录、编辑器、启动画面、对象列表隐藏列等）。不含某一个连接的列宽 | `navidog-app-state` |
 | `state.json` | 窗口位置尺寸、Dock 布局、各窗格显示状态 | `navidog` |
-| `connections.json` | 全部连接和连接组（密码字段加密），见 [11-connection.md](11-connection.md)。组不属于某一个连接 | `navidog-core` |
-| `favorites.json` | 收藏夹和最近打开。菜单直接读，不打开连接 | `navidog-core` |
-| `snippets.json` | 自定义代码段，按数据库类型，不按连接 | `navidog-core` |
+| `connections.json` | 全部连接和连接组（密码字段加密），见 [11-connection.md](11-connection.md)。组不属于某一个连接 | `navidog-app-state`（数据在 `navidog-model`） |
+| `favorites.json` | 收藏夹和最近打开。菜单直接读，不打开连接 | `navidog-app-state` |
+| `snippets.json` | 自定义代码段，按数据库类型，不按连接 | `navidog-app-state` |
 | `autosave/` | 未保存查询的自动恢复。启动时读，不打开连接 | `navidog-query` |
 | `plugins/` | 插件目录（M5） | `navidog-plugin` |
 

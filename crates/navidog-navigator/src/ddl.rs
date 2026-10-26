@@ -11,13 +11,13 @@ use gpui_kit::{
     InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Subscription,
     WeakEntity, Window,
 };
-use navidog_core::object::ObjectRef;
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_app_state::workspace::{Selection, Workspace};
+use navidog_model::object::ObjectRef;
 use navidog_session::sessions::{Sessions, SessionsEvent};
 use navidog_ui::assets::lucide;
 use navidog_ui::{palette, tabs};
 
-use crate::catalog::{Catalog, Load};
+use crate::catalog::{Catalog, Load, Requirement};
 
 const PANEL: &str = "DdlPanel";
 
@@ -29,8 +29,8 @@ pub(crate) fn init(cx: &mut App) {
         };
         // A corrupt layout file must still yield a panel; use an empty object as placeholder
         let object = object.unwrap_or_else(|| ObjectRef {
-            scope: navidog_core::object::Scope::new("", "", None),
-            kind: navidog_core::object::ObjectKind::Table,
+            scope: navidog_model::object::Scope::new("", "", None),
+            kind: navidog_model::object::ObjectKind::Table,
             name: String::new(),
         });
         panel_handle(DdlPanel::new(object, window, cx))
@@ -81,7 +81,7 @@ impl BasePanel for DdlPanel {
 impl Panel for DdlPanel {
     fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let icon = lucide(crate::navigator::kind_icon(self.object.kind));
-        let store = navidog_core::store::ConnectionStore::global(cx);
+        let store = navidog_app_state::store::ConnectionStore::global(cx);
         let (color, connection) = match store.read(cx).get(&self.object.scope.connection) {
             Some(c) => (c.color.clone(), Some(c.name.clone())),
             None => (None, None),
@@ -113,7 +113,9 @@ impl DdlPanel {
                 cx.subscribe(&Sessions::global(cx), |this, _, e: &SessionsEvent, cx| {
                     if matches!(e, SessionsEvent::Opened(id) if *id == this.object.scope.connection)
                     {
-                        this.load(cx);
+                        Catalog::global(cx).update(cx, |c, cx| {
+                            c.require(Requirement::Ddl(this.object.clone()), cx)
+                        });
                     }
                 }),
             ];
@@ -123,14 +125,11 @@ impl DdlPanel {
                 editor,
                 _subscriptions: subs,
             };
-            this.load(cx);
+            Catalog::global(cx).update(cx, |c, cx| {
+                c.require(Requirement::Ddl(this.object.clone()), cx)
+            });
             this
         })
-    }
-
-    fn load(&self, cx: &mut App) {
-        let obj = self.object.clone();
-        Catalog::global(cx).update(cx, |c, cx| c.ensure_ddl(&obj, false, cx));
     }
 
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {

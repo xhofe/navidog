@@ -5,8 +5,10 @@
 //! parser does not recognize stays in text mode (`parse_where` returns `None`).
 
 use navidog_db::dialect::Dialect;
+use navidog_sql::span;
 use navidog_util::starts_with_ignore_ascii_case;
 use rust_i18n::t;
+use span::SpanKind;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Op {
@@ -426,12 +428,12 @@ fn sql_value(dialect: Dialect, raw: &str) -> String {
 }
 
 fn unwrap_group(sql: &str, dialect: Dialect) -> (String, bool, bool) {
-    if let Some(inner) = strip_wrapping_not(sql)
+    if let Some(inner) = strip_wrapping_not(sql, dialect)
         && split_joins(&inner, dialect).len() > 1
     {
         return (inner, true, true);
     }
-    if let Some(inner) = strip_wrapping_paren(sql)
+    if let Some(inner) = strip_wrapping_paren(sql, dialect)
         && split_joins(&inner, dialect).len() > 1
     {
         return (inner, true, false);
@@ -439,132 +441,67 @@ fn unwrap_group(sql: &str, dialect: Dialect) -> (String, bool, bool) {
     (sql.to_string(), false, false)
 }
 
-fn strip_wrapping_not(sql: &str) -> Option<String> {
+fn strip_wrapping_not(sql: &str, dialect: Dialect) -> Option<String> {
     let rest = eat_kw(sql.trim(), "NOT")?;
-    strip_wrapping_paren(rest)
+    strip_wrapping_paren(rest, dialect)
 }
 
-fn strip_wrapping_paren(sql: &str) -> Option<String> {
+fn strip_wrapping_paren(sql: &str, dialect: Dialect) -> Option<String> {
     let t = sql.trim();
     if !t.starts_with('(') || !t.ends_with(')') {
         return None;
     }
-    if paren_end(t) != Some(t.len() - 1) {
+    if paren_end(t, dialect) != Some(t.len() - 1) {
         return None;
     }
     Some(t[1..t.len() - 1].trim().to_string())
 }
 
-/// `(or_before, piece)`.
+/// `(or_before, piece)`: splits `WHERE` text at the top-level `AND` / `OR` joins.
 fn split_joins(sql: &str, dialect: Dialect) -> Vec<(bool, String)> {
     let mut parts = Vec::new();
     let mut start = 0;
     let mut or_flag = false;
-    let mut i = 0;
-    let mut depth = 0i32;
-    let mut in_str = false;
     // `BETWEEN 1 AND 2` uses AND as its second value, not as a join.
     let mut pending_between = 0i32;
-    let bytes = sql.as_bytes();
-    while i < bytes.len() {
-        if in_str {
-            i = skip_string_body(sql, i, dialect);
-            in_str = false;
+    for span in span::spans(sql, dialect) {
+        if span.kind != SpanKind::Word || span.depth != 0 {
             continue;
         }
-        match bytes[i] {
-            b'\'' => {
-                in_str = true;
-                i += 1;
-            }
-            b'`' | b'"' => i = navidog_util::sql_text::skip_quoted(sql, i, false),
-            b'(' => {
-                depth += 1;
-                i += 1;
-            }
-            b')' => {
-                depth -= 1;
-                i += 1;
-            }
-            _ if depth == 0
-                && let Some(consumed) = word_span(&sql[i..], "BETWEEN") =>
-            {
-                pending_between += 1;
-                i += consumed;
-            }
-            _ if depth == 0
-                && pending_between > 0
-                && let Some(consumed) = word_span(&sql[i..], "AND") =>
-            {
-                pending_between -= 1;
-                i += consumed;
-            }
-            _ if depth == 0 => {
-                if let Some((consumed, or)) = match_join(&sql[i..]) {
-                    parts.push((or_flag, sql[start..i].to_string()));
-                    or_flag = or;
-                    i += consumed;
-                    start = i;
-                    continue;
-                }
-                i += sql[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-            }
-            _ => i += sql[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1),
+        // A join is a keyword on its own line of text, not the tail of `1AND` or `AND(`.
+        if !sql[..span.range.start].ends_with(char::is_whitespace) {
+            continue;
         }
+        let word = span.text(sql);
+        if word.eq_ignore_ascii_case("BETWEEN") {
+            pending_between += 1;
+            continue;
+        }
+        if pending_between > 0 && word.eq_ignore_ascii_case("AND") {
+            pending_between -= 1;
+            continue;
+        }
+        let or = if word.eq_ignore_ascii_case("AND") {
+            false
+        } else if word.eq_ignore_ascii_case("OR") {
+            true
+        } else {
+            continue;
+        };
+        let after = &sql[span.range.end..];
+        if !(after.is_empty() || after.starts_with(char::is_whitespace)) {
+            continue;
+        }
+        parts.push((or_flag, sql[start..span.range.start].trim().to_string()));
+        or_flag = or;
+        start = span.range.end;
     }
-    parts.push((or_flag, sql[start..].to_string()));
+    parts.push((or_flag, sql[start..].trim().to_string()));
     parts
 }
 
-fn word_span(s: &str, kw: &str) -> Option<usize> {
-    if !match_word(s, kw) {
-        return None;
-    }
-    let rest = s.trim_start();
-    Some(s.len() - rest.len() + kw.len())
-}
-
-fn match_word(s: &str, kw: &str) -> bool {
-    let rest = s.trim_start();
-    if rest.len() == s.len() || !starts_with_ignore_ascii_case(rest, kw) {
-        return false;
-    }
-    !rest[kw.len()..]
-        .chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-/// Whitespace, then AND / OR as a whole word, then the following whitespace.
-fn match_join(s: &str) -> Option<(usize, bool)> {
-    let rest = s.trim_start();
-    if rest.len() == s.len() {
-        return None;
-    }
-    let (word, or) = if starts_with_ignore_ascii_case(rest, "AND") {
-        (3, false)
-    } else if starts_with_ignore_ascii_case(rest, "OR") {
-        (2, true)
-    } else {
-        return None;
-    };
-    let after = &rest[word..];
-    if after
-        .chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
-        return None;
-    }
-    if !after.starts_with(|c: char| c.is_ascii_whitespace()) && !after.is_empty() {
-        return None;
-    }
-    let tail = after.trim_start();
-    Some((s.len() - tail.len(), or))
-}
-
 fn parse_pred(sql: &str, dialect: Dialect) -> Option<Rule> {
-    let (sql, negate) = if let Some(inner) = strip_wrapping_not(sql) {
+    let (sql, negate) = if let Some(inner) = strip_wrapping_not(sql, dialect) {
         if split_joins(&inner, dialect).len() != 1 {
             return None;
         }
@@ -728,7 +665,7 @@ fn parse_in(rest: &str, dialect: Dialect, negated: bool) -> Option<(Op, String, 
     if !rest.starts_with('(') {
         return None;
     }
-    let end = paren_end(rest)?;
+    let end = paren_end(rest, dialect)?;
     let inner = &rest[1..end];
     let after = &rest[end + 1..];
     let mut values = Vec::new();
@@ -855,114 +792,28 @@ fn parse_ident(s: &str, dialect: Dialect) -> Option<(String, &str)> {
 fn split_commas(sql: &str, dialect: Dialect) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;
-    let mut i = 0;
-    let mut depth = 0i32;
-    let mut in_str = false;
-    let bytes = sql.as_bytes();
-    while i < bytes.len() {
-        if in_str {
-            i = skip_string_body(sql, i, dialect);
-            in_str = false;
-            continue;
-        }
-        match bytes[i] {
-            b'\'' => {
-                in_str = true;
-                i += 1;
-            }
-            b'(' => {
-                depth += 1;
-                i += 1;
-            }
-            b')' => {
-                depth -= 1;
-                i += 1;
-            }
-            b',' if depth == 0 => {
-                parts.push(&sql[start..i]);
-                i += 1;
-                start = i;
-            }
-            _ => i += sql[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1),
-        }
+    for pos in span::separators(sql, dialect, b',') {
+        parts.push(&sql[start..pos]);
+        start = pos + 1;
     }
     parts.push(&sql[start..]);
     parts
 }
 
-/// `i` points at the first byte inside a quote that started on the previous byte. Returns the
-/// index just after the closing quote.
-fn skip_string_body(sql: &str, mut i: usize, dialect: Dialect) -> usize {
-    let bytes = sql.as_bytes();
-    while i < bytes.len() {
-        if dialect == Dialect::MySql && bytes[i] == b'\\' && i + 1 < bytes.len() {
-            i += 1 + sql[i + 1..]
-                .chars()
-                .next()
-                .map(|c| c.len_utf8())
-                .unwrap_or(1);
-            continue;
-        }
-        if bytes[i] == b'\'' {
-            if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
-                i += 2;
-                continue;
-            }
-            return i + 1;
-        }
-        i += sql[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-    }
-    i
-}
-
-fn paren_end(sql: &str) -> Option<usize> {
+fn paren_end(sql: &str, dialect: Dialect) -> Option<usize> {
     if !sql.starts_with('(') {
         return None;
     }
-    let bytes = sql.as_bytes();
-    let mut depth = 0i32;
-    let mut i = 0;
-    let mut in_str = false;
-    while i < bytes.len() {
-        if in_str {
-            if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                i += 1 + sql[i + 1..]
-                    .chars()
-                    .next()
-                    .map(|c| c.len_utf8())
-                    .unwrap_or(1);
-                continue;
-            }
-            if bytes[i] == b'\'' {
-                if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
-                    i += 2;
-                    continue;
-                }
-                in_str = false;
-            }
-            i += sql[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-            continue;
-        }
-        match bytes[i] {
-            b'\'' => {
-                in_str = true;
-                i += 1;
-            }
-            b'(' => {
-                depth += 1;
-                i += 1;
-            }
-            b')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
-                }
-                i += 1;
-            }
-            _ => i += sql[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1),
-        }
-    }
-    None
+    let spans = span::spans(sql, dialect);
+    let level = spans
+        .iter()
+        .find(|s| s.kind == SpanKind::OpenParen && s.range.start == 0)?
+        .depth
+        + 1;
+    spans
+        .iter()
+        .find(|s| s.kind == SpanKind::CloseParen && s.depth == level)
+        .map(|s| s.range.start)
 }
 
 fn eat_kw<'a>(s: &'a str, kw: &str) -> Option<&'a str> {
@@ -980,6 +831,9 @@ fn eat_kw<'a>(s: &'a str, kw: &str) -> Option<&'a str> {
     }
     Some(after)
 }
+
+#[cfg(test)]
+mod consistency_tests;
 
 #[cfg(test)]
 mod tests {

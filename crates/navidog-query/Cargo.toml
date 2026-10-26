@@ -10,7 +10,8 @@ description = "SQL query editor for navidog."
 [dependencies]
 navidog-session = { path = "../navidog-session" }
 navidog-ui.workspace = true
-navidog-core.workspace = true
+navidog-model.workspace = true
+navidog-app-state.workspace = true
 navidog-util.workspace = true
 navidog-db.workspace = true
 navidog-grid.workspace = true

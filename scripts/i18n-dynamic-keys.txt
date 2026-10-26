@@ -1,0 +1,27 @@
+# Dynamic and conditional `t!` keys.
+#
+# `scripts/check-i18n.sh` only validates literal keys. A key built with `format!` or chosen by
+# an `if` is invisible to it, so every such call site is listed here as `<path> TAB <first
+# argument>`; adding one is a deliberate act. Keep the list short: prefer a literal key, or a
+# helper in `navidog-ui` (see `navidog_ui::db_error_text`) when the text is shared across crates.
+# See docs/design/00-overview.md, i18n contract.
+
+crates/navidog-designer/src/panel/grid.rs	format!("designer.{}", self.headers[i])
+crates/navidog-designer/src/panel/grid.rs	format!("designer.{}", self.headers[col])
+crates/navidog-designer/src/panel/options.rs	format!("designer.option_{key}")
+crates/navidog-designer/src/panel/options.rs	if self.dialect == Dialect::MySql { "designer.table_options_mysql_help" } else { "designer.table_options_help" }
+crates/navidog-designer/src/panel/view.rs	if fields { "designer.add" } else { "designer.add_object" }
+crates/navidog-designer/src/panel/view.rs	if fields { "designer.delete" } else { "designer.delete_object" }
+crates/navidog-designer/src/panel/view.rs	format!("designer.{key}")
+crates/navidog-designer/src/panel/view.rs	format!("designer.{}", ENTRY_KEYS[ix])
+crates/navidog-navigator/src/info.rs	format!("col.{k}")
+crates/navidog-navigator/src/info.rs	format!("kind.{}", o.kind.key())
+crates/navidog-navigator/src/navigator/menus.rs	format!("nav.color_{c}")
+crates/navidog-navigator/src/navigator/mod.rs	format!("kind.{}", kind.key())
+crates/navidog-navigator/src/navigator/tree.rs	format!("nav.child_{}", child.key())
+crates/navidog-navigator/src/objects.rs	format!("col.{k}")
+crates/navidog-navigator/src/objects.rs	format!("col.{c}")
+crates/navidog-navigator/src/objects.rs	format!("col.{key}")
+crates/navidog-navigator/src/snippets.rs	*l
+crates/navidog-ui/src/lib.rs	key
+crates/navidog/src/main_window.rs	*label

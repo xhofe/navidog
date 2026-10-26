@@ -8,7 +8,7 @@ impl TableViewer {
     }
 
     pub(super) fn field_names(&self, cx: &App) -> Vec<String> {
-        let model = self.grid.read(cx).model(cx);
+        let model = self.view.grid.read(cx).model(cx);
         if model.all_columns().next().is_none() {
             self.columns.iter().map(|c| c.name.clone()).collect()
         } else {
@@ -46,6 +46,7 @@ impl TableViewer {
     pub(super) fn current_filter(&self, cx: &App) -> Filter {
         Filter {
             rules: self
+                .view
                 .rules
                 .iter()
                 .map(|d| Rule {
@@ -57,23 +58,25 @@ impl TableViewer {
                     negate: d.negate,
                 })
                 .collect(),
-            grouped: self.grouped,
-            group_negate: self.group_negate,
+            grouped: self.view.grouped,
+            group_negate: self.view.group_negate,
         }
     }
 
     pub(super) fn write_filter_sql(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let dialect = self.dialect();
         let where_text = filter::where_sql(&self.current_filter(cx), dialect);
-        let order_text = filter::order_sql(&self.sorts, dialect);
-        self.filter
+        let order_text = filter::order_sql(&self.view.sorts, dialect);
+        self.view
+            .filter
             .update(cx, |s, cx| s.set_value(where_text, window, cx));
-        self.order
+        self.view
+            .order
             .update(cx, |s, cx| s.set_value(order_text, window, cx));
     }
 
     pub(super) fn apply_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.builder {
+        if self.view.builder {
             self.write_filter_sql(window, cx);
         }
         self.page = 0;
@@ -81,13 +84,13 @@ impl TableViewer {
     }
 
     pub(super) fn set_builder(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if on == self.builder {
+        if on == self.view.builder {
             return;
         }
         let dialect = self.dialect();
         if on {
-            let where_text = self.filter.read(cx).value().to_string();
-            let order_text = self.order.read(cx).value().to_string();
+            let where_text = self.view.filter.read(cx).value().to_string();
+            let order_text = self.view.order.read(cx).value().to_string();
             let (Some(parsed), Some(sorts)) = (
                 filter::parse_where(&where_text, dialect),
                 filter::parse_order(&order_text, dialect),
@@ -98,14 +101,14 @@ impl TableViewer {
             for rule in parsed.rules {
                 rules.push(Self::make_draft(rule, window, cx));
             }
-            self.rules = rules;
-            self.sorts = sorts;
-            self.grouped = parsed.grouped;
-            self.group_negate = parsed.group_negate;
+            self.view.rules = rules;
+            self.view.sorts = sorts;
+            self.view.grouped = parsed.grouped;
+            self.view.group_negate = parsed.group_negate;
         } else {
             self.write_filter_sql(window, cx);
         }
-        self.builder = on;
+        self.view.builder = on;
         cx.notify();
     }
 
@@ -117,7 +120,7 @@ impl TableViewer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.show_filter = true;
+        self.view.show_filter = true;
         let dialect = self.dialect();
         let rule = Rule {
             field: column.to_string(),
@@ -127,8 +130,8 @@ impl TableViewer {
             or: false,
             negate: false,
         };
-        if self.builder {
-            self.rules.push(Self::make_draft(rule, window, cx));
+        if self.view.builder {
+            self.view.rules.push(Self::make_draft(rule, window, cx));
             self.write_filter_sql(window, cx);
         } else {
             let extra = filter::where_sql(
@@ -138,13 +141,14 @@ impl TableViewer {
                 },
                 dialect,
             );
-            let current = self.filter.read(cx).value().to_string();
+            let current = self.view.filter.read(cx).value().to_string();
             let text = if current.trim().is_empty() {
                 extra
             } else {
                 format!("({current}) AND {extra}")
             };
-            self.filter
+            self.view
+                .filter
                 .update(cx, |s, cx| s.set_value(text, window, cx));
         }
         self.page = 0;
@@ -153,7 +157,7 @@ impl TableViewer {
 
     pub(super) fn add_rule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let field = self.field_names(cx).into_iter().next().unwrap_or_default();
-        self.rules.push(Self::make_draft(
+        self.view.rules.push(Self::make_draft(
             Rule {
                 field,
                 op: filter::Op::Eq,
@@ -179,12 +183,12 @@ impl TableViewer {
             .border_b_1()
             .border_color(p.separator)
             .child(self.render_filter_bar(cx));
-        if self.builder {
-            for i in 0..self.rules.len() {
+        if self.view.builder {
+            for i in 0..self.view.rules.len() {
                 pane = pane.child(self.render_rule(i, cx));
             }
             pane = pane.child(self.render_rule_actions(cx));
-            for i in 0..self.sorts.len() {
+            for i in 0..self.view.sorts.len() {
                 pane = pane.child(self.render_sort(i, cx));
             }
             pane = pane.child(self.render_sort_actions(cx));
@@ -209,7 +213,7 @@ impl TableViewer {
                     .child(
                         mode(
                             "filter-builder",
-                            self.builder,
+                            self.view.builder,
                             t!("viewer.builder").to_string(),
                         )
                         .on_click(
@@ -217,22 +221,27 @@ impl TableViewer {
                         ),
                     )
                     .child(
-                        mode("filter-text", !self.builder, t!("viewer.text").to_string()).on_click(
+                        mode(
+                            "filter-text",
+                            !self.view.builder,
+                            t!("viewer.text").to_string(),
+                        )
+                        .on_click(
                             cx.listener(|this, _, window, cx| this.set_builder(false, window, cx)),
                         ),
                     ),
             )
-            .when(self.builder, |bar| {
+            .when(self.view.builder, |bar| {
                 bar.child(
                     Button::new("filter-group")
                         .xsmall()
-                        .selected(self.grouped)
-                        .disabled(self.rules.len() < 2)
+                        .selected(self.view.grouped)
+                        .disabled(self.view.rules.len() < 2)
                         .label(t!("viewer.group").to_string())
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.grouped = !this.grouped;
-                            if !this.grouped {
-                                this.group_negate = false;
+                            this.view.grouped = !this.view.grouped;
+                            if !this.view.grouped {
+                                this.view.group_negate = false;
                             }
                             cx.notify();
                         })),
@@ -240,11 +249,11 @@ impl TableViewer {
                 .child(
                     Button::new("filter-group-not")
                         .xsmall()
-                        .selected(self.group_negate)
-                        .disabled(!self.grouped)
+                        .selected(self.view.group_negate)
+                        .disabled(!self.view.grouped)
                         .label(t!("viewer.negate").to_string())
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.group_negate = !this.group_negate;
+                            this.view.group_negate = !this.view.group_negate;
                             cx.notify();
                         })),
                 )
@@ -267,13 +276,13 @@ impl TableViewer {
             .px_2()
             .gap_2()
             .child(label("WHERE"))
-            .child(Input::new(&self.filter).small().flex_1().min_w_0())
+            .child(Input::new(&self.view.filter).small().flex_1().min_w_0())
             .child(label("ORDER BY"))
-            .child(Input::new(&self.order).small().flex_1().min_w_0())
+            .child(Input::new(&self.view.order).small().flex_1().min_w_0())
     }
 
     pub(super) fn render_rule(&self, index: usize, cx: &mut Context<Self>) -> impl IntoElement {
-        let rule = &self.rules[index];
+        let rule = &self.view.rules[index];
         let field = if rule.field.is_empty() {
             "…".to_string()
         } else {
@@ -296,7 +305,7 @@ impl TableViewer {
                             t!("viewer.and").to_string()
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(rule) = this.rules.get_mut(index) {
+                            if let Some(rule) = this.view.rules.get_mut(index) {
                                 rule.or_join = !rule.or_join;
                                 cx.notify();
                             }
@@ -309,7 +318,7 @@ impl TableViewer {
                     .selected(rule.negate)
                     .label(t!("viewer.negate").to_string())
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(rule) = this.rules.get_mut(index) {
+                        if let Some(rule) = this.view.rules.get_mut(index) {
                             rule.negate = !rule.negate;
                             cx.notify();
                         }
@@ -346,8 +355,8 @@ impl TableViewer {
                     .xsmall()
                     .icon(lucide("x"))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        if index < this.rules.len() {
-                            this.rules.remove(index);
+                        if index < this.view.rules.len() {
+                            this.view.rules.remove(index);
                             cx.notify();
                         }
                     })),
@@ -366,7 +375,7 @@ impl TableViewer {
     }
 
     pub(super) fn render_sort(&self, index: usize, cx: &mut Context<Self>) -> impl IntoElement {
-        let sort = &self.sorts[index];
+        let sort = &self.view.sorts[index];
         let field = if sort.field.is_empty() {
             "…".to_string()
         } else {
@@ -394,7 +403,7 @@ impl TableViewer {
                         t!("viewer.desc").to_string()
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(sort) = this.sorts.get_mut(index) {
+                        if let Some(sort) = this.view.sorts.get_mut(index) {
                             sort.asc = !sort.asc;
                             cx.notify();
                         }
@@ -407,8 +416,8 @@ impl TableViewer {
                     .disabled(index == 0)
                     .label(t!("viewer.sort_up").to_string())
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        if index > 0 && index < this.sorts.len() {
-                            this.sorts.swap(index, index - 1);
+                        if index > 0 && index < this.view.sorts.len() {
+                            this.view.sorts.swap(index, index - 1);
                             cx.notify();
                         }
                     })),
@@ -417,11 +426,11 @@ impl TableViewer {
                 Button::new(ElementId::Name(format!("sort-down-{index}").into()))
                     .ghost()
                     .xsmall()
-                    .disabled(index + 1 >= self.sorts.len())
+                    .disabled(index + 1 >= self.view.sorts.len())
                     .label(t!("viewer.sort_down").to_string())
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        if index + 1 < this.sorts.len() {
-                            this.sorts.swap(index, index + 1);
+                        if index + 1 < this.view.sorts.len() {
+                            this.view.sorts.swap(index, index + 1);
                             cx.notify();
                         }
                     })),
@@ -432,8 +441,8 @@ impl TableViewer {
                     .xsmall()
                     .icon(lucide("x"))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        if index < this.sorts.len() {
-                            this.sorts.remove(index);
+                        if index < this.view.sorts.len() {
+                            this.view.sorts.remove(index);
                             cx.notify();
                         }
                     })),
@@ -449,7 +458,7 @@ impl TableViewer {
                 .label(t!("viewer.add_sort").to_string())
                 .on_click(cx.listener(|this, _, _, cx| {
                     let field = this.field_names(cx).into_iter().next().unwrap_or_default();
-                    this.sorts.push(Sort { field, asc: true });
+                    this.view.sorts.push(Sort { field, asc: true });
                     cx.notify();
                 })),
         )

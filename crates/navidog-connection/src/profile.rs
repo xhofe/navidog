@@ -8,7 +8,7 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
     Styled as _, Window,
 };
-use navidog_core::store::ConnectionStore;
+use navidog_app_state::store::ConnectionStore;
 use navidog_session::sessions::Sessions;
 use navidog_ui::skin::{FormRow, confirm_with, heading};
 use navidog_ui::tokens;
@@ -30,7 +30,7 @@ fn change(
     id: &str,
     window: &mut Window,
     cx: &mut App,
-    f: impl FnOnce(&mut navidog_core::connection::Connection),
+    f: impl FnOnce(&mut navidog_model::connection::Connection),
 ) -> bool {
     let open = Sessions::global(cx).read(cx).state(id).is_open();
     if let Err(error) = ConnectionStore::global(cx).update(cx, |s, cx| s.update(id, f, cx)) {
@@ -54,8 +54,8 @@ pub fn delete(id: String, window: &mut Window, cx: &mut App) {
     let Some(name) = ConnectionStore::global(cx)
         .read(cx)
         .get(&id)
-        .filter(|c| !c.profiles.is_empty())
-        .map(|c| label(&c.profile))
+        .filter(|c| c.profiles.len() > 1)
+        .map(|c| label(c.active_profile_name()))
     else {
         return;
     };

@@ -10,9 +10,9 @@ use gpui_kit::{
     AppContext as _, Bounds, Context, FocusHandle, InteractiveElement as _, IntoElement, Render,
     Styled as _, TestAppContext, Window, WindowBounds, WindowOptions, div, px, size,
 };
-use navidog_core::actions::{OpenConnectionId, ReopenConnectionId};
-use navidog_core::connection::Connection;
-use navidog_core::store::ConnectionStore;
+use navidog_app_state::actions::{OpenConnectionId, ReopenConnectionId};
+use navidog_app_state::store::ConnectionStore;
+use navidog_model::connection::Connection;
 use navidog_session::sessions::{ConnState, Sessions, SessionsEvent};
 
 struct Host {
@@ -49,7 +49,7 @@ fn reopening_requires_confirmation_and_preserves_the_editor_lifecycle(cx: &mut T
     unsafe { std::env::set_var("NAVIDOG_HOME", &home) };
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_connection::init(cx);

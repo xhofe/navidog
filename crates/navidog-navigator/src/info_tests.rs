@@ -9,12 +9,12 @@ use gpui_kit::{
     AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
     TestAppContext, Window, WindowOptions, div,
 };
-use navidog_core::connection::Connection;
-use navidog_core::crypto::Key;
-use navidog_core::snippets::Snippets;
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::{QueryContext, Workspace};
+use navidog_app_state::snippets::Snippets;
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::{QueryContext, Workspace};
 use navidog_db::{ConnectParams, Secrets, connect, runtime, sqlite::SqliteDriver};
+use navidog_model::connection::Connection;
+use navidog_model::crypto::Key;
 use navidog_session::sessions::Sessions;
 
 use crate::info::{InfoPanel, Page};
@@ -54,7 +54,7 @@ fn query_pages_follow_the_editor(cx: &mut TestAppContext) {
     unsafe { std::env::set_var("NAVIDOG_HOME", &home) };
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         crate::init(cx);
@@ -154,7 +154,7 @@ fn query_pages_follow_the_editor(cx: &mut TestAppContext) {
         window.click("info-identifiers", cx);
     })
     .unwrap();
-    let scope = navidog_core::object::Scope::new(id.clone(), "main", None);
+    let scope = navidog_model::object::Scope::new(id.clone(), "main", None);
     wait(cx, "the identifiers", |cx| {
         cx.update(|cx| {
             navidog_session::outline::OutlineCache::global(cx)

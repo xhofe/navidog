@@ -57,7 +57,7 @@ impl NavigatorPanel {
         for a in node.ancestors(dialect) {
             if self.expanded.insert(a.id()) {
                 changed = true;
-                Self::ensure_children(&a, false, cx);
+                Self::require_children(&a, false, cx);
             }
         }
         if changed {
@@ -275,7 +275,7 @@ impl NavigatorPanel {
         }
         if expand {
             if self.expanded.insert(id) {
-                Self::ensure_children(&node, false, cx);
+                Self::require_children(&node, false, cx);
                 self.rebuild(cx);
             }
         } else if self.expanded.remove(&id) {

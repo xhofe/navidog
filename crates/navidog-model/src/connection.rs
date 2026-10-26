@@ -1,6 +1,8 @@
 //! Connection configuration model: connections.json from docs/design/11-connection.md §6.
 //! Every struct keeps unknown fields, so files written by newer versions stay compatible.
 
+use std::ops::{Deref, DerefMut};
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -26,46 +28,31 @@ pub struct Group {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Connection {
     pub id: ConnectionId,
     pub name: String,
     /// `DriverRegistry` key: mysql, mariadb, postgres, sqlite; plugin drivers carry the plugin prefix
     pub driver: String,
-    #[serde(default)]
     pub group: Option<GroupId>,
-    #[serde(default)]
     pub color: Option<String>,
-    #[serde(default)]
-    pub general: General,
-    #[serde(default)]
-    pub advanced: Advanced,
-    #[serde(default)]
+    /// Tables/data options shared by every profile
     pub databases: Databases,
-    #[serde(default)]
-    pub ssl: Ssl,
-    #[serde(default)]
-    pub ssh: Ssh,
-    #[serde(default)]
     pub remark: String,
     /// Starred in Manage Connections; the navigator's quick filter can show only these
-    #[serde(default)]
     pub starred: bool,
     /// Hidden in Manage Connections: kept but not shown in the navigator
-    #[serde(default)]
     pub hidden: bool,
-    /// Name of the active profile ("" is the default one); its settings are the fields above
-    #[serde(default)]
-    pub profile: String,
-    /// The inactive profiles (F-CONN-021)
-    #[serde(default)]
+    /// Every profile's settings, including the active one at `active`. The active profile is
+    /// what the form edits and what opening the connection connects with (F-CONN-021).
     pub profiles: Vec<Profile>,
-    #[serde(flatten)]
+    /// Index of the active profile in `profiles`
+    pub active: usize,
     pub extra: Map<String, Value>,
 }
 
-/// A named set of connection settings, e.g. for another database user. Secrets stay encrypted for
-/// the connection's id, so they stay valid when a profile trades places with the active settings.
+/// One named set of connection settings, e.g. for another database user. Secrets stay encrypted
+/// for the connection's id, so they keep working when another profile becomes active.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Profile {
@@ -74,6 +61,158 @@ pub struct Profile {
     pub advanced: Advanced,
     pub ssl: Ssl,
     pub ssh: Ssh,
+}
+
+// On-disk compatibility: `connections.json` keeps its historical layout - the active profile's
+// settings at the top level, its name in `profile`, and the other profiles in `profiles` - so an
+// older build can still read a file this one writes. The deserializer also accepts the newer
+// shape (`profiles` holds every profile and `active` names one), which a later release can switch
+// to without another migration.
+impl Serialize for Connection {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct OnDisk<'a> {
+            id: &'a ConnectionId,
+            name: &'a str,
+            driver: &'a str,
+            group: &'a Option<GroupId>,
+            color: &'a Option<String>,
+            general: &'a General,
+            advanced: &'a Advanced,
+            databases: &'a Databases,
+            ssl: &'a Ssl,
+            ssh: &'a Ssh,
+            remark: &'a str,
+            starred: bool,
+            hidden: bool,
+            profile: &'a str,
+            profiles: Vec<&'a Profile>,
+            #[serde(flatten)]
+            extra: &'a Map<String, Value>,
+        }
+        let active = self.active();
+        OnDisk {
+            id: &self.id,
+            name: &self.name,
+            driver: &self.driver,
+            group: &self.group,
+            color: &self.color,
+            general: &active.general,
+            advanced: &active.advanced,
+            databases: &self.databases,
+            ssl: &active.ssl,
+            ssh: &active.ssh,
+            remark: &self.remark,
+            starred: self.starred,
+            hidden: self.hidden,
+            profile: &active.name,
+            profiles: self
+                .profiles
+                .iter()
+                .enumerate()
+                .filter(|(ix, _)| *ix != self.active)
+                .map(|(_, profile)| profile)
+                .collect(),
+            extra: &self.extra,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Connection {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            id: ConnectionId,
+            name: String,
+            driver: String,
+            #[serde(default)]
+            group: Option<GroupId>,
+            #[serde(default)]
+            color: Option<String>,
+            #[serde(default)]
+            general: Option<General>,
+            #[serde(default)]
+            advanced: Option<Advanced>,
+            #[serde(default)]
+            databases: Databases,
+            #[serde(default)]
+            ssl: Option<Ssl>,
+            #[serde(default)]
+            ssh: Option<Ssh>,
+            #[serde(default)]
+            remark: String,
+            #[serde(default)]
+            starred: bool,
+            #[serde(default)]
+            hidden: bool,
+            #[serde(default)]
+            profile: String,
+            #[serde(default)]
+            profiles: Vec<Profile>,
+            #[serde(default)]
+            active: usize,
+            #[serde(flatten)]
+            extra: Map<String, Value>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        let legacy = raw.general.is_some()
+            || raw.advanced.is_some()
+            || raw.ssl.is_some()
+            || raw.ssh.is_some();
+        let (profiles, active) = if legacy {
+            // The active settings sit at the top level; `profiles` holds the inactive ones.
+            let mut profiles = raw.profiles;
+            profiles.insert(
+                0,
+                Profile {
+                    name: raw.profile,
+                    general: raw.general.unwrap_or_default(),
+                    advanced: raw.advanced.unwrap_or_default(),
+                    ssl: raw.ssl.unwrap_or_default(),
+                    ssh: raw.ssh.unwrap_or_default(),
+                },
+            );
+            (profiles, 0)
+        } else {
+            let mut profiles = raw.profiles;
+            if profiles.is_empty() {
+                profiles.push(Profile::default());
+            }
+            let active = raw.active.min(profiles.len() - 1);
+            (profiles, active)
+        };
+        Ok(Connection {
+            id: raw.id,
+            name: raw.name,
+            driver: raw.driver,
+            group: raw.group,
+            color: raw.color,
+            databases: raw.databases,
+            remark: raw.remark,
+            starred: raw.starred,
+            hidden: raw.hidden,
+            profiles,
+            active,
+            extra: raw.extra,
+        })
+    }
+}
+
+/// The connection's settings are its active profile: `connection.general` and friends keep
+/// working, but every field now lives in `profiles[active]`.
+impl Deref for Connection {
+    type Target = Profile;
+
+    fn deref(&self) -> &Profile {
+        self.active()
+    }
+}
+
+impl DerefMut for Connection {
+    fn deref_mut(&mut self) -> &mut Profile {
+        self.active_mut()
+    }
 }
 
 /// Navicat's connection defaults. Kept here (not in `DriverInfo`) because
@@ -109,75 +248,82 @@ pub fn driver_defaults(driver: &str) -> DriverDefaults {
 }
 
 impl Connection {
-    /// Trades the active settings with `profiles[ix]`; swapping twice restores them.
-    pub fn swap_profile(&mut self, ix: usize) {
-        let p = &mut self.profiles[ix];
-        std::mem::swap(&mut self.profile, &mut p.name);
-        std::mem::swap(&mut self.general, &mut p.general);
-        std::mem::swap(&mut self.advanced, &mut p.advanced);
-        std::mem::swap(&mut self.ssl, &mut p.ssl);
-        std::mem::swap(&mut self.ssh, &mut p.ssh);
+    /// The settings in force: the active profile.
+    pub fn active(&self) -> &Profile {
+        &self.profiles[self.active]
     }
 
-    /// Runs `f` with profile `ix` swapped into the active fields (0 is the
-    /// active profile). The swap back also runs during unwinding, so a panic
-    /// cannot leave the active fields pointing at another profile.
+    pub fn active_mut(&mut self) -> &mut Profile {
+        &mut self.profiles[self.active]
+    }
+
+    /// Name of the active profile ("" is the default one).
+    pub fn active_profile_name(&self) -> &str {
+        &self.active().name
+    }
+
+    /// Runs `f` with profile `ix` active (an index into `profiles`). The previous profile is
+    /// restored even when `f` panics, and no settings are copied or swapped.
     pub fn with_active_profile<R>(&mut self, ix: usize, f: impl FnOnce(&mut Self) -> R) -> R {
-        if ix == 0 {
+        let ix = ix.min(self.profiles.len().saturating_sub(1));
+        if ix == self.active {
             return f(self);
         }
-        let profile = ix - 1;
-        self.swap_profile(profile);
+        let previous = std::mem::replace(&mut self.active, ix);
         struct Restore<'a> {
             connection: &'a mut Connection,
-            profile: usize,
+            previous: usize,
         }
         impl Drop for Restore<'_> {
             fn drop(&mut self) {
-                self.connection.swap_profile(self.profile);
+                self.connection.active = self.previous;
             }
         }
         let restore = Restore {
             connection: self,
-            profile,
+            previous,
         };
-        let connection = &mut *restore.connection;
-        f(connection)
+        f(&mut *restore.connection)
     }
 
+    /// Makes the named profile active; false when no profile has that name.
     pub fn switch_profile(&mut self, name: &str) -> bool {
         let Some(ix) = self.profiles.iter().position(|p| p.name == name) else {
             return false;
         };
-        self.swap_profile(ix);
+        self.active = ix;
         true
     }
 
     /// Adds a profile that starts as a copy of the active settings, and makes it active.
     pub fn add_profile(&mut self, name: String) {
-        let old = Profile {
-            name: std::mem::replace(&mut self.profile, name),
-            general: self.general.clone(),
-            advanced: self.advanced.clone(),
-            ssl: self.ssl.clone(),
-            ssh: self.ssh.clone(),
-        };
-        self.profiles.push(old);
+        let mut profile = self.active().clone();
+        profile.name = name;
+        self.profiles.push(profile);
+        self.active = self.profiles.len() - 1;
     }
 
-    /// Drops the active profile and activates the first remaining one.
+    /// Drops the active profile and activates the first remaining one. The last profile stays:
+    /// a connection always has settings.
     pub fn remove_active_profile(&mut self) -> bool {
-        if self.profiles.is_empty() {
+        if self.profiles.len() <= 1 {
             return false;
         }
-        self.swap_profile(0);
-        self.profiles.remove(0);
+        self.profiles.remove(self.active);
+        self.active = 0;
         true
     }
 
     /// All profile names, the active one first.
     pub fn profile_names(&self) -> impl Iterator<Item = &str> {
-        std::iter::once(self.profile.as_str()).chain(self.profiles.iter().map(|p| p.name.as_str()))
+        let active = self.active;
+        std::iter::once(self.profiles[active].name.as_str()).chain(
+            self.profiles
+                .iter()
+                .enumerate()
+                .filter(move |(ix, _)| *ix != active)
+                .map(|(_, profile)| profile.name.as_str()),
+        )
     }
 
     /// Navicat's defaults for the given driver (11-connection.md §2).
@@ -195,23 +341,23 @@ impl Connection {
             driver: driver.to_string(),
             group: None,
             color: None,
-            general: General {
-                host: host.into(),
-                port,
-                user: user.into(),
-                database,
-                save_password: true,
-                ..General::default()
-            },
-            advanced: Advanced::default(),
             databases: Databases::default(),
-            ssl: Ssl::default(),
-            ssh: Ssh::default(),
             remark: String::new(),
             starred: false,
             hidden: false,
-            profile: String::new(),
-            profiles: Vec::new(),
+            profiles: vec![Profile {
+                name: String::new(),
+                general: General {
+                    host: host.into(),
+                    port,
+                    user: user.into(),
+                    database,
+                    save_password: true,
+                    ..General::default()
+                },
+                ..Profile::default()
+            }],
+            active: 0,
             extra: Map::new(),
         };
         conn.name = conn.suggested_name();
@@ -505,28 +651,30 @@ impl SecretField {
         }
     }
 
-    pub fn slot(self, conn: &Connection) -> &Option<Secret> {
+    /// The field's slot in one profile. A `&Connection` works too, through its `Deref` to the
+    /// active profile.
+    pub fn slot(self, profile: &Profile) -> &Option<Secret> {
         match self {
-            Self::Password => &conn.general.password,
-            Self::SshPassword => &conn.ssh.password,
-            Self::SshPassphrase => &conn.ssh.passphrase,
+            Self::Password => &profile.general.password,
+            Self::SshPassword => &profile.ssh.password,
+            Self::SshPassphrase => &profile.ssh.passphrase,
         }
     }
 
-    pub fn slot_mut(self, conn: &mut Connection) -> &mut Option<Secret> {
+    pub fn slot_mut(self, profile: &mut Profile) -> &mut Option<Secret> {
         match self {
-            Self::Password => &mut conn.general.password,
-            Self::SshPassword => &mut conn.ssh.password,
-            Self::SshPassphrase => &mut conn.ssh.passphrase,
+            Self::Password => &mut profile.general.password,
+            Self::SshPassword => &mut profile.ssh.password,
+            Self::SshPassphrase => &mut profile.ssh.passphrase,
         }
     }
 
     /// The "save password" switch of this field.
-    pub fn saved_mut(self, conn: &mut Connection) -> &mut bool {
+    pub fn saved_mut(self, profile: &mut Profile) -> &mut bool {
         match self {
-            Self::Password => &mut conn.general.save_password,
-            Self::SshPassword => &mut conn.ssh.save_password,
-            Self::SshPassphrase => &mut conn.ssh.save_passphrase,
+            Self::Password => &mut profile.general.save_password,
+            Self::SshPassword => &mut profile.ssh.save_password,
+            Self::SshPassphrase => &mut profile.ssh.save_passphrase,
         }
     }
 
@@ -555,15 +703,16 @@ mod tests {
     }
 
     #[test]
-    fn profile_swap_is_restored_when_the_operation_panics() {
+    fn the_active_profile_is_restored_when_the_operation_panics() {
         let mut connection = Connection::new("mysql");
         connection.add_profile("other".into());
+        assert!(connection.switch_profile(""));
         let before = connection.clone();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             connection.with_active_profile(1, |_| panic!("fixture"));
         }));
         assert!(result.is_err());
-        assert_eq!(connection, before);
+        assert_eq!(connection, before, "the active profile was not restored");
     }
 
     #[test]
@@ -610,20 +759,82 @@ mod tests {
         c.general.user = "reader".into();
         assert_eq!(c.profile_names().collect::<Vec<_>>(), ["readonly", ""]);
         assert!(c.switch_profile(""));
-        assert_eq!((c.profile.as_str(), c.general.user.as_str()), ("", "root"));
+        assert_eq!(
+            (c.active_profile_name(), c.general.user.as_str()),
+            ("", "root")
+        );
         assert!(!c.switch_profile("missing"));
         assert!(c.switch_profile("readonly"));
         assert_eq!(c.general.user, "reader");
+        assert_eq!(c.profiles.len(), 2);
         assert!(c.remove_active_profile());
         assert_eq!(
             (
-                c.profile.as_str(),
+                c.active_profile_name(),
                 c.general.user.as_str(),
                 c.profiles.len()
             ),
-            ("", "root", 0)
+            ("", "root", 1)
         );
-        assert!(!c.remove_active_profile());
+        assert!(!c.remove_active_profile(), "the last profile stays");
+    }
+
+    #[test]
+    fn many_profiles_keep_their_own_settings() {
+        let mut c = Connection::new("postgres");
+        for ix in 0..8 {
+            c.add_profile(format!("p{ix}"));
+            c.general.user = format!("u{ix}");
+        }
+        assert_eq!(
+            c.profiles.len(),
+            9,
+            "seven or more profiles plus the default"
+        );
+        assert_eq!(c.profile_names().count(), 9);
+        for ix in 0..8 {
+            assert!(c.switch_profile(&format!("p{ix}")));
+            assert_eq!(c.general.user, format!("u{ix}"));
+        }
+        // Duplicate and empty names are the form's business to reject; the model keeps them.
+        c.add_profile("p0".into());
+        c.add_profile(String::new());
+        assert_eq!(c.profile_names().filter(|name| *name == "p0").count(), 2);
+        assert!(c.switch_profile(""));
+        assert_eq!(c.active_profile_name(), "");
+        // Every profile still has its own settings after all those switches.
+        assert!(c.switch_profile("p3"));
+        assert_eq!(c.general.user, "u3");
+    }
+
+    #[test]
+    fn the_old_on_disk_layout_loads_and_writes_back() {
+        let json = r#"{"id":"c-1","name":"a","driver":"mysql",
+            "general":{"host":"h","user":"root","save_password":true},
+            "profile":"other",
+            "profiles":[{"name":"work","general":{"host":"w","user":"worker"}}]}"#;
+        let conn: Connection = serde_json::from_str(json).unwrap();
+        assert_eq!(conn.profile_names().collect::<Vec<_>>(), ["other", "work"]);
+        assert_eq!(conn.general.host, "h");
+        // Written back in the same layout, so an older build can still read the file.
+        let back = serde_json::to_value(&conn).unwrap();
+        assert!(back.get("general").is_some());
+        assert_eq!(back["profile"], "other");
+        assert_eq!(back["profiles"][0]["name"], "work");
+        let reread: Connection = serde_json::from_value(back).unwrap();
+        assert_eq!(reread, conn);
+    }
+
+    #[test]
+    fn the_profiles_and_active_layout_loads_too() {
+        let json = r#"{"id":"c-1","name":"a","driver":"mysql","active":1,
+            "profiles":[{"name":"","general":{"host":"one"}},
+                        {"name":"work","general":{"host":"two"}}]}"#;
+        let mut conn: Connection = serde_json::from_str(json).unwrap();
+        assert_eq!(conn.active_profile_name(), "work");
+        assert_eq!(conn.general.host, "two");
+        assert!(conn.switch_profile(""));
+        assert_eq!(conn.general.host, "one");
     }
 
     #[test]

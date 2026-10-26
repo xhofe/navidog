@@ -5,17 +5,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gpui_kit::{App, AppContext as _, Context, Entity, Global};
-use navidog_core::json_store::JsonStore;
-use navidog_core::object::Scope;
-use navidog_core::queries::encode_segment;
-use navidog_core::settings::Settings;
+use navidog_app_state::settings::Settings;
 pub use navidog_db::outline::{Outline, OutlineTable, fetch};
+use navidog_model::json_store::JsonStore;
+use navidog_model::object::Scope;
+use navidog_model::queries::encode_segment;
 
 use crate::sessions::Sessions;
 
 fn path_in(root: &Path, scope: &Scope) -> PathBuf {
     // A leading dot cannot clash with a database folder: those names encode `.` as `%2E`.
-    let base = navidog_core::paths::profile_dir_in(root, &scope.connection)
+    let base = navidog_model::paths::profile_dir_in(root, &scope.connection)
         .join(".outline")
         .join(encode_segment(&scope.database));
     match &scope.schema {
@@ -25,7 +25,7 @@ fn path_in(root: &Path, scope: &Scope) -> PathBuf {
 }
 
 pub fn path(scope: &Scope) -> PathBuf {
-    path_in(&navidog_core::paths::config_dir(), scope)
+    path_in(&navidog_model::paths::config_dir(), scope)
 }
 
 pub fn load(scope: &Scope) -> Option<Outline> {
@@ -37,7 +37,7 @@ pub fn save(scope: &Scope, outline: &Outline) {
 }
 
 fn clear_files() {
-    let root = navidog_core::paths::config_dir();
+    let root = navidog_model::paths::config_dir();
     if let Ok(entries) = std::fs::read_dir(root.join("profiles")) {
         for entry in entries.flatten() {
             let _ = std::fs::remove_dir_all(entry.path().join(".outline"));
@@ -50,7 +50,7 @@ pub type OutlineState = crate::scope_cache::Load<Arc<Outline>>;
 /// Outlines by scope, for the query editor's completion and the info pane's identifiers page.
 #[derive(Default)]
 pub struct OutlineCache {
-    cache: crate::scope_cache::ScopeCache<Arc<Outline>>,
+    cache: crate::scope_cache::ScopeCache<Scope, Arc<Outline>>,
 }
 
 struct GlobalOutlines(Entity<OutlineCache>);
@@ -139,7 +139,7 @@ impl OutlineCache {
     /// Drops cached outlines for a connection that is about to be deleted, so a finished fetch
     /// does not recreate `.outline` after the profile directory is removed.
     pub fn forget_connection(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.cache.retain_connection(id);
+        self.cache.retain(|scope| scope.connection != id);
         cx.notify();
     }
 
@@ -203,9 +203,9 @@ mod tests {
 
         let cache = cx.update(|cx| {
             gpui_kit::init(cx);
-            cx.set_global(navidog_core::settings::Settings {
+            cx.set_global(navidog_app_state::settings::Settings {
                 auto_update_outline: false,
-                ..navidog_core::settings::Settings::default()
+                ..navidog_app_state::settings::Settings::default()
             });
             cx.new(|_| OutlineCache::default())
         });

@@ -10,10 +10,10 @@ use gpui_kit::{
     IntoElement, MouseButton, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Window, div,
 };
-use navidog_core::actions::InsertText;
-use navidog_core::snippets::{Snippet, Snippets};
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::Workspace;
+use navidog_app_state::actions::InsertText;
+use navidog_app_state::snippets::{Snippet, Snippets};
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::Workspace;
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::{FormRow, heading, truncated};
 use navidog_ui::{palette, tokens};

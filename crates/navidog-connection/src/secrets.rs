@@ -12,9 +12,9 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
     Styled as _, Window, div,
 };
-use navidog_core::connection::{Connection, SecretField};
-use navidog_core::store::{ConnectionStore, StoreError};
+use navidog_app_state::store::{ConnectionStore, StoreError};
 use navidog_db::Secrets;
+use navidog_model::connection::{Connection, SecretField};
 use navidog_ui::skin::{FormRow, confirm_with, heading};
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
@@ -314,8 +314,8 @@ mod tests {
 
     use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
     use gpui_kit::{Bounds, Role, TestAppContext, WindowBounds, WindowOptions, px, size};
-    use navidog_core::crypto::{self, CryptoMode, Key};
-    use navidog_core::store::{ConnectionsFile, StoreEvent};
+    use navidog_app_state::store::{ConnectionsFile, StoreEvent};
+    use navidog_model::crypto::{self, CryptoMode, Key};
 
     use super::*;
 
@@ -409,7 +409,7 @@ mod tests {
                 return;
             }
             cx.update(|cx| {
-                navidog_core::init(cx);
+                navidog_app_state::init(cx);
                 if !locked {
                     ConnectionStore::global(cx).update(cx, |store, _| store.set_key(Key::random()));
                 }

@@ -46,8 +46,8 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 查询解释：网格、文本、JSON、可视化、统计信息 | 完成 | 计划解析、占比、统计和布局在 `navidog_util::explain` |
 | 编辑：查找替换、格式菜单、美化 SQL、简化 SQL、剪贴板堆栈、缩放、语法配色实测 | 部分 | 功能都已完成；语法配色与 Navicat 的并排实测未做，偏好设置可自定义 |
 | 代码补全与代码补全信息 | 完成 | `navidog_db::outline`，关键字和内置函数在 `navidog-db` 的方言里 |
-| 代码段，信息窗格的预览、代码段、标识符页 | 完成 | 存储在 `navidog_core::snippets` |
-| 保存查询、对象分类“查询”、外部文件 | 完成 | `navidog_core::queries` |
+| 代码段，信息窗格的预览、代码段、标识符页 | 完成 | 存储在 `navidog_app_state::snippets` |
+| 保存查询、对象分类“查询”、外部文件 | 完成 | `navidog_model::queries` |
 | 自动恢复 | 完成 | 正常退出不询问，随布局恢复（30 第 8 节） |
 | 偏好设置：编辑器、代码补全、自动恢复、高级页的日志选项 | 完成 | 30 第 9 节，31 第 6 节 |
 | 历史日志、QueryExec.log | 完成 | 31 第 6 节 |
@@ -71,6 +71,21 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | PR #17 与最新 main 冲突同步 | 完成 | 合并 `4ffa185` 的 M4 与查询执行联动刷新，保留操作生命周期和草稿保护，补齐自动刷新代际校验与排队重开回归；284 项/43 套件、fmt/clippy/裸值/审计、58 张浅深色截图及三项 release 复验通过。保留 main 依赖并升级 `crypto-bigint` 0.7.6，见架构验收记录 |
 
 初版及 CI 时序修复在 2026-10-21 验证过 215 项测试与 29 张截图；两项基线证书依赖漏洞已补丁更新，deny 与在线 audit 当时通过。PR #14 的 Intel 代码段对话框测试已固定动画/调度时序，并连续复跑 20 次。本轮 review 修复的行为、逐条评论映射、回归入口及最终验证见 [验收记录](pr/acceptance-architecture-foundations.md)。
+
+### 整体审查遗留工作（`refactor/remaining-work`）
+
+来源：[2026-10-26 遗留清单](cr/2026-10-26-remaining-work.md)。该清单建议按主题拆成多个 PR；本次按用户要求放在同一个分支/PR，逐项纯迁移。验收记录见 [pr/acceptance-remaining-work.md](pr/acceptance-remaining-work.md)。
+
+| 任务 | 状态 | 验证与说明 |
+| --- | --- | --- |
+| R-04 / D-05 统一 SQL 扫描与词法 | 完成 | 新 `navidog-sql` 的 `span::spans` 是唯一词法层（字符串/引号标识符/注释/`$tag$`/`[$name]` 参数/括号深度/语句边界，含 MySQL `DELIMITER` 与 `BEGIN…END`）；分句、参数、格式菜单、表格筛选、表设计解析共用它，各消费者的跳过函数已删。回归在 `navidog-sql` 的 span 测试与 `navidog-grid` 的跨消费者一致性测试 |
+| D-08 / A-06 Catalog/OutlineCache 统一缓存 | 完成 | `ScopeCache<K,T>` 泛型化；Catalog 五类缓存用 typed key + `LoadId`，`require/require_all/reload_all/require_selection` 是唯一加载入口，objects 面板的 `ensure_loaded` 与 `stalled_load` 已删。目录生命周期、失败重试、延迟代际测试在 `catalog.rs`/`catalog_lifecycle.rs`/`database_refresh.rs` |
+| A-01 拆 app-state | 完成 | `navidog-core` 删除，GPUI 状态迁到 `navidog-app-state`，纯数据留在 `navidog-model`；322 处 import 按模块迁移，无兼容 facade |
+| A-02 core/驱动去 gpui | 完成 | `navidog-db` 只依赖 model；`navidog-headless` 用 model+db 跑 SQLite；`scripts/check-deps.sh` 在 CI 检查依赖方向并禁止 `crates/navidog-core` 回潮 |
+| A-03 table_design 拆出 | 完成 | 新 `navidog-schema` 持有表草稿/表单/迁移计划，复用 R-04 的词法层；`rg 'table_design' crates/navidog-db/src` 为空，实库 DDL 测试随模块迁移 |
+| A-07 god object/超长文件 | 完成 | viewer/results/editor/form/model/update 主文件分别为 768/348/922/534/139/27 行，全部 < 1000（update < 600）；`TableSession`/`TableView`、`ResultSession`、storage/edit/projection、`enum AfterCommit` 均已拆出；纯搬家，断言未改 |
+| A-10 Connection `profiles + active` | 完成 | `profiles: Vec<Profile>` + `active` 取代字段交换；`connections.json` 写旧布局、读两种布局；7+ 配置文件/重名/空名/两种 JSON/panic 恢复都有测试 |
+| S-07 共享 i18n 后端 | 完成（方案 1） | 保持 crate-local 契约；动态 key 必须登记 `scripts/i18n-dynamic-keys.txt`（19 条），`check-i18n.sh` 检查；契约写入 00-overview |
 
 ### M4 表设计器
 
@@ -288,10 +303,11 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | --- | --- | --- |
 | 格式与静态检查 | `cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings` | CI 执行 |
 | 裸值检查 | `scripts/check-raw-px.sh` | CI 执行 |
-| i18n 检查 | `scripts/check-i18n.sh` | CI 执行 |
+| i18n 检查 | `scripts/check-i18n.sh` | CI 执行；字面量 key 必须在本 crate 定义，动态 key 必须登记在 `scripts/i18n-dynamic-keys.txt` |
+| 依赖方向检查 | `scripts/check-deps.sh` | CI 执行；model/db/sql/schema/util/sql-log/headless 的 normal 依赖不得出现 `gpui`，`crates/navidog-core` 不得回潮 |
 | 依赖审计 | `cargo deny --all-features check`、`cargo audit` | CI 的 security-audit 工作流执行，配置在根目录 `deny.toml` 和 `.cargo/audit.toml`；只有直接依赖的 unmaintained 会失败，无补丁的 `RUSTSEC-2023-0071`（rsa）在两边都忽略 |
 | 单元测试与 headless UI 测试 | `cargo test --workspace` | CI 执行 |
-| 实库测试 | `docker compose up -d --wait && NAVIDOG_LIVE=1 cargo test -p navidog-db --lib --test live --locked` | CI 的 integration 工作流和本地都执行；`--lib` 包含操作写入完成后元数据断连恢复的三驱动回归，测完执行 `docker compose down` |
+| 实库测试 | `docker compose up -d --wait && NAVIDOG_LIVE=1 cargo test -p navidog-db -p navidog-schema -p navidog-query --lib --test live --locked` | CI 的 integration 工作流和本地都执行；`--lib` 包含操作写入完成后元数据断连恢复的三驱动回归和 `navidog-schema` 的表设计 DDL 回归，测完执行 `docker compose down` |
 | 截图 | `cargo test -p navidog --test snapshot` | 本地执行，输出 `target/snapshots/` |
 | 结果网格性能 | `cargo run --release -p navidog-grid --example spike` | 本地执行，需要 Metal |
 | 导航树性能 | `cargo run --release -p navidog-navigator --example tree_spike` | 本地执行，需要 Metal |

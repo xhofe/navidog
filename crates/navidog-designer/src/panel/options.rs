@@ -1,6 +1,8 @@
 use super::*;
 use gpui_kit::component::checkbox::Checkbox;
-use navidog_db::table_design::{MYSQL_OPTIONS, POSTGRES_OPTIONS, edit_table_option, table_option};
+use navidog_schema::table_design::{
+    MYSQL_OPTIONS, POSTGRES_OPTIONS, edit_table_option, table_option,
+};
 
 pub(super) fn keys(d: Dialect) -> &'static [&'static str] {
     match d {

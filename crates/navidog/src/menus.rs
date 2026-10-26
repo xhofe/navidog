@@ -2,13 +2,13 @@
 
 use gpui_kit::base::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 use gpui_kit::{App, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType};
-use navidog_core::actions::{
+use navidog_app_state::actions::{
     CloseConnection, ManageConnections, NewConnection, NewConnectionOf, NewGroup, NewQuery,
     OpenConsole, OpenExternalQuery, OpenHistoryLog, Refresh, ToggleFocusMode,
     ToggleHideObjectGroups, ToggleOnlyActive, ToggleShowHidden, ToggleShowTableProfile,
 };
-use navidog_core::favorites::Favorites;
-use navidog_core::settings::{ResultsPosition, Settings, ShowAfterRun};
+use navidog_app_state::favorites::Favorites;
+use navidog_app_state::settings::{ResultsPosition, Settings, ShowAfterRun};
 use navidog_query as query;
 use navidog_ui::tabs::{CloseTab, NextTab, PrevTab};
 use rust_i18n::t;
@@ -191,7 +191,7 @@ fn table_menu(in_transaction: bool, filter_open: bool) -> Menu {
     }
     items.push(MenuItem::action(
         t!("menu.design_table").to_string(),
-        navidog_core::actions::DesignTable { object: None },
+        navidog_app_state::actions::DesignTable { object: None },
     ));
     items.push(MenuItem::action(
         t!("menu.query_table").to_string(),

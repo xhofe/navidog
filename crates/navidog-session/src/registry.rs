@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use gpui_kit::{App, Global};
-use navidog_core::registry::Registry;
+use navidog_app_state::registry::Registry;
 use navidog_db::Driver;
 use navidog_db::dialect::Dialect;
 

@@ -11,7 +11,7 @@ pub use registry::DriverRegistry;
 use gpui_kit::App;
 use std::sync::Arc;
 
-use navidog_core::registry::Source;
+use navidog_app_state::registry::Source;
 use navidog_db::{Driver, mysql, postgres, sqlite};
 
 pub fn init(cx: &mut App) {

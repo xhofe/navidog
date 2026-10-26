@@ -10,12 +10,12 @@ navidog 用 gpui-kit 0.8 复刻 Navicat Premium 17（macOS）。决策、架构�
 
 ## 写代码
 
-- **依赖方向**：feature crate（`navidog-connection`、`navidog-navigator`、`navidog-grid`……）之间不互相依赖，唯一的例外是 `navidog-query` 依赖 `navidog-grid` 复用结果网格。跨 feature 的命令放 `navidog_core::actions`，会话放 `navidog_db::sessions`，由外壳 `crates/navidog` 组合面板（按对象类型选编辑器在 `src/editors.rs`）。
-- **纯函数**：不依赖界面、也不需要驱动的工具函数放 `navidog-util`。SQL 类型名归类、enum/set 列表、十六进制和 JSON 文本在 `navidog_util::sql_type` 和 `navidog_util::format`。图标和颜色留在画它们的 crate。需要驱动或方言的放 `navidog-db`。
+- **依赖方向**：feature crate（`navidog-connection`、`navidog-navigator`、`navidog-grid`……）之间不互相依赖，唯一的例外是 `navidog-query` 依赖 `navidog-grid` 复用结果网格。纯数据在 `navidog-model`，GPUI 应用状态（Settings/ConnectionStore/Workspace/收藏/代码段）在 `navidog-app-state`，跨 feature 的命令放 `navidog_app_state::actions`，会话与元数据缓存状态机在 `navidog-session`，SQL 方言与唯一扫描器在 `navidog-sql`。`navidog-model`/`navidog-db`/`navidog-sql`/`navidog-schema`/`navidog-util`/`navidog-sql-log` 不依赖 GPUI，`scripts/check-deps.sh` 检查，`navidog-headless` 只用 model + db 编译运行。由外壳 `crates/navidog` 组合面板（按对象类型选编辑器在 `src/editors.rs`）。
+- **纯函数**：不依赖界面、也不需要驱动的工具函数放 `navidog-util`。SQL 类型名归类、enum/set 列表、十六进制和 JSON 文本在 `navidog_util::sql_type` 和 `navidog_util::format`；SQL 词法、语句切分、格式化和方言在 `navidog-sql`，不要另写跳过引号/注释的扫描函数。图标和颜色留在画它们的 crate。需要驱动或方言的放 `navidog-db`。
 - **token**：Navicat 的实测数值只写在 `crates/navidog-ui/src/tokens.rs`（`Pt(n).rems()`，基准 13）和 `themes/navicat.json`，新 token 在 `docs/design/02-design-tokens.md` 登记来源。界面代码用具名 token 和 `palette(cx)`；必须写裸值时在同一行或上一行注明 `// raw-px: <理由>`。
 - **图标**：`lucide(name)` 只能取到 `navidog-ui/src/assets.rs` 中 `ExtraIcons` 列出的图标和 gpui-kit 默认的 101 个，缺失的图标只在日志里留下加载错误、界面上显示为空白，新图标先加进列表。`every_icon_used_in_the_sources_loads` 测试会扫描源码中 `lucide("…")` 和 `button(id, "…", …)` 的字面量；运行时拼出的图标名（如 `kind_icon`）要自己核对。
-- **连接配置文件**：`Connection` 顶层的 `general`、`advanced`、`ssl`、`ssh` 永远是当前激活的配置文件，其余配置文件在 `profiles` 里，切换时整体交换。按连接处理秘密字段的代码（重新加密、复制连接……）必须同时覆盖 `profiles`，参照 `ConnectionsFile::reencrypt`。
-- **文案**：每个 crate 的 `locales/*.yml` 同时写 `en` 和 `zh-CN`，中文用词照 Navicat（`reference/help-text/`）。
+- **连接配置文件**：`Connection` 的内存模型是 `profiles: Vec<Profile>` + `active: usize`，`active()`/`active_mut()` 取激活配置，`Deref` 让 `connection.general` 这类字段访问落到激活项。`connections.json` 仍写旧布局（激活设置在顶层、`profile` 是名字、`profiles` 只放其余配置），读时兼容两种布局。按连接处理秘密字段的代码（重新加密、复制连接……）必须遍历 `profiles` 的每一项，参照 `ConnectionsFile::reencrypt`。
+- **文案**：每个 crate 的 `locales/*.yml` 同时写 `en` 和 `zh-CN`，中文用词照 Navicat（`reference/help-text/`）。每个后端只加载本 crate 的 locale，跨 crate 文案走显式 helper；`t!` 的动态 key（`format!`、变量、`if` 选择）必须登记在 `scripts/i18n-dynamic-keys.txt`，`scripts/check-i18n.sh` 会检查，契约见 00-overview 的 i18n 段。
 - **单行文本**：对象名、字段值、属性、选项卡标题等显示数据或用户输入的文本，一律用 `navidog_ui::skin::truncated`：不换行，超出部分显示省略号，悬停时显示全文。它所在的 flex 容器要加 `min_w_0`，否则文本会撑开容器而不会被截断。网格单元格例外：只截断，不加悬停提示，因为每个单元格一个命中区域会拖慢滚动。
 - **选项卡**：对象窗格中的面板在 `on_added_to`、`set_active`、`on_removed` 里调用 `navidog_ui::tabs` 的同名函数，`title()` 返回 `tabs::title(...)`（`tab_name` 保持 `None`），这样关闭、右键菜单、⌘W、在新窗口中打开才对它生效。`on_removed` 里 `tabs::removed` 返回 `true` 时，面板只是移到新窗口，不能关闭会话或丢弃修改。
 - **注释**：代码注释用英文；改动一个文件时，把该文件里的中文注释顺手改成英文。`docs/` 和 `CONTEXT.md` 用中文。

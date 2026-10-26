@@ -13,7 +13,7 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, Global, IntoElement, ParentElement as _, Render,
     Styled as _, Window, actions,
 };
-use navidog_core::settings::Settings;
+use navidog_app_state::settings::Settings;
 use navidog_db::dialect::Dialect;
 use navidog_ui::skin::{FormRow, confirm_with, heading};
 use navidog_ui::{palette, tokens};

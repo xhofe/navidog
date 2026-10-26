@@ -9,10 +9,10 @@ use gpui_kit::{
     AppContext as _, IntoElement, Render, Styled as _, TestAppContext, Window, WindowBounds,
     WindowOptions, div, size,
 };
-use navidog_core::connection::Connection;
-use navidog_core::crypto::Key;
-use navidog_core::paths::config_dir;
-use navidog_core::store::ConnectionStore;
+use navidog_app_state::store::ConnectionStore;
+use navidog_model::connection::Connection;
+use navidog_model::crypto::Key;
+use navidog_model::paths::config_dir;
 
 struct Host;
 
@@ -32,7 +32,7 @@ fn a_failed_save_still_connects_once(cx: &mut TestAppContext) {
 
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_connection::init(cx);
         cx.set_reduce_motion(true);

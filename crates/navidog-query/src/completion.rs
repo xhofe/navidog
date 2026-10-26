@@ -18,9 +18,9 @@ use gpui_kit::{App, Context, Task, WeakEntity, Window};
 use lsp_types::{
     CompletionContext, CompletionItem, CompletionResponse, CompletionTextEdit, TextEdit,
 };
-use navidog_core::settings::Settings;
-use navidog_core::snippets::Snippets;
-use navidog_core::store::ConnectionStore;
+use navidog_app_state::settings::Settings;
+use navidog_app_state::snippets::Snippets;
+use navidog_app_state::store::ConnectionStore;
 use navidog_db::dialect::Dialect;
 use navidog_session::outline::{Outline, OutlineCache};
 use regex::Regex;
@@ -281,13 +281,13 @@ impl CompletionProvider for Provider {
         let others = |name: &str| {
             let s = scope.as_ref()?;
             let other = if dialect.has_schemas() {
-                navidog_core::object::Scope::new(
+                navidog_model::object::Scope::new(
                     s.connection.clone(),
                     s.database.clone(),
                     Some(name.into()),
                 )
             } else {
-                navidog_core::object::Scope::new(s.connection.clone(), name, None)
+                navidog_model::object::Scope::new(s.connection.clone(), name, None)
             };
             cache.ready(&other)
         };

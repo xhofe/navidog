@@ -6,10 +6,9 @@ rust_i18n::i18n!("locales", fallback = "en");
 const _: &str = include_str!("../locales/database.yml");
 
 pub mod commit;
-pub mod dialect;
+pub use navidog_sql::dialect;
 pub mod driver;
 mod execution;
-mod keywords;
 pub mod log;
 mod metadata;
 pub mod mysql;
@@ -20,7 +19,6 @@ pub mod runtime;
 pub mod sql;
 pub mod sqlite;
 pub mod ssh;
-pub mod table_design;
 
 use std::sync::Arc;
 

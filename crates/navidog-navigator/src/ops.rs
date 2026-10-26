@@ -6,20 +6,20 @@ use std::collections::HashSet;
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, InteractiveElement, Window};
-use navidog_core::actions::{
+use navidog_app_state::actions::{
     DeleteObjects, DuplicateQuery, DuplicateTable, EmptyTables, OpenQueryExternally, QueryRenamed,
     ReopenConnectionId, RevealQuery, TruncateTables,
 };
-use navidog_core::object::{ObjectKind, ObjectRef};
-use navidog_core::queries;
-use navidog_core::workspace::{Selection, Workspace};
+use navidog_app_state::workspace::{Selection, Workspace};
 use navidog_db::DbError;
 use navidog_db::dialect::Dialect;
+use navidog_model::object::{ObjectKind, ObjectRef};
+use navidog_model::queries;
 use navidog_session::sessions::{Sessions, prepare_database};
 use navidog_ui::assets::lucide;
 use rust_i18n::t;
 
-use crate::catalog::{Catalog, Load};
+use crate::catalog::{Catalog, Load, Requirement};
 use crate::navigator::kind_label;
 
 pub(crate) fn selected_objects(cx: &App) -> Vec<ObjectRef> {
@@ -283,12 +283,16 @@ fn connections_unchanged(generations: &[(String, u64)], cx: &App) -> bool {
 }
 
 fn refresh<'a>(objects: impl Iterator<Item = &'a ObjectRef>, cx: &mut App) {
-    let lists: HashSet<_> = objects.map(|o| (o.scope.clone(), o.kind)).collect();
-    Catalog::global(cx).update(cx, |c, cx| {
-        for (scope, kind) in lists {
-            c.ensure_objects(&scope, kind, true, cx);
-        }
-    });
+    // One reload per object category: several objects of the same list share one query.
+    let mut seen = HashSet::new();
+    let requirements: Vec<_> = objects
+        .filter(|o| seen.insert((o.scope.clone(), o.kind)))
+        .map(|o| Requirement::Objects {
+            scope: o.scope.clone(),
+            kind: o.kind,
+        })
+        .collect();
+    Catalog::global(cx).update(cx, |c, cx| c.reload_all(requirements, cx));
 }
 
 fn show_error(message: String, window: &mut Window, cx: &mut App) {
@@ -456,7 +460,7 @@ mod recovery_tests {
         for reopen in [false, true] {
             cx.update_window(handle, |_, window, cx| {
                 let object = ObjectRef {
-                    scope: navidog_core::object::Scope::new("retired", "main", None),
+                    scope: navidog_model::object::Scope::new("retired", "main", None),
                     kind: ObjectKind::Table,
                     name: "t".into(),
                 };

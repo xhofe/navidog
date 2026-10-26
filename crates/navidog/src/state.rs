@@ -1,8 +1,8 @@
 //! state.json: window position and size, Dock layout, visibility of each pane (10-shell.md §11).
 
 use gpui_kit::{Bounds, Global, Pixels, WindowBounds, point, px, size};
-use navidog_core::json_store::JsonStore;
-use navidog_core::paths;
+use navidog_model::json_store::JsonStore;
+use navidog_model::paths;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

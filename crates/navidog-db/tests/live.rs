@@ -4,13 +4,13 @@
 
 use std::sync::Arc;
 
-use navidog_core::connection::SslMode;
 use navidog_db::dialect::Dialect;
 use navidog_db::params::{SshParams, SslParams};
 use navidog_db::{
     ConnectParams, Driver, connect, mysql::MySqlDriver, postgres::PostgresDriver, runtime,
     test_connection,
 };
+use navidog_model::connection::SslMode;
 
 fn live() -> bool {
     std::env::var_os("NAVIDOG_LIVE").is_some()
@@ -107,7 +107,7 @@ fn postgres_ssl_modes() {
 
 #[test]
 fn postgres_multiple_nodes() {
-    use navidog_core::connection::HostPreference;
+    use navidog_model::connection::HostPreference;
     if !live() {
         return;
     }
@@ -128,7 +128,7 @@ fn postgres_multiple_nodes() {
 
 #[test]
 fn mysql_and_postgres_metadata() {
-    use navidog_core::object::{ObjectKind, Scope};
+    use navidog_model::object::{ObjectKind, Scope};
     if !live() {
         return;
     }
@@ -215,8 +215,8 @@ fn mysql_and_postgres_metadata() {
 /// that is rolled back, leaving the seed data untouched.
 #[test]
 fn table_viewer_sql_on_mysql_and_postgres() {
-    use navidog_core::object::Scope;
     use navidog_db::dialect::{ChangeSet, RowKey, RowUpdate, Written};
+    use navidog_model::object::Scope;
     if !live() {
         return;
     }
@@ -297,7 +297,7 @@ fn table_viewer_sql_on_mysql_and_postgres() {
 /// MySQL DDL commits implicitly, so the copies are dropped explicitly.
 #[test]
 fn object_operations_on_mysql_and_postgres() {
-    use navidog_core::object::{ObjectKind, Scope};
+    use navidog_model::object::{ObjectKind, Scope};
     if !live() {
         return;
     }
@@ -409,7 +409,7 @@ fn query_editor_driver_features() {
 
         let outline = navidog_db::outline::fetch(
             &mut *rel,
-            &navidog_core::object::Scope::new("c", "sakila", None),
+            &navidog_model::object::Scope::new("c", "sakila", None),
             false,
         )
         .await
@@ -463,7 +463,7 @@ fn query_editor_driver_features() {
         assert_eq!(sets.last().unwrap().notices, ["NOTICE: hello 1"]);
         let outline = navidog_db::outline::fetch(
             &mut *rel,
-            &navidog_core::object::Scope::new("c", "pagila", Some("public".into())),
+            &navidog_model::object::Scope::new("c", "pagila", Some("public".into())),
             true,
         )
         .await

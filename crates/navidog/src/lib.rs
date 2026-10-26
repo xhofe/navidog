@@ -17,7 +17,7 @@ mod update;
 
 use gpui_kit::component::{TitleBar, WindowExt as _};
 use gpui_kit::{App, AppContext as _, Bounds, WindowBounds, WindowOptions};
-use navidog_core::settings::Settings;
+use navidog_app_state::settings::Settings;
 use navidog_ui::{NavidogAssets, tokens};
 use rust_i18n::t;
 
@@ -101,7 +101,7 @@ pub fn init_with_settings(cx: &mut App, settings: Settings) {
     use gpui_kit::component as gpui_component;
     rust_i18n::extend!(gpui_component);
     gpui_kit::init(cx);
-    navidog_core::init_with_settings(cx, settings);
+    navidog_app_state::init_with_settings(cx, settings);
     gpui_kit::component::set_locale(Settings::global(cx).language.locale());
     navidog_ui::theme::init(cx);
     navidog_ui::tabs::init(cx);
@@ -118,7 +118,7 @@ pub fn init_with_settings(cx: &mut App, settings: Settings) {
 /// The theme family and appearance from the settings, then the user's syntax colors.
 pub fn apply_theme(window: Option<&mut gpui_kit::Window>, cx: &mut App) {
     use gpui_kit::component::ActiveTheme as _;
-    use navidog_core::settings::ThemeFamily as Saved;
+    use navidog_app_state::settings::ThemeFamily as Saved;
     use navidog_ui::theme::ThemeFamily as Active;
     let s = Settings::global(cx).clone();
     let family = match s.theme {
@@ -140,7 +140,7 @@ pub fn apply_theme(window: Option<&mut gpui_kit::Window>, cx: &mut App) {
 
 /// Shell commands shown on the main toolbar.
 fn register_commands(cx: &mut App) {
-    use navidog_core::registry::{CommandInfo, CommandRegistry, Source};
+    use navidog_app_state::registry::{CommandInfo, CommandRegistry, Source};
     let _ = cx.global_mut::<CommandRegistry>().0.register(
         "query.new",
         Source::Builtin,
@@ -148,7 +148,7 @@ fn register_commands(cx: &mut App) {
             title: "toolbar.new_query".into(),
             icon: Some("icons/square-terminal.svg".into()),
             shortcut: Some("cmd-y".into()),
-            action: || Box::new(navidog_core::actions::NewQuery),
+            action: || Box::new(navidog_app_state::actions::NewQuery),
             enabled: None,
         },
     );
@@ -212,12 +212,14 @@ fn on_front_window(cx: &mut App, f: impl FnOnce(&mut gpui_kit::Window, &mut App)
 /// (`menus::set_menus`); this side needs no platform UI, so headless tests use it too. Register
 /// once per app: a second call adds a second listener for every action.
 pub fn register_app_actions(cx: &mut App) {
-    cx.on_action(|a: &navidog_core::actions::TableStructureChanged, cx| {
-        navidog_navigator::catalog::Catalog::global(cx)
-            .update(cx, |catalog, cx| catalog.refresh_scope(&a.scope, cx));
-        navidog_session::outline::OutlineCache::global(cx)
-            .update(cx, |cache, cx| cache.ensure(&a.scope, true, cx));
-    });
+    cx.on_action(
+        |a: &navidog_app_state::actions::TableStructureChanged, cx| {
+            navidog_navigator::catalog::Catalog::global(cx)
+                .update(cx, |catalog, cx| catalog.refresh_scope(&a.scope, cx));
+            navidog_session::outline::OutlineCache::global(cx)
+                .update(cx, |cache, cx| cache.ensure(&a.scope, true, cx));
+        },
+    );
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());

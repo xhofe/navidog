@@ -12,13 +12,13 @@ use gpui_kit::{
     IntoElement, ParentElement as _, Render, Styled as _, TestAppContext, Window, WindowBounds,
     WindowOptions, div, size,
 };
-use navidog_core::connection::Connection;
-use navidog_core::crypto::Key;
-use navidog_core::settings::{ResultsPosition, Settings};
-use navidog_core::store::ConnectionStore;
-use navidog_core::workspace::{Workspace, WorkspaceEvent};
+use navidog_app_state::settings::{ResultsPosition, Settings};
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::workspace::{Workspace, WorkspaceEvent};
 use navidog_db::sqlite::SqliteDriver;
 use navidog_db::{ConnectParams, Secrets, connect, runtime};
+use navidog_model::connection::Connection;
+use navidog_model::crypto::Key;
 use navidog_session::sessions::Sessions;
 
 use crate::editor::{QueryEditor, QuerySource, Target};
@@ -146,7 +146,7 @@ fn closing_query_and_console_windows_preserves_in_flight_refreshes(cx: &mut Test
     cx.executor().allow_parking();
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_grid::init(cx);
@@ -334,7 +334,7 @@ fn query_runs_publish_one_refresh_for_the_original_connection(cx: &mut TestAppCo
     cx.executor().allow_parking();
     let ids = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_grid::init(cx);
@@ -522,7 +522,7 @@ fn accepted_results_keep_their_rows_and_original_source(cx: &mut TestAppContext)
     cx.executor().allow_parking();
     let ids = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_grid::init(cx);
@@ -969,7 +969,7 @@ fn accepted_results_keep_their_rows_and_original_source(cx: &mut TestAppContext)
     );
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |v, cx| {
-            v.sql = "SELECT * FROM missing_refresh_target".into();
+            v.session.sql = "SELECT * FROM missing_refresh_target".into();
             v.grid.update(cx, |g, cx| {
                 g.update_model(cx, |m| {
                     m.set_value(0, 1, Some("accepted once".into()));
@@ -1021,7 +1021,7 @@ fn accepted_results_keep_their_rows_and_original_source(cx: &mut TestAppContext)
         cx.update(|cx| Settings::update(cx, |settings| settings.sync_record = sync));
         cx.update_window(handle, |_, window, cx| {
             view.update(cx, |v, cx| {
-                v.sql = "SELECT id, name FROM t ORDER BY id".into();
+                v.session.sql = "SELECT id, name FROM t ORDER BY id".into();
                 v.grid.update(cx, |grid, cx| {
                     grid.update_model(cx, |model| model.set_value(0, 1, Some(value.into())));
                 });
@@ -1112,7 +1112,7 @@ fn accepted_results_keep_their_rows_and_original_source(cx: &mut TestAppContext)
     // A changed result shape invalidates the accepted sort rather than retaining a stale arrow.
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |v, cx| {
-            v.sql = "SELECT id FROM t ORDER BY id".into();
+            v.session.sql = "SELECT id FROM t ORDER BY id".into();
             v.refresh_now(window, cx);
         });
     })
@@ -1153,7 +1153,7 @@ fn runs_scripts_into_messages_summary_and_editable_results(cx: &mut TestAppConte
 
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_grid::init(cx);
@@ -1547,7 +1547,7 @@ fn typing_a_character_does_not_reenter_the_editor(cx: &mut TestAppContext) {
     let (_home, _dir) = isolate_home("typing");
     cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_grid::init(cx);
@@ -1584,7 +1584,7 @@ fn format_commands_undo_in_one_step_and_the_stack_cycles(cx: &mut TestAppContext
     let (_home, _dir) = isolate_home("format");
     cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_grid::init(cx);
@@ -1715,7 +1715,7 @@ fn saves_untitled_queries_reloads_outside_edits_and_recovers(cx: &mut TestAppCon
     let (_home, _dir) = isolate_home("save");
     cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_grid::init(cx);
@@ -1725,9 +1725,9 @@ fn saves_untitled_queries_reloads_outside_edits_and_recovers(cx: &mut TestAppCon
         // entrance still sliding on the real clock can miss a small button.
         cx.set_reduce_motion(true);
     });
-    let scope = navidog_core::object::Scope::new("save-test", "main", None);
-    let _ = navidog_core::queries::delete(&scope, "first");
-    navidog_core::queries::write(&scope, "taken", "SELECT 0").unwrap();
+    let scope = navidog_model::object::Scope::new("save-test", "main", None);
+    let _ = navidog_model::queries::delete(&scope, "first");
+    navidog_model::queries::write(&scope, "taken", "SELECT 0").unwrap();
     let (handle, editor) = cx.update(|cx| {
         // raw-px: wider than the 870pt recovery dialog, so OK is not on the mask
         let test_size = size(gpui_kit::px(1200.), gpui_kit::px(800.));
@@ -1783,7 +1783,7 @@ fn saves_untitled_queries_reloads_outside_edits_and_recovers(cx: &mut TestAppCon
     );
     name_and_ok(cx, "first");
     assert_eq!(
-        navidog_core::queries::read(&scope, "first").unwrap(),
+        navidog_model::queries::read(&scope, "first").unwrap(),
         "SELECT 1"
     );
     cx.update(|cx| {
@@ -1794,7 +1794,7 @@ fn saves_untitled_queries_reloads_outside_edits_and_recovers(cx: &mut TestAppCon
 
     // An edit made outside is offered for reload when the tab is activated
     std::thread::sleep(Duration::from_millis(1100));
-    navidog_core::queries::write(&scope, "first", "SELECT 2").unwrap();
+    navidog_model::queries::write(&scope, "first", "SELECT 2").unwrap();
     cx.update_window(handle, |_, window, cx| {
         editor.update(cx, |e, cx| e.check_external_change(window, cx));
     })
@@ -1853,7 +1853,7 @@ fn history_log_follows_the_log_and_the_console_runs_statements(cx: &mut TestAppC
     );
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_grid::init(cx);
@@ -2031,7 +2031,7 @@ fn live_editor_runs_selection_current_errors_and_stop(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_grid::init(cx);
@@ -2051,9 +2051,9 @@ fn live_editor_runs_selection_current_errors_and_stop(cx: &mut TestAppContext) {
                 c.general.port = Some(port);
                 c.general.database = Some(database.into());
                 let key = s.key().unwrap();
-                navidog_core::store::ConnectionsFile::set_secret(
+                navidog_app_state::store::ConnectionsFile::set_secret(
                     &mut c,
-                    navidog_core::connection::SecretField::Password,
+                    navidog_model::connection::SecretField::Password,
                     Some("navidog"),
                     &key,
                 );
@@ -2347,7 +2347,7 @@ fn a_dirty_result_keeps_its_sort_arrow(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
-        navidog_core::init(cx);
+        navidog_app_state::init(cx);
         navidog_ui::theme::init(cx);
         navidog_session::init(cx);
         navidog_grid::init(cx);

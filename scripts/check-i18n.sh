@@ -138,6 +138,72 @@ for source in glob.glob('crates/*/src/**/*.rs', recursive=True):
             print(f'{source}:{line}: `{key}` is not defined in {crate} locales')
             FAIL = True
 
+# Dynamic keys - `t!(format!(...))`, `t!(key)` - are invisible to the literal scan above: the key
+# only exists at runtime, and a typo shows the raw key in the UI. Each call site must be listed in
+# `scripts/i18n-dynamic-keys.txt` as `<path> TAB <macro body>`, so adding one is a deliberate act
+# and the list doubles as the inventory of cross-crate/dynamic lookups. See
+# docs/design/00-overview.md (i18n contract).
+def normalize(body):
+    return ' '.join(body.split())
+
+def macro_body(text, start):
+    depth = 1
+    i = start
+    while i < len(text) and depth:
+        if text[i] == '(':
+            depth += 1
+        elif text[i] == ')':
+            depth -= 1
+        i += 1
+    return text[start:i - 1]
+
+allowed = set()
+dynamic_list = 'scripts/i18n-dynamic-keys.txt'
+if os.path.exists(dynamic_list):
+    for line in open(dynamic_list, encoding='utf-8'):
+        line = line.rstrip('\n')
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        path, _, body = line.partition('\t')
+        allowed.add((path.strip(), normalize(body)))
+
+def first_argument(body):
+    """The text of the first argument: ignored for literal keys, which the loop above checked."""
+    depth = 0
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == '"':
+            i += 1
+            while i < len(body):
+                if body[i] == '\\':
+                    i += 2
+                    continue
+                i += 1
+                if body[i - 1] == '"':
+                    break
+            continue
+        if ch in '([{':
+            depth += 1
+        elif ch in ')]}':
+            depth -= 1
+        elif ch == ',' and depth == 0:
+            break
+        i += 1
+    return body[:i]
+
+for source in glob.glob('crates/*/src/**/*.rs', recursive=True):
+    text = strip_rust_comments(open(source, encoding='utf-8').read())
+    for match in re.finditer(r'\bt!\s*\(', text):
+        body = normalize(macro_body(text, match.end()))
+        first = normalize(first_argument(body))
+        if re.fullmatch(r'"[A-Za-z0-9_.-]+"', first):
+            continue
+        if (source, first) not in allowed:
+            line = text.count('\n', 0, match.start()) + 1
+            print(f'{source}:{line}: dynamic key t!({first} ...) is not in {dynamic_list}')
+            FAIL = True
+
 for key, entries in sorted(definitions.items()):
     values = {value for _, value in entries}
     if len(entries) > 1 and len(values) > 1:

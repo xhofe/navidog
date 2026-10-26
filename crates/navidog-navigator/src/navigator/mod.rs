@@ -22,21 +22,21 @@ use gpui_kit::{
     MouseDownEvent, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
     StyleRefinement, Styled as _, StyledImage as _, Subscription, WeakEntity, Window, div, img,
 };
-use navidog_core::actions::*;
-use navidog_core::connection::Connection;
-use navidog_core::object::{ObjectKind, ObjectRef, Scope};
-use navidog_core::settings::Settings;
-use navidog_core::store::ConnectionStore;
-use navidog_core::vgroups::VirtualGroups;
-use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
+use navidog_app_state::actions::*;
+use navidog_app_state::settings::Settings;
+use navidog_app_state::store::ConnectionStore;
+use navidog_app_state::vgroups::VirtualGroups;
+use navidog_app_state::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::dialect::Dialect;
+use navidog_model::connection::Connection;
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_session::sessions::{ConnState, Sessions, SessionsEvent};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
 use navidog_ui::{palette, tabs, tokens};
 use rust_i18n::t;
 
-use crate::catalog::{Catalog, Load};
+use crate::catalog::{Catalog, Load, Requirement};
 use crate::objects::ObjectsPanel;
 use crate::selection::{self, Click};
 
@@ -509,7 +509,7 @@ impl NavigatorPanel {
                         TreeEvent::Expanded(id) => {
                             this.expanded.insert(id.clone());
                             if let Some(node) = Node::parse(id) {
-                                Self::ensure_children(&node, false, cx);
+                                Self::require_children(&node, false, cx);
                             }
                         }
                         TreeEvent::Collapsed(id) => {
@@ -559,9 +559,10 @@ impl NavigatorPanel {
         panel
     }
 
-    /// Loads children on demand when a node expands.
-    fn ensure_children(node: &Node, force: bool, cx: &mut App) {
-        let catalog = Catalog::global(cx);
+    /// Loads children on demand when a node expands: only the entries are named here, the
+    /// catalog decides whether they start a query.
+    fn require_children(node: &Node, force: bool, cx: &mut App) {
+        let mut requirements = Vec::new();
         match node {
             Node::Database(c, d) => {
                 if Sessions::global(cx)
@@ -569,22 +570,40 @@ impl NavigatorPanel {
                     .dialect(c)
                     .is_some_and(|d| d.has_schemas())
                 {
-                    catalog.update(cx, |cat, cx| cat.ensure_schemas(c, d, force, cx));
+                    requirements.push(Requirement::Schemas {
+                        connection: c.clone(),
+                        database: d.clone(),
+                    });
                 }
             }
-            Node::Category(scope, kind) => {
-                catalog.update(cx, |cat, cx| cat.ensure_objects(scope, *kind, force, cx))
-            }
+            Node::Category(scope, kind) => requirements.push(Requirement::Objects {
+                scope: scope.clone(),
+                kind: *kind,
+            }),
             Node::Object(t) | Node::TableFolder(t, _)
                 if t.kind == ObjectKind::Table && Settings::global(cx).show_table_children =>
             {
-                catalog.update(cx, |cat, cx| {
-                    cat.ensure_columns(&t.scope, &t.name, force, cx);
-                    cat.ensure_table_children(&t.scope, &t.name, force, cx);
-                })
+                requirements.push(Requirement::Columns {
+                    scope: t.scope.clone(),
+                    table: t.name.clone(),
+                });
+                requirements.push(Requirement::Children {
+                    scope: t.scope.clone(),
+                    table: t.name.clone(),
+                });
             }
             _ => {}
         }
+        if requirements.is_empty() {
+            return;
+        }
+        Catalog::global(cx).update(cx, |cat, cx| {
+            if force {
+                cat.reload_all(requirements, cx)
+            } else {
+                cat.require_all(requirements, cx)
+            }
+        });
     }
 
     /// Restarts loads for nodes that are already expanded. Opening a connection
@@ -596,7 +615,7 @@ impl NavigatorPanel {
             .filter_map(|id| Node::parse(id))
             .collect();
         for node in nodes {
-            Self::ensure_children(&node, false, cx);
+            Self::require_children(&node, false, cx);
         }
     }
 
@@ -677,7 +696,7 @@ impl NavigatorPanel {
         let id = node.id();
         if !self.expanded.remove(&id) {
             self.expanded.insert(id);
-            Self::ensure_children(node, false, cx);
+            Self::require_children(node, false, cx);
         }
         self.rebuild(cx);
     }
