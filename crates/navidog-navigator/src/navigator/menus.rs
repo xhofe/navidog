@@ -131,7 +131,7 @@ impl NavigatorPanel {
                             };
                             m.menu_with_check(
                                 label,
-                                n == c.profile,
+                                n == c.active_profile_name(),
                                 Box::new(SwitchProfile {
                                     name: n.to_string().into(),
                                 }),

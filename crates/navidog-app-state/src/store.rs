@@ -104,10 +104,9 @@ impl ConnectionsFile {
     /// its "save password" switched off, so opening asks for it. Returns whether that happened.
     fn reencrypt(conn: &mut Connection, old_id: &str, old: &Key, new: &Key) -> bool {
         let mut cleared = false;
-        for ix in 0..=conn.profiles.len() {
-            // Inactive profiles are swapped into the active slots so the field
-            // helpers reach them; the guard restores the active profile even
-            // when a field helper panics.
+        for ix in 0..conn.profiles.len() {
+            // Each profile becomes active in turn so the field helpers reach it; the guard
+            // restores the current profile even when a field helper panics.
             let profile_cleared = conn.with_active_profile(ix, |conn| {
                 let mut cleared = false;
                 for field in SecretField::ALL {
@@ -861,6 +860,69 @@ mod tests {
         // No plaintext after serialization
         let json = serde_json::to_string(&file).unwrap();
         assert!(!json.contains("\"pw\"") && !json.contains("\"pw2\""));
+    }
+
+    #[test]
+    fn rekey_and_duplicate_cover_every_profile() {
+        let (k1, k2) = (Key::random(), Key::random());
+        let mut conn = Connection::new("mysql");
+        conn.general.save_password = true;
+        ConnectionsFile::set_secret(&mut conn, SecretField::Password, Some("pw-main"), &k1);
+        for ix in 0..7 {
+            conn.add_profile(format!("p{ix}"));
+            ConnectionsFile::set_secret(
+                &mut conn,
+                SecretField::Password,
+                Some(&format!("pw-{ix}")),
+                &k1,
+            );
+        }
+        conn.switch_profile("");
+        let id = conn.id.clone();
+        let mut file = file_with(conn);
+
+        // Duplicate: every profile's secret follows the new connection id.
+        let copy_id = file.duplicate(&id, "copy", &k1).unwrap();
+        let copy = file.get(&copy_id).unwrap().clone();
+        assert_eq!(copy.profiles.len(), 8);
+        let expected = |name: &str| {
+            if name.is_empty() {
+                "pw-main".to_string()
+            } else {
+                // Profiles were added p0..p6 and got "pw-0".."pw-6".
+                format!("pw-{}", name.trim_start_matches('p'))
+            }
+        };
+        let mut copy = copy;
+        assert_eq!(copy.active_profile_name(), "", "the active profile is kept");
+        for name in [
+            "".to_string(),
+            "p0".to_string(),
+            "p3".to_string(),
+            "p6".to_string(),
+        ] {
+            assert!(copy.switch_profile(name.as_str()));
+            assert_eq!(
+                ConnectionsFile::reveal(&copy, SecretField::Password, &k1)
+                    .unwrap()
+                    .as_deref(),
+                Some(expected(&name).as_str())
+            );
+        }
+
+        // Rekey: every profile is re-encrypted for the new key, none keeps the old one.
+        assert!(file.rekey(&k1, &k2).is_empty());
+        let mut conn = file.get(&id).unwrap().clone();
+        for name in ["".to_string(), "p0".to_string(), "p6".to_string()] {
+            assert!(conn.switch_profile(name.as_str()));
+            assert_eq!(
+                ConnectionsFile::reveal(&conn, SecretField::Password, &k2)
+                    .unwrap()
+                    .as_deref(),
+                Some(expected(&name).as_str())
+            );
+            assert!(ConnectionsFile::reveal(&conn, SecretField::Password, &k1).is_err());
+        }
     }
 
     #[test]

@@ -223,6 +223,8 @@ flowchart LR
 - `driver` 是 `DriverRegistry` 的键，插件驱动形如 `com.example.clickhouse/clickhouse`。
 - 不认识的字段在读写时原样保留，以兼容较新版本写入的文件。
 - 所有秘密字段（数据库密码、SSH 密码、通行短语）都使用加密信封 `{ nonce, ct }`。
+- 连接配置文件（F-CONN-021）：`general`、`advanced`、`ssl`、`ssh` 是**激活**配置文件的设置，`profile` 是它的名字（`""` 是默认配置），`profiles` 数组只放其余配置文件。内存里的模型是 `profiles: Vec<Profile>` + `active: usize`（激活项也在数组里），`Connection` 的 `Deref` 把 `connection.general` 这类字段访问转到 `active()`；切换、添加、删除、重新加密和复制都只动 `profiles[active]`，不再交换字段。
+- 序列化仍按上面的布局写（激活设置在顶层、其余在 `profiles`），所以旧版本能读新版本写的文件；反序列化同时接受 `profiles` 含全部配置、`active` 指向激活项的新布局，将来切换写格式时不需要再迁移。
 
 ## 7. 秘密加密（F-CONN-020）
 

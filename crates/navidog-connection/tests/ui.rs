@@ -160,13 +160,13 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
                 .get(&id)
                 .cloned()
                 .unwrap();
-            (c.profile, c.profiles.len())
+            (c.active_profile_name().to_string(), c.profiles.len())
         })
     };
-    assert_eq!(profile(cx), ("只读".into(), 1));
+    assert_eq!(profile(cx), ("只读".into(), 2));
     dispatch(cx, Box::new(SwitchProfile { name: "".into() }));
     wait_open(cx, &id);
-    assert_eq!(profile(cx), ("".into(), 1));
+    assert_eq!(profile(cx), ("".into(), 2));
 
     // A failed profile save leaves the form and current live session available for retry.
     if block_writes(&home.join("connections.json"), true) {
@@ -192,7 +192,7 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
                 name: "只读".into(),
             }),
         );
-        assert_eq!(profile(cx), ("".into(), 1));
+        assert_eq!(profile(cx), ("".into(), 2));
         assert_eq!(reconnects.get(), 0);
         dispatch(cx, Box::new(NewProfile));
         cx.update_window(handle, |_, window, cx| {
@@ -207,7 +207,7 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
             );
         })
         .unwrap();
-        assert_eq!(profile(cx), ("".into(), 1));
+        assert_eq!(profile(cx), ("".into(), 2));
         assert_eq!(
             reconnects.get(),
             0,
@@ -228,7 +228,7 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
         })
         .unwrap();
         wait_open(cx, &id);
-        assert_eq!(profile(cx), ("retry".into(), 2));
+        assert_eq!(profile(cx), ("retry".into(), 3));
         assert_eq!(reconnects.get(), 1);
     }
 

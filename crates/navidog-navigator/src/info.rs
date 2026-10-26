@@ -292,11 +292,11 @@ impl InfoPanel {
                     navidog_session::DriverRegistry::name(cx, &c.driver),
                 ),
             ];
-            if !c.profiles.is_empty() {
-                let name = if c.profile.is_empty() {
+            if c.profiles.len() > 1 {
+                let name = if c.active_profile_name().is_empty() {
                     t!("nav.profile_default").to_string()
                 } else {
-                    c.profile.clone()
+                    c.active_profile_name().to_string()
                 };
                 f.push((t!("info.profile").to_string(), name.into()));
             }
