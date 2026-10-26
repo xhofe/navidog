@@ -4,6 +4,13 @@ on:
   push:
   pull_request:
 
+concurrency:
+  # A newer push or pull request update supersedes the run still in progress
+  # on that ref. Pull requests use refs/pull/N/merge, so they do not cancel
+  # the branch push (that run checks the head, not the merge commit).
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

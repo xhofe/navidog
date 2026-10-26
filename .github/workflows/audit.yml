@@ -8,6 +8,13 @@ on:
     - cron: "0 4 * * 1"
   workflow_dispatch:
 
+concurrency:
+  # Same event and ref cancel their own outdated run. The weekly schedule
+  # files an advisory issue and shares main's ref with pushes, so it stays
+  # in its own group and a commit cannot cut it off.
+  group: audit-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   # `rustsec/audit-check` publishes its result as a check run on push/PR and as an

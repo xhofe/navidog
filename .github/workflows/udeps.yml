@@ -5,6 +5,12 @@ on:
     - cron: "0 4 * * 1"
   workflow_dispatch:
 
+concurrency:
+  # One macOS workspace scan at a time per ref. Queue instead of cancelling:
+  # a weekly run and a manual run must not throw each other away halfway.
+  group: udeps-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
