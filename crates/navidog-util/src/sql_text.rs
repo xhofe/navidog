@@ -63,22 +63,7 @@ pub fn find_params(sql: &str) -> Vec<Param> {
     while i < bytes.len() {
         match bytes[i] {
             q @ (b'\'' | b'"' | b'`') => {
-                i += 1;
-                while i < bytes.len() {
-                    if bytes[i] == b'\\' && q == b'\'' {
-                        i += 2;
-                        continue;
-                    }
-                    if bytes[i] == q {
-                        if bytes.get(i + 1) == Some(&q) {
-                            i += 2;
-                            continue;
-                        }
-                        break;
-                    }
-                    i += 1;
-                }
-                i += 1;
+                i = skip_quoted(sql, i, q == b'\'');
             }
             b'-' if bytes.get(i + 1) == Some(&b'-') => {
                 i = sql[i..].find('\n').map_or(bytes.len(), |n| i + n);
@@ -87,6 +72,12 @@ pub fn find_params(sql: &str) -> Vec<Param> {
                 i = sql[i + 2..]
                     .find("*/")
                     .map_or(bytes.len(), |n| i + 2 + n + 2);
+            }
+            b'$' if is_dollar_quote_start(sql, i) => {
+                // PostgreSQL dollar-quoted strings: `$$…$$` or `$tag$…$tag$`.
+                // They may contain `[$name]` text that is not a parameter;
+                // `foo$tag$` is an identifier, not an opener.
+                i = dollar_end(sql, i).unwrap_or(i + 1);
             }
             b'[' if bytes.get(i + 1) == Some(&b'$') => match sql[i + 2..].find(']') {
                 Some(n) if n > 0 && !sql[i + 2..i + 2 + n].contains(['\n', '[']) => {
@@ -102,6 +93,69 @@ pub fn find_params(sql: &str) -> Vec<Param> {
         }
     }
     out
+}
+
+/// Skips a quoted span whose opening quote is at `start`; a doubled quote escapes,
+/// and `escapes` also makes a backslash escape (except inside backticks). Returns the
+/// position after the closing quote, or the end of the string when it is unterminated.
+pub fn skip_quoted(sql: &str, start: usize, escapes: bool) -> usize {
+    let bytes = sql.as_bytes();
+    let Some(&quote) = bytes.get(start) else {
+        return bytes.len();
+    };
+    let mut i = start + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if escapes && quote != b'`' => i += 2,
+            b if b == quote => {
+                if bytes.get(i + 1) == Some(&quote) {
+                    i += 2;
+                } else {
+                    return i + 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    bytes.len()
+}
+
+/// True when `start` begins a PostgreSQL dollar quote rather than a `$tag$`
+/// inside an identifier such as `foo$tag$`.
+pub fn is_dollar_quote_start(sql: &str, start: usize) -> bool {
+    sql.as_bytes().get(start) == Some(&b'$') && !after_identifier(sql, start)
+}
+
+fn after_identifier(sql: &str, start: usize) -> bool {
+    start > 0
+        && matches!(
+            sql.as_bytes()[start - 1],
+            b if b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+        )
+}
+
+/// The end of a PostgreSQL dollar-quoted string starting at `start`, or `None`
+/// when `start` is not a valid opening tag (for example `$1`).
+pub fn skip_dollar_quoted(sql: &str, start: usize) -> Option<usize> {
+    dollar_end(sql, start)
+}
+
+fn dollar_end(sql: &str, start: usize) -> Option<usize> {
+    let rest = &sql[start + 1..];
+    let tag_len = rest.find('$')?;
+    let tag = &rest[..tag_len];
+    if !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        || tag.starts_with(|c: char| c.is_ascii_digit())
+    {
+        return None;
+    }
+    let delim = &sql[start..start + tag_len + 2];
+    let body = start + tag_len + 2;
+    Some(
+        sql[body..]
+            .find(delim)
+            .map_or(sql.len(), |n| body + n + delim.len()),
+    )
 }
 
 /// Distinct parameter names in order of first appearance.
@@ -183,6 +237,34 @@ mod tests {
         assert_eq!(strip_keyword("delimiter $$", "DELIMITER"), Some(" $$"));
         assert_eq!(strip_keyword("DELIMITER", "DELIMITER"), Some(""));
         assert_eq!(strip_keyword("delimiters", "DELIMITER"), None);
+    }
+
+    #[test]
+    fn parameters_inside_dollar_quotes_are_not_rewritten() {
+        let sql = "SELECT $$ [$x] $$, [$y]";
+        assert_eq!(
+            find_params(sql)
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["y"]
+        );
+        assert_eq!(
+            substitute_params(sql, |name| format!("'{name}'")),
+            "SELECT $$ [$x] $$, 'y'"
+        );
+        assert!(find_params("SELECT $tag$ [$x] $tag$, $1").is_empty());
+    }
+
+    #[test]
+    fn a_dollar_tag_inside_an_identifier_is_not_a_quote() {
+        let sql = "SELECT foo$tag$ FROM t WHERE id = [$id] AND note = $tag$text$tag$";
+        let params: Vec<_> = find_params(sql).into_iter().map(|p| p.name).collect();
+        assert_eq!(params, ["id"]);
+        assert_eq!(
+            substitute_params(sql, |name| format!("'{name}'")),
+            "SELECT foo$tag$ FROM t WHERE id = 'id' AND note = $tag$text$tag$"
+        );
     }
 
     #[test]

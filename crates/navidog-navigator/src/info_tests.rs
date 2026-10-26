@@ -1,8 +1,8 @@
 //! Headless test of the info pane's query pages: they come and go with the query editor, a
 //! snippet saves from the editor dialog, and identifiers list a real SQLite table.
 
+use navidog_test_support::wait;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
@@ -14,8 +14,8 @@ use navidog_core::crypto::Key;
 use navidog_core::snippets::Snippets;
 use navidog_core::store::ConnectionStore;
 use navidog_core::workspace::{QueryContext, Workspace};
-use navidog_db::sessions::Sessions;
 use navidog_db::{ConnectParams, Secrets, connect, runtime, sqlite::SqliteDriver};
+use navidog_session::sessions::Sessions;
 
 use crate::info::{InfoPanel, Page};
 
@@ -26,15 +26,6 @@ struct Host {
 impl Render for Host {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         crate::bind_actions(div().size_full().child(self.info.clone()))
-    }
-}
-
-fn wait(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !done(cx) {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        cx.run_until_parked();
-        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -65,7 +56,7 @@ fn query_pages_follow_the_editor(cx: &mut TestAppContext) {
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         crate::init(cx);
         // Keep dialog hit regions fixed between the frame sampled by click and its dispatch.
         cx.set_reduce_motion(true);
@@ -166,7 +157,7 @@ fn query_pages_follow_the_editor(cx: &mut TestAppContext) {
     let scope = navidog_core::object::Scope::new(id.clone(), "main", None);
     wait(cx, "the identifiers", |cx| {
         cx.update(|cx| {
-            navidog_db::outline::OutlineCache::global(cx)
+            navidog_session::outline::OutlineCache::global(cx)
                 .read(cx)
                 .ready(&scope)
                 .is_some_and(|o| o.table("film").is_some_and(|t| t.columns.len() == 2))

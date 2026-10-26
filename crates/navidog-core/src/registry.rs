@@ -1,5 +1,5 @@
-//! 扩展点注册表（03-plugin-api.md 第 2 节）。内置功能与插件走同一套注册表，
-//! 条目带 `Source`，插件停用时按来源整体移除。
+//! Extension-point registries (03-plugin-api.md section 2). Built-in features and plugins
+//! share one registry; every entry carries a `Source` and plugins are removed as a group.
 
 use gpui_kit::{Action, App, Global, SharedString};
 
@@ -11,11 +11,11 @@ pub enum Source {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum RegistryError {
-    #[error("`{0}` 已被注册")]
+    #[error("`{0}` is already registered")]
     Duplicate(String),
 }
 
-/// 按键索引并保持注册顺序的注册表。
+/// A registry indexed by key that keeps insertion order.
 pub struct Registry<V> {
     entries: Vec<(SharedString, Source, V)>,
 }
@@ -67,15 +67,15 @@ impl<V> Registry<V> {
     }
 }
 
-/// 命令：一个命令只对应一个 Action，菜单、工具栏、右键菜单、快捷键共用。
+/// A command: one Action shared by menus, toolbars, context menus and shortcuts.
 pub struct CommandInfo {
-    /// i18n 键
+    /// i18n key
     pub title: SharedString,
-    /// 图标资源路径，如 `icons/plug.svg`
+    /// Icon asset path, for example `icons/plug.svg`
     pub icon: Option<SharedString>,
     pub shortcut: Option<SharedString>,
     pub action: fn() -> Box<dyn Action>,
-    /// 当前是否可用（例如需要先选中数据库）；`None` 表示总是可用
+    /// Whether it is currently enabled (for example a database must be selected); `None` means always
     pub enabled: Option<fn(&App) -> bool>,
 }
 
@@ -83,33 +83,6 @@ impl CommandInfo {
     pub fn is_enabled(&self, cx: &App) -> bool {
         self.enabled.is_none_or(|f| f(cx))
     }
-}
-
-/// Dock 面板元数据；面板构造由各 feature crate 通过 gpui-base 的 `register_panel` 完成。
-pub struct PanelInfo {
-    pub title: SharedString,
-    pub placement: PanelPlacement,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PanelPlacement {
-    Left,
-    Center,
-    Right,
-    Bottom,
-}
-
-/// 导入导出格式（M6 实现）。
-pub struct FormatInfo {
-    pub name: SharedString,
-    pub extensions: Vec<SharedString>,
-    pub import: bool,
-    pub export: bool,
-}
-
-/// 声明式单元格格式化规则（M5 实现，见 03-plugin-api.md 第 7 节）。
-pub struct CellFormatterInfo {
-    pub rule: serde_json::Value,
 }
 
 macro_rules! global_registry {
@@ -132,15 +105,9 @@ macro_rules! global_registry {
 }
 
 global_registry!(CommandRegistry, CommandInfo);
-global_registry!(PanelRegistry, PanelInfo);
-global_registry!(FormatRegistry, FormatInfo);
-global_registry!(CellFormatterRegistry, CellFormatterInfo);
 
 pub(crate) fn init(cx: &mut App) {
     cx.set_global(CommandRegistry::default());
-    cx.set_global(PanelRegistry::default());
-    cx.set_global(FormatRegistry::default());
-    cx.set_global(CellFormatterRegistry::default());
 }
 
 #[cfg(test)]

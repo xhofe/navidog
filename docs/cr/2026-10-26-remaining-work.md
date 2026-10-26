@@ -1,0 +1,364 @@
+# 整体审查遗留工作（2026-10-26）
+
+## 范围
+
+- 来源：[2026-10-24 整体审查](2026-10-24-overall-review.md)。
+- 基线：`review/overall-fixes` / PR #21，最后包含本轮修复的提交为 `b53a6e7`。
+- 本文只记录 **2026-10-24 审查中没有完全做完、或只完成了兼容层** 的事项。已经接受的外部限制（saved query 数据兼容、ad-hoc 更新签名）不列为待办，见文末“已接受的决定”。
+- 这些事项不是合并阻塞项；当前审查的结论是剩余项都属于跨 crate/架构迁移，适合按主题另开 PR。每项都应优先做“只搬代码”的提交，再单独做行为变更。
+
+## 总览
+
+| 编号 | 主题 | 当前状态 | 建议 PR | 依赖 | 规模 |
+| --- | --- | --- | --- | --- | --- |
+| R-04 / D-05 | 统一 SQL 扫描/词法 | 部分完成 | SQL lexer | 无 | 大 |
+| D-08 | Catalog/OutlineCache 统一缓存 | 部分完成 | ScopeCache | 无 | 中 |
+| A-01 | `navidog-core` 拆 app-state | 部分完成 | app-state split | 无 | 大 |
+| A-02 | core 去掉 gpui-kit | 部分完成 | 随 A-01 | A-01 | 中 |
+| A-03 | `navidog-db` 去掉 table_design | 部分完成 | schema crate | R-04 | 大 |
+| A-06 | 缓存/选择状态收口 | 部分完成 | Cache/selection | D-08 | 中 |
+| A-07 | god object/超长文件 | 部分完成 | file splits | 无 | 大 |
+| A-10 | Connection `profiles + active` | 部分完成 | connection model | 无 | 中 |
+| S-07 | 共享 i18n 后端（可选） | 契约已收敛，后端未合并 | i18n backend | 无 | 中 |
+
+建议合并顺序：**R-04/D-05 → D-08/A-06 → A-01/A-02 → A-03 → A-10 → A-07 → S-07**。A-07 是纯搬家，可以与其他项并行；R-04 先做能减少 A-03 的重复解析。
+
+## 1. R-04 / D-05：统一 SQL 扫描与词法
+
+### 当前做到哪
+
+- `navidog_util::sql_text` 已收拢 `skip_quoted`、`skip_dollar_quoted`、`is_dollar_quote_start`。
+- `navidog-db::sql` 已用共享跳过函数，并修正了 `foo$tag$` 和自定义 `DELIMITER` 的 UTF-8 边界。
+- 参数扫描、语句切分、筛选解析、格式化和 table_design 解析仍是各自实现。
+
+### 缺口
+
+- 至少 6 个消费者：`db/sql.rs`、`util/sql_text.rs`、`util/sql_format.rs`、`grid/filter.rs`、`db/table_design/parse.rs`、`db/table_design/properties.rs`/`entries.rs`。
+- 规则仍不一致：`#` 注释、反斜杠转义、`$tag$`、方括号标识符、嵌套注释、`BEGIN…END` 的边界各写一套。
+- 不能只提供“跳过引号”的 helper；调用方需要统一的 `spans`/token 流，才能避免“同一个 SQL 在参数替换和分句器得到不同结论”。
+
+### 目标
+
+在 `navidog-util` 或新的 `navidog-sql` 提供：
+
+```rust
+pub struct Span { pub range: Range<usize>, pub kind: SpanKind }
+pub fn spans(sql: &str, dialect: Dialect) -> Vec<Span>;
+```
+
+至少覆盖字符串、引号标识符、行/块注释、`$tag$`、参数标记、语句分隔符和括号深度。`Dialect` 不能反向依赖 `navidog-db`；把方言枚举放在 `navidog-model` 或 `navidog-util`，db 再 re-export。
+
+### 验收
+
+- 6 个消费者全部改为消费同一份 span/词法结果，删除各自的跳过函数。
+- 回归用例：`SELECT $$ [$x] $$`、`SELECT E'a\\';b'`、`foo$tag$`、`#` 注释（MySQL）、嵌套块注释、`DELIMITER //`、`BEGIN…END`、反斜杠关闭的字符串、方括号标识符。
+- 三种方言（MySQL/MariaDB、PostgreSQL、SQLite）的现有测试全过；补一个“同一段 SQL 六个消费者结论一致”的测试。
+- 实库测试和 query builder 的 WHERE/ORDER BY 解析通过。
+
+### 主要文件
+
+`crates/navidog-util/src/sql_text.rs`、`crates/navidog-util/src/sql_format.rs`、`crates/navidog-db/src/sql.rs`、`crates/navidog-grid/src/filter.rs`、`crates/navidog-db/src/table_design/parse.rs`、`properties.rs`、`entries.rs`。
+
+## 2. D-08：Catalog/OutlineCache 统一缓存
+
+### 当前做到哪
+
+- `Load<T>`、`ScopeCache<K,T>`、OutlineCache 已迁移到 `navidog-session::scope_cache`。
+- OutlineCache 使用统一的 entries/tasks/失效清理。
+
+### 缺口
+
+`Catalog` 仍有五套 `HashMap`：
+
+- `schemas: (connection,database) -> Vec<String>`
+- `objects: (Scope,ObjectKind) -> Vec<ObjectInfo>`
+- `ddl: ObjectRef -> String`
+- `columns: (Scope,table) -> Vec<ColumnInfo>`
+- `children: (Scope,table) -> TableChildren`
+
+以及独立的 `tasks: HashMap<String,Task>`、`generation`/`generation_clock`。这些 key 类型不同，当前 `ScopeCache` 只按 `Scope` 键，无法直接套。
+
+### 目标
+
+- `ScopeCache<K,T>` 泛型化到任意 `K: Eq + Hash + Clone`。
+- 五类 key 各自 typed newtype（而不是 `format!("{slot}:{key:?}")` 字符串）。
+- `tasks`/generation 也按 typed key 管理；`invalidate_connection` 同时清理 entries、tasks、generation。
+- 缓存失效由 shell/`Catalog::require()` 驱动，渲染只读，不在 render 里写状态。
+
+### 验收
+
+- `Catalog` 不再持有五套手写 map 清理逻辑；OutlineCache 和 Catalog 共享同一套加载/失效状态机。
+- 关闭连接、切库、刷新、失败重试各有一个测试；延迟 fetch 不能覆盖新代际。
+- `Catalog` 的 revision 只由缓存变更递增；状态栏/树不再因为“读缓存”而丢 observer。
+
+### 主要文件
+
+`crates/navidog-session/src/scope_cache.rs`、`crates/navidog-navigator/src/catalog.rs`、`crates/navidog-session/src/outline.rs`。
+
+## 3. A-01：拆开 `navidog-core` 的 app-state
+
+### 当前做到哪
+
+- 纯数据层 `navidog-model` 已抽出：`connection`、`object`、`crypto`、`paths`、`queries`、`json_store`、`column_widths`。
+- `navidog-core` 通过 `pub use` 保持旧路径，feature crate 的 import 基本不变。
+
+### 缺口
+
+`navidog-core` 仍有：
+
+- `settings`（`Settings` Global，49 个字段）
+- `store`（`ConnectionStore` Entity/Global）
+- `workspace`（`Workspace` Global、选择、状态栏文案）
+- `favorites`、`snippets`、`vgroups`
+- `actions`、`registry`
+- `uri`（依赖 `Workspace::Selection`）
+
+这些是 GPUI 应用状态，不适合与纯模型放在同一个 crate；`navidog-core` 仍是 god crate。
+
+### 目标
+
+新建 `navidog-app-state`：
+
+- 拥有 GPUI `Global`/`Entity`、`Workspace`、`ConnectionStore`、`Favorites`、`VirtualGroups`、`Snippets`、`actions`、`Saved query` 路径逻辑。
+- `navidog-core` 变成薄的兼容 re-export，或者删除；feature crate 改为直接依赖 app-state/model。
+- `Settings` 拆分：纯数据留在 model 或 app-state 的 settings 子模块，`Global` 包装留在 app-state。
+
+### 验收
+
+- `navidog-core`（若保留）不再直接依赖 `gpui-kit`；app-state 的依赖方向是 app-state → model，不反向。
+- 所有既有 import 路径有迁移方案；不要求一次改完 feature crate 的公开路径。
+- `Settings`/`ConnectionStore`/`Workspace` 的序列化和 headless 测试全过。
+- `cargo tree` 能证明 model 不包含 gpui。
+
+### 主要文件
+
+`crates/navidog-core/src/{settings,store,workspace,favorites,snippets,vgroups,actions,registry,uri}.rs`、`crates/navidog-core/Cargo.toml`。
+
+## 4. A-02：core 去掉 `gpui-kit`
+
+### 当前做到哪
+
+- `navidog-db` 已不依赖 gpui-kit。
+- `navidog-session` 承担 DriverRegistry/Sessions/OutlineCache/scope_cache。
+
+### 缺口
+
+`navidog-core` 仍直接依赖 gpui-kit，且 9 个 app-state 模块尚未搬走。`A-02` 依赖 `A-01` 完成；不能只把依赖写在 app-state 里而继续让 core re-export GPUI 类型。
+
+### 目标
+
+- `navidog-model` 和 `navidog-db` 的 normal dependencies 中不再出现 `gpui-kit`。
+- `navidog-core` 只保留纯 re-export 或完全移除；GPUI 只出现在 app-state/session/ui。
+- 增加一个 headless 编译检查：只用 `navidog-model` + `navidog-db` 建一个 SQLite 连接/执行 SQL 的测试，不链接 GPUI。
+
+### 验收
+
+- `cargo tree -p navidog-model -e normal` 无 gpui。
+- `cargo check -p navidog-db` 在 `default-features` 下无 gpui。
+- headless 测试可编译运行；`navidog-session` 仍明确是 GPUI 层。
+- CI 增加依赖方向检查，防止 core/db 回退。
+
+### 主要文件
+
+`crates/navidog-core/Cargo.toml`、`crates/navidog-model/Cargo.toml`、`crates/navidog-db/Cargo.toml`、`crates/navidog-session/Cargo.toml`。
+
+## 5. A-03：`navidog-db` 去掉 table_design
+
+### 当前做到哪
+
+- `sessions`、`outline` cache、`log` 已移出 db（`navidog-session` / `navidog-sql-log`）。
+- `navidog-db` 仍保留 `table_design/*`（约 4,000 行）、`metadata`、driver、dialect、SQL。
+
+### 缺口
+
+`table_design` 是建表/DDL 规划与解析，不是驱动协议；它还让 db 承担 UI 草稿模型的职责。它依赖 `dialect`、`Relational`、`metadata`，拆出时不能复制这些类型。
+
+### 目标
+
+- 新建 `navidog-schema`（或放回 `navidog-designer` 的非 UI 子模块），只依赖 `navidog-model` + `navidog-db` 的 dialect/driver 接口。
+- `table_design` 的纯规划/解析留在 schema；UI 草稿状态留在 designer。
+- `navidog-db` 只保留 driver/session trait、dialect、metadata、sql、params、ssh。
+
+### 验收
+
+- `rg 'table_design' crates/navidog-db/src` 为空；designer/query 的 import 更新。
+- 现有 table_design 测试全部迁移并通过；实库 DDL 测试通过。
+- `navidog-db` 的 public API 不破坏 feature crate；先加 re-export 过渡再删。
+- 与 R-04 共用 SQL span/token 层，避免第 7 份解析器。
+
+### 主要文件
+
+`crates/navidog-db/src/table_design/`、`crates/navidog-designer/`、`crates/navidog-db/Cargo.toml`。
+
+## 6. A-06：缓存/选择状态收口
+
+### 当前做到哪
+
+- `NavigatorPanel.marked` 已删除，多选快照每帧从 `Workspace::selections()` 派生。
+- `Catalog::refresh_connection` 不再调用 `Sessions::refresh`，改由 navigator 的 WorkspaceEvent 处理器刷新会话。
+- 错误行/字段行的焦点恢复（S-05）已修。
+
+### 缺口
+
+- 四个面板仍各自实现 `ensure_loaded`（navigator、objects、info、ddl），条件不一致；objects 还有渲染期 `stalled_load` 补偿。
+- `Catalog` 的缓存失效仍由 feature 自己驱动，缺少统一的 `Catalog::require()`。
+- D-08 的 ScopeCache 未迁移完，A-06 无法真正统一“缓存/选择/derived state”。
+
+### 目标
+
+- `Catalog::require(key, fetch)` 统一“读缓存/排队加载/失效代际”。
+- 删除四个 `ensure_loaded` 和 `stalled_load` 补偿，加载由统一状态机驱动。
+- 选择只保留 `Workspace`；navigator 的 anchor/tree focus 只作为视图状态，不再成为第二权威。
+- 与 D-08 同一个 PR 或前后紧邻的 PR，避免两次改 Catalog。
+
+### 验收
+
+- 选择变化、连接打开/关闭、切库、刷新、失败重试、删除连接各一个测试。
+- 对象面板/信息面板/DDL 面板不再各自判断“是否要 load”。
+- `Catalog` 的 revision/失效测试覆盖延迟 fetch 和连接删除。
+
+### 主要文件
+
+`crates/navidog-navigator/src/{catalog,objects,info,ddl,navigator}.rs`、`crates/navidog-session/src/scope_cache.rs`。
+
+## 7. A-07：god object 与超长文件
+
+### 当前做到哪
+
+- `app/update.rs` 的 install/替换拆到 `update/install.rs`（1246 + 331 行）。
+- `grid/viewer/mod.rs` 的 `impl Render` 拆到 `viewer/render.rs`（2882 + 161 行）。
+
+### 缺口（当前行数）
+
+| 文件 | 行数 | 仍混在一起 |
+| --- | ---: | --- |
+| `grid/viewer/mod.rs` | 2882 | 会话/分页/事务/筛选/单元格编辑/渲染 |
+| `query/results.rs` | 1886 | 网格接线、可编辑探测、提交、重载、渲染 |
+| `query/editor.rs` | 1742 | 生命周期、会话/上下文、保存/恢复、查找、工具栏 |
+| `connection/form.rs` | 1493 | 五页表单、校验、秘密策略、测试连接、路径浏览 |
+| `grid/model.rs` | 1738 | 存储、选择、编辑 overlay、投影、排序、查找替换、TSV |
+| `app/update.rs` | 1246 | manifest/HTTP/下载校验/UI 仍未拆 |
+
+### 目标
+
+- 只做“搬代码”的提交：`TableViewer` 拆 `TableSession`（连接/分页/事务/提交）和 `TableView`（渲染）；7 个 `*_after_commit` 状态量改成 `enum AfterCommit`。
+- `ResultView` 拆 `ResultSession`/`ResultGrid`；`QueryEditor` 拆 toolbar/save-recovery；`ConnectionForm` 拆 pages/secrets；`GridModel` 拆 storage/edit/projection；`update.rs` 拆 `manifest/http/install/ui`。
+- 目标线：viewer/results/editor/form/model 各主文件 < 1,000 行；update < 600 行。
+
+### 验收
+
+- 纯移动提交，`git diff --color-moved` 可读；行为测试不改断言。
+- 每个拆分 PR 至少包含一个现有测试的迁移；不新增行为。
+- 拆分后 `cargo test`、`clippy`、headless UI 测试全过；截图测试只在外观受影响时补跑。
+
+### 主要文件
+
+`crates/navidog-grid/src/viewer/`、`crates/navidog-query/src/{results,editor}.rs`、`crates/navidog-connection/src/form.rs`、`crates/navidog-grid/src/model.rs`、`crates/navidog/src/update.rs`。
+
+## 8. A-10：`Connection` 的 `profiles + active`
+
+### 当前做到哪
+
+- `Connection` 顶层的 `general/advanced/ssl/ssh` 仍是激活配置；非激活配置在 `profiles`。
+- `swap_profile` 交换 5 组字段；`with_active_profile` 的 Drop 守卫保证 reencrypt panic 时恢复。
+- `profile: String` 表示激活 profile 名。
+
+### 缺口
+
+- “当前配置文件”仍是隐式不变量；任何 return/panic 之外的逻辑错误都可能留下错误激活配置。
+- `reencrypt`、`duplicate`、`add_profile`、`switch_profile` 都要手动处理交换。
+- 新增配置块（代理、认证）要同时改 `Profile`、`swap_profile`、`reencrypt`。
+
+### 目标
+
+内部模型改为：
+
+```rust
+pub struct Connection {
+    pub profiles: Vec<Profile>,
+    pub active: usize,
+    // 非 profile 字段：id/name/group/...
+}
+```
+
+- `active()` / `active_mut()` 访问激活配置；`profiles` 包含激活 profile。
+- 序列化兼容：自定义 `Deserialize` 读取旧 JSON（顶层配置 + `profile` + 非激活 profiles），`Serialize` 可先写旧格式一个版本，再切新格式；测试两代 fixture。
+- `reencrypt`/`duplicate`/`add_profile`/`switch_profile` 只操作 `profiles[active]`，不再 swap 字段。
+
+### 验收
+
+- 旧 `connections.json` fixture 能读；新写入的格式被记录并在验收文档说明兼容窗口。
+- 所有 profile 的 secrets 在 reencrypt/duplicate 后仍正确；panic/early-return 不再破坏激活配置。
+- 7 个以上 profile、重名、空 profile 名的边界测试。
+
+### 主要文件
+
+`crates/navidog-model/src/connection.rs`、`crates/navidog-core/src/store.rs`（或 app-state 迁移后的 store）。
+
+## 9. S-07：共享 i18n 后端（可选）
+
+### 当前做到哪
+
+- 契约已收敛为 crate-local：每个 crate 的 `rust_i18n::i18n!` 只加载自己的 locale。
+- `scripts/check-i18n.sh` 强制字面量 `t!` key 在本 crate 定义，并要求 en/zh-CN 双值。
+- 跨 crate 文案走 `navidog_ui::db_error_text` 等显式 helper。
+
+### 缺口
+
+- 每个 crate 仍是独立后端，共享文案仍需函数封装或复制。
+- CR-04 的已知限制：`t!(format!("..."))` 动态 key 不在静态检查内。
+- 如果要跨 crate 复用 key，需要构建期合并 locale 或统一 backend，当前没有做。
+
+### 建议先定策略
+
+1. **保持 crate-local 契约**（推荐，成本低）：把“跨 crate 只能通过 helper”写进 AGENTS；给动态 key 加 allowlist/运行时测试，或至少记录限制。
+2. **统一 backend**：构建期合并所有 `locales/*.yml`，验证加载顺序和 fallback；跨 crate 的 key 才可复用。需要修改每个 crate 的 `i18n!` 初始化和测试。
+
+### 验收
+
+- 方案 1：动态 key 有明确约束/检查；脚本注释说明只扫字面量；`docs` 记录。
+- 方案 2：一个二进制只初始化一次 backend；跨 crate key 解析测试；所有现有 locale 双语言检查通过。
+- 无论哪种，S-07 不再以“已修”掩盖统一 backend 未做的事实。
+
+## 建议的 PR 切分
+
+| PR | 内容 | 前置 | 备注 |
+| --- | --- | --- | --- |
+| 1 | R-04/D-05 SQL lexer | 无 | 先统一 span，再迁 6 个消费者 |
+| 2 | D-08/A-06 ScopeCache + Catalog::require | 无 | 一起做，避免两次改 Catalog |
+| 3 | A-01 app-state 拆分 | 无 | 纯搬代码；feature import 可保留 re-export |
+| 4 | A-02 core 去 gpui | PR 3 | 加 headless 编译测试 |
+| 5 | A-03 table_design 拆出 | PR 1 | 复用 lexer，避免新解析器 |
+| 6 | A-10 profiles + active | 无 | 先定兼容窗口，再动 store |
+| 7 | A-07 文件拆分 | 无 | 可并行；每 PR 只搬一个文件 |
+| 8 | S-07 统一 backend 或契约收尾 | 无 | 可选；先定策略 |
+
+## 与其他遗留项的关系
+
+- 2026-10-26 的 PR #21 第二轮 CR 另有两项“按决定保留”的限制：
+  - **CR-02**：`known_hosts` 只支持精确主机名和 `|1|` 哈希；通配、`!`、`@revoked`、`@cert-authority` 不参与判断。见 [2026-10-26-pr-21.md](2026-10-26-pr-21.md)。
+  - **CR-04**：i18n 脚本只检查字面量 key；动态 `format!` key 是已知限制，已并入本文 S-07。
+- **不做 saved query 数据兼容**和**保留 ad-hoc 更新签名自动安装**是已接受的决定，不列入本清单；详情见 [验收记录](../pr/acceptance-overall-review.md)。
+- A-01/A-02 与 A-03 都是公开 API/依赖方向迁移；不要与 bug 修复混在同一个 PR，避免 review 无法区分行为变化。
+
+## 完成定义与通用验证
+
+每个 PR 至少：
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test -p <affected crates> -j 1
+scripts/check-raw-px.sh
+scripts/check-i18n.sh
+```
+
+涉及 SQL/table_design/A-01/store 的改动还要跑：
+
+- 实库测试（MySQL/MariaDB/PostgreSQL，`docker compose`）；
+- `navidog-query` 的 Builder/参数/筛选测试；
+- 旧 `connections.json` fixture（A-10）；
+- 依赖方向检查（A-02）；
+- 需要时跑 Metal 截图测试（A-07 的 UI 拆分）。
+
+每完成一项，更新 [2026-10-24 整体审查](2026-10-24-overall-review.md) 的状态，并在本文件删除或标记对应条目；不要把“部分完成”留成永久状态。

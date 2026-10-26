@@ -2,7 +2,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
 use gpui_kit::{
@@ -14,10 +14,10 @@ use navidog_core::crypto::Key;
 use navidog_core::object::{ObjectKind, ObjectRef, Scope};
 use navidog_core::store::ConnectionStore;
 use navidog_core::workspace::Workspace;
-use navidog_db::sessions::Sessions;
 use navidog_db::{ConnectParams, Secrets, connect, runtime, sqlite::SqliteDriver};
 use navidog_navigator::DdlPanel;
 use navidog_navigator::catalog::{Catalog, Load};
+use navidog_session::sessions::Sessions;
 
 struct Host {
     ddl: Entity<DdlPanel>,
@@ -30,12 +30,14 @@ impl Render for Host {
 }
 
 fn wait(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !done(cx) {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        cx.run_until_parked();
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    navidog_test_support::wait_with(
+        cx,
+        what,
+        Duration::from_secs(10),
+        Duration::from_millis(10),
+        false,
+        done,
+    );
 }
 
 fn execute(file: &Path, sql: &str, create_new: bool) {
@@ -91,7 +93,7 @@ fn database_changes_reload_cached_metadata_and_open_ddl_without_touching_other_c
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_navigator::init(cx);
         ConnectionStore::global(cx).update(cx, |store, cx| {
             store.set_key(Key::random());

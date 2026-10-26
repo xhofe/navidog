@@ -70,7 +70,7 @@ pub fn init(cx: &mut App) {
 /// Scope the category buttons act on: the database for MySQL / SQLite; PostgreSQL needs a schema.
 fn category_scope(cx: &App) -> Option<navidog_core::object::Scope> {
     let scope = Workspace::global(cx).read(cx).selection().scope()?;
-    let dialect = navidog_db::sessions::Sessions::global(cx)
+    let dialect = navidog_session::sessions::Sessions::global(cx)
         .read(cx)
         .dialect(&scope.connection)?;
     (!dialect.has_schemas() || scope.schema.is_some()).then_some(scope)
@@ -84,7 +84,7 @@ fn category_enabled(cx: &App, kind: ObjectKind) -> bool {
     }
     category_scope(cx)
         .and_then(|s| {
-            navidog_db::sessions::Sessions::global(cx)
+            navidog_session::sessions::Sessions::global(cx)
                 .read(cx)
                 .dialect(&s.connection)
         })
@@ -161,17 +161,15 @@ fn register_commands(cx: &mut App) {
     }
 }
 
-pub(crate) fn driver_name(driver: &str, cx: &App) -> SharedString {
-    navidog_db::DriverRegistry::get(cx, driver)
-        .map(|d| d.info().name.clone())
-        .unwrap_or_else(|| driver.to_string().into())
-}
-
 /// Status bar text (10-shell.md §8): item count of the objects tab, or the selected connection's type and address.
 pub fn status_text(cx: &App) -> SharedString {
     let selection = Workspace::global(cx).read(cx).selection().clone();
-    if let objects::Content::Rows(rows, _) = ObjectsPanel::content(cx) {
-        let count = rows.len();
+    // The cached count avoids rebuilding the whole object list for the status bar.
+    let count = ObjectsPanel::cached_rows(cx).or_else(|| match ObjectsPanel::content(cx) {
+        objects::Content::Rows(rows, _) => Some(rows.len()),
+        _ => None,
+    });
+    if let Some(count) = count {
         let selected = matches!(selection, Selection::Object(_));
         return if selected {
             t!("obj.items_selected", count = count).to_string().into()
@@ -186,14 +184,14 @@ pub fn status_text(cx: &App) -> SharedString {
     {
         Some(c) if c.supports_network() => format!(
             "{}  {}:{}",
-            driver_name(&c.driver, cx),
+            navidog_session::DriverRegistry::name(cx, &c.driver),
             c.general.host,
             c.general.port.unwrap_or_default()
         )
         .into(),
         Some(c) => format!(
             "{}  {}",
-            driver_name(&c.driver, cx),
+            navidog_session::DriverRegistry::name(cx, &c.driver),
             c.general.file.clone().unwrap_or_default()
         )
         .into(),

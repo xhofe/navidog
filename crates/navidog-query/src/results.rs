@@ -20,11 +20,11 @@ use gpui_kit::{
 };
 use navidog_core::object::Scope;
 use navidog_core::settings::{ResultsPosition, Settings, ShowAfterRun};
+use navidog_db::commit::{Commit, apply};
 use navidog_db::dialect::{ChangeSet, Dialect, RowKey, Values, Writes};
-use navidog_db::sessions::{Sessions, prepare_database, run_on};
 use navidog_db::{Column, ResultSet};
-use navidog_grid::commit::{Commit, apply};
 use navidog_grid::{Cell, GridColumn, GridEvent, GridTarget, ResultGrid};
+use navidog_session::sessions::{Sessions, prepare_database, run_on};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
 use navidog_ui::{palette, tokens};
@@ -1141,7 +1141,9 @@ impl ResultView {
                                 {
                                     g.update_model(cx, |model| model.sort_rows(col, *asc));
                                 }
-                                g.update_model(cx, |model| model.restore_blank_insert_drafts(drafts.unwrap()));
+                                if let Some(drafts) = drafts {
+                                    g.update_model(cx, |model| model.restore_blank_insert_drafts(drafts));
+                                }
                                 g.set_sort(this.accepted_sort.clone(), cx);
                             });
                         }

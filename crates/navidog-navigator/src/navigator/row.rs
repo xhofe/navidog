@@ -45,7 +45,7 @@ impl NavigatorPanel {
                     .and_then(|c| c.color.as_deref())
                     .and_then(|n| tokens::connection_color(n, cx));
                 (
-                    img(driver_icon(&driver))
+                    img(navidog_session::DriverRegistry::icon(cx, &driver))
                         .size(size)
                         .when(!open, |i| i.grayscale(true).opacity(0.6))
                         .into_any_element(),
@@ -89,13 +89,14 @@ impl NavigatorPanel {
         &self,
         entry: &TreeEntry,
         selected: bool,
+        marked: &HashSet<SharedString>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> ListItem {
         let p = palette(cx);
         let id = entry.item().id.clone();
         let node = Node::parse(&id);
-        let selected = selected || self.marked.contains(&id);
+        let selected = selected || marked.contains(&id);
         let focused = self.focus_handle.contains_focused(window, cx);
         let (icon, color) = self.row_icon(&node, entry, selected && focused, cx);
         let placeholder = matches!(node, Some(Node::Placeholder(_)));
@@ -316,7 +317,7 @@ impl NavigatorPanel {
                     if !this.focus_handle.contains_focused(window, cx) {
                         window.focus(&this.focus_handle, cx);
                     }
-                    let menu = navidog_db::DriverRegistry::all(cx).into_iter().fold(
+                    let menu = navidog_session::DriverRegistry::all(cx).into_iter().fold(
                         NativeMenu::new()
                             .menu(
                                 t!("nav.filter_all_types").to_string(),
@@ -328,7 +329,7 @@ impl NavigatorPanel {
                             m.menu(
                                 info.name.clone(),
                                 Box::new(FilterByType {
-                                    driver: Some(info.id.clone()),
+                                    driver: Some(info.id.clone().into()),
                                 }),
                             )
                         },

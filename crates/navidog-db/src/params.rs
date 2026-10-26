@@ -53,6 +53,7 @@ pub struct SshParams {
     pub password: Option<String>,
     pub private_key: Option<PathBuf>,
     pub passphrase: Option<String>,
+    pub verify_host_key: bool,
 }
 
 /// Decrypted secret fields.
@@ -64,28 +65,16 @@ pub struct Secrets {
 }
 
 fn non_empty(s: &Option<String>) -> Option<PathBuf> {
-    s.as_deref().filter(|v| !v.is_empty()).map(expand_home)
-}
-
-fn expand_home(path: &str) -> PathBuf {
-    match path.strip_prefix("~/") {
-        Some(rest) => std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_default()
-            .join(rest),
-        None => PathBuf::from(path),
-    }
+    s.as_deref()
+        .filter(|v| !v.is_empty())
+        .map(navidog_core::paths::expand_home)
 }
 
 impl ConnectParams {
-    pub fn from_connection(conn: &Connection, secrets: Secrets) -> Self {
+    pub fn from_connection(conn: &Connection, secrets: Secrets, info: &crate::DriverInfo) -> Self {
         let g = &conn.general;
         let a = &conn.advanced;
-        let default_port = if conn.driver == "postgres" {
-            5432
-        } else {
-            3306
-        };
+        let default_port = info.default_port.unwrap_or(3306);
         let ssl = (conn.ssl.enabled && conn.supports_network()).then(|| SslParams {
             mode: conn.ssl.mode,
             client_key: conn
@@ -131,6 +120,7 @@ impl ConnectParams {
                 .uses_key()
                 .then(|| secrets.ssh_passphrase.clone())
                 .flatten(),
+            verify_host_key: s.verify_host_key,
         });
         Self {
             name: conn.name.clone(),
@@ -145,7 +135,7 @@ impl ConnectParams {
                 .databases
                 .attached
                 .iter()
-                .map(|d| (d.name.clone(), expand_home(&d.file)))
+                .map(|d| (d.name.clone(), navidog_core::paths::expand_home(&d.file)))
                 .collect(),
             connect_timeout: a
                 .connect_timeout_secs
@@ -178,6 +168,7 @@ impl ConnectParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::driver::Driver as _;
     use navidog_core::connection::SshAuth;
 
     #[test]
@@ -194,6 +185,7 @@ mod tests {
                 ssh_password: Some("ignored".into()),
                 ssh_passphrase: Some("pp".into()),
             },
+            crate::postgres::PostgresDriver::default().info(),
         );
         assert_eq!((p.port, p.database.as_deref()), (5432, Some("postgres")));
         let ssh = p.ssh.unwrap();
@@ -203,7 +195,11 @@ mod tests {
         assert!(p.ssl.is_none());
 
         let lite = Connection::new("sqlite");
-        let p = ConnectParams::from_connection(&lite, Secrets::default());
+        let p = ConnectParams::from_connection(
+            &lite,
+            Secrets::default(),
+            crate::sqlite::SqliteDriver::default().info(),
+        );
         assert!(p.ssh.is_none() && p.file.is_none());
     }
 }

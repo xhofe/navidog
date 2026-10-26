@@ -1,7 +1,8 @@
 //! Skin components with the AppKit look. Behavior comes from GPUI elements and gpui-component
 //! components; these only handle appearance and sizing.
 
-use gpui_kit::component::{Icon, h_flex, v_flex};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::{Icon, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, ClickEvent, ElementId, FontWeight, Hsla, InteractiveElement as _, IntoElement,
@@ -245,6 +246,55 @@ pub fn form_note(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
 }
 
 /// Dialog heading (Semibold 13pt).
+/// Cancel/OK row shared by the connection dialogs. The caller owns both
+/// labels and the OK action; the ids stay `cancel`/`ok` for tests and Enter.
+pub fn dialog_footer(
+    cancel: impl Into<SharedString>,
+    ok: impl Into<SharedString>,
+    on_ok: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    h_flex()
+        .justify_end()
+        .gap_2()
+        .pt_2()
+        .child(
+            Button::new("cancel")
+                .label(cancel.into())
+                .on_click(|_, window, cx| window.close_dialog(cx)),
+        )
+        .child(Button::new("ok").primary().label(ok.into()).on_click(on_ok))
+}
+
+/// Keep / discard / commit row used by the unsaved-tab dialogs. `prefix` keeps
+/// element ids unique per surface (`close`, `query-close`).
+pub fn close_prompt_footer(
+    prefix: &'static str,
+    keep: impl Into<SharedString>,
+    discard: impl Into<SharedString>,
+    primary: impl Into<SharedString>,
+    on_keep: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_discard: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_primary: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let id = move |suffix: &str| gpui_kit::ElementId::Name(format!("{prefix}-{suffix}").into());
+    h_flex()
+        .w_full()
+        .justify_end()
+        .gap_2()
+        .child(Button::new(id("keep")).label(keep).on_click(on_keep))
+        .child(
+            Button::new(id("discard"))
+                .label(discard)
+                .on_click(on_discard),
+        )
+        .child(
+            Button::new(id("commit"))
+                .primary()
+                .label(primary)
+                .on_click(on_primary),
+        )
+}
+
 pub fn heading(text: impl Into<SharedString>) -> impl IntoElement {
     div().font_weight(FontWeight::SEMIBOLD).child(text.into())
 }

@@ -64,7 +64,7 @@ navidog 用 [gpui-kit](https://gpui-kit.com/zh-CN/docs/) 全家桶（GPUI、`gpu
 14. 自动更新：应用内只下载 nightly release 上的 `latest.json`（还没有 nightly 时改读最新稳定版的同一文件）。文件里的 `releases` 是各版本列表，顶层仍是这一份 release 自己的版本和安装包。不含预发布时跳过预发布和 nightly；打开预发布渠道时同时提供 tag 预发布和 `main` 上的滚动 nightly。下载后用清单里的 SHA-256 校验再安装。启动时最多每两天检查一次，可关掉；下载只在用户点更新时发生。不做 Sparkle。tag 的发布说明由 changelogithub 从 Conventional Commits 生成并写进这份清单；nightly 仍是带构建时间的一句说明。
 
 **技术**
-1. 依赖 `gpui-kit = "0.7"`，提交 `Cargo.lock`。gpui-kit 自己精确锁定 `gpui-pre`，不要单独覆盖任何 `gpui-pre-*`。
+1. 依赖 `gpui-kit = "0.8"`，提交 `Cargo.lock`。gpui-kit 自己精确锁定 `gpui-pre`，不要单独覆盖任何 `gpui-pre-*`。
 2. rem 基准 `theme.font_size = 13px`（macOS 控件默认字号）。
 3. 裸 `px(...)` 和原始颜色只允许出现在 `navidog-ui` 的 token 和主题定义里，由 CI 检查（见第 5 节）。
 4. 组件层采用渐进策略：先用 `gpui-component` 加 Navicat 主题；主题调不到实测值的控件，在 `navidog-ui` 中基于 `gpui-base` 原语重写外观，行为、焦点和无障碍语义沿用原语。
@@ -106,7 +106,7 @@ flowchart TD
   plugin --> core[navidog-core]
   plugin --> gpuiShell[gpui-shell]
   db --> core
-  ui --> kit["gpui-kit 0.7"]
+  ui --> kit["gpui-kit 0.8"]
 ```
 
 ### 4.1 crate 划分

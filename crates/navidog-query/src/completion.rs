@@ -22,7 +22,7 @@ use navidog_core::settings::Settings;
 use navidog_core::snippets::Snippets;
 use navidog_core::store::ConnectionStore;
 use navidog_db::dialect::Dialect;
-use navidog_db::outline::{Outline, OutlineCache};
+use navidog_session::outline::{Outline, OutlineCache};
 use regex::Regex;
 use rust_i18n::t;
 
@@ -368,7 +368,7 @@ impl QueryEditor {
         let Some(scope) = self.target.scope() else {
             return;
         };
-        if !navidog_db::sessions::Sessions::global(cx)
+        if !navidog_session::sessions::Sessions::global(cx)
             .read(cx)
             .state(&scope.connection)
             .is_open()
@@ -407,7 +407,7 @@ impl QueryEditor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use navidog_db::outline::OutlineTable;
+    use navidog_session::outline::OutlineTable;
 
     fn outline() -> Outline {
         Outline {

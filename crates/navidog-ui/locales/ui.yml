@@ -25,6 +25,39 @@ tabs:
     en: Add to Startup Screen
     zh-CN: 添加到启动画面
 ui:
+  app_session_closed:
+    en: The database session is closed.
+    zh-CN: 数据库会话已关闭。
+  app_not_relational:
+    en: This connection is not a relational database.
+    zh-CN: 该连接不是关系型数据库。
+  app_no_result:
+    en: The query returned no result set.
+    zh-CN: 查询没有返回结果集。
+  app_unsupported_kind:
+    en: This object category is not supported.
+    zh-CN: 不支持这个对象分类。
+  app_timeout:
+    en: The connection timed out.
+    zh-CN: 连接超时。
+  app_read_timeout:
+    en: The query timed out.
+    zh-CN: 查询超时。
+  app_bad_params:
+    en: Invalid connection parameters.
+    zh-CN: 连接参数无效。
+  app_ssh_auth:
+    en: SSH authentication failed.
+    zh-CN: SSH 身份验证失败。
+  app_no_database_file:
+    en: No database file was selected.
+    zh-CN: 未指定数据库文件。
+  app_database_missing:
+    en: The database file does not exist.
+    zh-CN: 数据库文件不存在。
+  app_row_not_found:
+    en: The row was changed or deleted. Refresh and try again.
+    zh-CN: 该行已被修改或删除，请刷新后重试。
   outcome_unknown:
     en: The execution outcome may be unknown. Reopen the connection before continuing.
     zh-CN: 执行结果可能未知。继续之前请重新打开连接。

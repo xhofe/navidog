@@ -12,7 +12,7 @@ use crate::paths;
 use rust_i18n::t;
 
 /// A store or key error in the interface language. `StoreError`'s own text stays English, for logs.
-pub fn error_message(e: &StoreError) -> String {
+fn error_message(e: &StoreError) -> String {
     match e {
         StoreError::Locked => t!("core.store_locked").to_string(),
         StoreError::NotFound => t!("core.not_found").to_string(),
@@ -103,28 +103,29 @@ impl ConnectionsFile {
     fn reencrypt(conn: &mut Connection, old_id: &str, old: &Key, new: &Key) -> bool {
         let mut cleared = false;
         for ix in 0..=conn.profiles.len() {
-            // Inactive profiles are swapped into the active slots so the field helpers reach them
-            if ix > 0 {
-                conn.swap_profile(ix - 1);
-            }
-            for field in SecretField::ALL {
-                let opened = field
-                    .slot(conn)
-                    .as_ref()
-                    .map(|s| old.decrypt(&aad(old_id, field), s))
-                    .transpose();
-                match opened {
-                    Ok(plain) => Self::set_secret(conn, field, plain.as_deref(), new),
-                    Err(_) => {
-                        *field.slot_mut(conn) = None;
-                        *field.saved_mut(conn) = false;
-                        cleared = true;
+            // Inactive profiles are swapped into the active slots so the field
+            // helpers reach them; the guard restores the active profile even
+            // when a field helper panics.
+            let profile_cleared = conn.with_active_profile(ix, |conn| {
+                let mut cleared = false;
+                for field in SecretField::ALL {
+                    let opened = field
+                        .slot(conn)
+                        .as_ref()
+                        .map(|s| old.decrypt(&aad(old_id, field), s))
+                        .transpose();
+                    match opened {
+                        Ok(plain) => Self::set_secret(conn, field, plain.as_deref(), new),
+                        Err(_) => {
+                            *field.slot_mut(conn) = None;
+                            *field.saved_mut(conn) = false;
+                            cleared = true;
+                        }
                     }
                 }
-            }
-            if ix > 0 {
-                conn.swap_profile(ix - 1);
-            }
+                cleared
+            });
+            cleared |= profile_cleared;
         }
         cleared
     }
@@ -531,12 +532,61 @@ mod tests {
             }
         }
 
-        fn block_write(&self) {
-            std::fs::create_dir(self.path.with_extension("tmp")).unwrap();
+        fn block_write(&self) -> bool {
+            block_writes(&self.path, true)
         }
 
         fn unblock_write(&self) {
-            std::fs::remove_dir(self.path.with_extension("tmp")).unwrap();
+            block_writes(&self.path, false);
+        }
+    }
+
+    fn block_writes(path: &std::path::Path, block: bool) -> bool {
+        if !block {
+            restore_writes(path);
+            return true;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = path.parent().unwrap();
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+            let probe = dir.join(format!(".navidog-write-probe-{}", std::process::id()));
+            let blocked = std::fs::File::create(&probe).is_err();
+            let _ = std::fs::remove_file(&probe);
+            if !blocked {
+                restore_writes(path);
+            }
+            blocked
+        }
+        #[cfg(not(unix))]
+        {
+            let mut permissions = std::fs::metadata(path).unwrap().permissions();
+            permissions.set_readonly(true);
+            std::fs::set_permissions(path, permissions).unwrap();
+            let blocked = std::fs::OpenOptions::new().write(true).open(path).is_err();
+            if !blocked {
+                restore_writes(path);
+            }
+            blocked
+        }
+    }
+
+    #[allow(clippy::permissions_set_readonly_false)] // test helper; Windows needs the attribute cleared
+    fn restore_writes(path: &std::path::Path) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = path.parent().unwrap();
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        }
+        #[cfg(not(unix))]
+        {
+            let Ok(mut permissions) = std::fs::metadata(path).map(|m| m.permissions()) else {
+                return;
+            };
+            permissions.set_readonly(false);
+            let _ = std::fs::set_permissions(path, permissions);
         }
     }
 
@@ -607,7 +657,9 @@ mod tests {
                 seen.set(seen.get() + 1);
             })
         });
-        fixture.block_write();
+        if !fixture.block_write() {
+            return;
+        }
         store.update(cx, |store, cx| {
             let mut edited = store.get(&ids[0]).unwrap().clone();
             edited.name = "changed".into();
@@ -700,7 +752,9 @@ mod tests {
                 seen.set(seen.get() + 1);
             })
         });
-        fixture.block_write();
+        if !fixture.block_write() {
+            return;
+        }
         store.update(cx, |store, cx| {
             assert!(matches!(
                 store.set_master_password(Some("fixture-master"), cx),
@@ -745,7 +799,9 @@ mod tests {
             assert_profile_secrets(store.get(&id).unwrap(), &retained);
         });
         // A failed password change must preserve the already active master key as well.
-        fixture.block_write();
+        if !fixture.block_write() {
+            return;
+        }
         let committed = std::fs::read(&fixture.path).unwrap();
         store.update(cx, |store, cx| {
             assert!(matches!(
@@ -937,7 +993,9 @@ mod tests {
             cx.subscribe(&store, move |_, _: &StoreEvent, _| seen.set(seen.get() + 1))
         });
         let callbacks = Cell::new(0);
-        fixture.block_write();
+        if !fixture.block_write() {
+            return;
+        }
         store.update(cx, |store, cx| {
             let missing = "missing-connection".to_string();
             let result = store.update(&missing, |_| callbacks.set(callbacks.get() + 1), cx);

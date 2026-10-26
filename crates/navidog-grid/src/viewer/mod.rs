@@ -32,8 +32,8 @@ use navidog_core::object::{ObjectKind, ObjectRef, Scope};
 use navidog_core::settings::Settings;
 use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::dialect::Dialect;
-use navidog_db::sessions::{ConnState, Sessions, SessionsEvent, SharedSession, run_on};
 use navidog_db::{CancelHandle, ColumnInfo, ResultSet};
+use navidog_session::sessions::{ConnState, Sessions, SessionsEvent, SharedSession, run_on};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::{FormRow, confirm_with, truncated};
 use navidog_ui::{palette, tabs, tokens};
@@ -207,10 +207,6 @@ pub struct TableViewer {
     /// Window this tab was last added to. A popped-out tab updates it in `on_added_to`.
     home: Option<gpui_kit::AnyWindowHandle>,
     form: bool,
-    /// Cell text is submitted as SQL (F-DATA-010)
-    raw_data: bool,
-    /// SQLite only: SELECT includes rowid as a read-only column
-    show_rowid: bool,
     form_inputs: Vec<Entity<InputState>>,
     form_for: Option<usize>,
     in_transaction: bool,
@@ -427,39 +423,25 @@ impl TableViewer {
                     enter.update(cx, |v, cx| v.commit_and_close(window, cx));
                     true
                 })
-                .footer(
-                    h_flex()
-                        .w_full()
-                        .justify_end()
-                        .gap_2()
-                        .child(
-                            Button::new("close-keep")
-                                .label(t!("grid.cancel").to_string())
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(
-                            Button::new("close-discard")
-                                .label(t!("viewer.discard").to_string())
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    discard.update(cx, |v, cx| {
-                                        v.grid.update(cx, |g, cx| {
-                                            g.update_model(cx, |m| m.discard())
-                                        });
-                                        v.close_now(window, cx);
-                                    });
-                                }),
-                        )
-                        .child(
-                            Button::new("close-commit")
-                                .primary()
-                                .label(t!("viewer.commit").to_string())
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    commit.update(cx, |v, cx| v.commit_and_close(window, cx));
-                                }),
-                        ),
-                )
+                .footer(navidog_ui::skin::close_prompt_footer(
+                    "close",
+                    t!("grid.cancel").to_string(),
+                    t!("viewer.discard").to_string(),
+                    t!("viewer.commit").to_string(),
+                    |_, window, cx| window.close_dialog(cx),
+                    move |_, window, cx| {
+                        window.close_dialog(cx);
+                        discard.update(cx, |v, cx| {
+                            v.grid
+                                .update(cx, |g, cx| g.update_model(cx, |m| m.discard()));
+                            v.close_now(window, cx);
+                        });
+                    },
+                    move |_, window, cx| {
+                        window.close_dialog(cx);
+                        commit.update(cx, |v, cx| v.commit_and_close(window, cx));
+                    },
+                ))
         });
     }
 
@@ -712,8 +694,6 @@ impl TableViewer {
                 close_after_commit: false,
                 home: None,
                 form: false,
-                raw_data: false,
-                show_rowid: false,
                 form_inputs: Vec::new(),
                 form_for: None,
                 in_transaction: false,
@@ -966,7 +946,7 @@ impl TableViewer {
             &order,
             self.limit,
             offset,
-            self.show_rowid,
+            self.grid.read(cx).show_rowid,
         );
         let count_sql = count.then(|| d.count(scope, table, &filter));
         let metadata = self.metadata_stale;
@@ -1500,9 +1480,8 @@ impl TableViewer {
     }
 
     fn toggle_raw(&mut self, cx: &mut Context<Self>) {
-        self.raw_data = !self.raw_data;
         self.form_for = None;
-        let raw = self.raw_data;
+        let raw = !self.grid.read(cx).raw_mode();
         self.grid.update(cx, |g, cx| g.set_raw_mode(raw, cx));
         cx.notify();
     }
@@ -1546,9 +1525,8 @@ impl TableViewer {
         if self.dialect != Some(Dialect::Sqlite) {
             return;
         }
-        self.show_rowid = !self.show_rowid;
-        let on = self.show_rowid;
-        self.grid.update(cx, |g, _| g.show_rowid = on);
+        let on = !self.grid.read(cx).show_rowid;
+        self.grid.update(cx, |g, cx| g.set_show_rowid(on, cx));
         self.reload_committed(false, window, cx);
     }
 
@@ -1653,7 +1631,7 @@ impl TableViewer {
                     .small()
                     .icon(lucide("square-function"))
                     .tooltip(t!("viewer.raw_data").to_string())
-                    .selected(self.raw_data)
+                    .selected(self.grid.read(cx).raw_mode())
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_raw(cx))),
             )
             .child(
@@ -1953,162 +1931,8 @@ impl TableViewer {
     }
 }
 
-impl Render for TableViewer {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.sync_form(window, cx);
-        self.sync_editor(window, cx);
-        let form = self.form;
-        v_flex()
-            .id("table-viewer")
-            .key_context(CONTEXT)
-            .track_focus(&self.focus_handle)
-            .size_full()
-            .min_w_0()
-            .overflow_hidden()
-            .bg(palette(cx).control_bg)
-            .on_action(cx.listener(|this, _: &ApplyChanges, window, cx| {
-                this.apply_changes(false, window, cx)
-            }))
-            .on_action(cx.listener(|this, action: &HideColumn, window, cx| {
-                this.toggle_column(action.name.to_string(), window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleRawData, _, cx| this.toggle_raw(cx)))
-            .on_action(
-                cx.listener(|this, _: &ToggleRowId, window, cx| this.toggle_rowid(window, cx)),
-            )
-            .on_action(cx.listener(|this, _: &Escape, window, cx| {
-                if this.show_find {
-                    this.close_find(window, cx);
-                } else {
-                    cx.propagate();
-                }
-            }))
-            .on_action(
-                cx.listener(|this, _: &ShowFind, window, cx| this.open_find(false, window, cx)),
-            )
-            .on_action(
-                cx.listener(|this, _: &ShowReplace, window, cx| this.open_find(true, window, cx)),
-            )
-            .on_action(cx.listener(|this, _: &FindNext, _, cx| {
-                this.show_find = true;
-                this.find_step(true, cx);
-            }))
-            .on_action(
-                cx.listener(|this, _: &ToggleFilter, window, cx| {
-                    this.toggle_filter_pane(window, cx)
-                }),
-            )
-            .on_action(cx.listener(|this, _: &BeginTransaction, _, cx| this.begin_transaction(cx)))
-            .on_action(cx.listener(|this, _: &CommitTransaction, window, cx| {
-                this.apply_changes(true, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &RollbackTransaction, _, cx| this.rollback(cx)))
-            .on_action(cx.listener(|this, _: &QueryTable, window, cx| this.query_table(window, cx)))
-            .on_action(cx.listener(
-                |this, action: &navidog_core::actions::DesignTable, window, cx| {
-                    if action.object.is_none() {
-                        window.dispatch_action(
-                            Box::new(navidog_core::actions::DesignTable {
-                                object: Some(this.object.clone()),
-                            }),
-                            cx,
-                        );
-                    } else {
-                        cx.propagate();
-                    }
-                },
-            ))
-            .on_action(
-                cx.listener(|this, _: &ApplyFilterSort, window, cx| this.apply_filter(window, cx)),
-            )
-            .on_action(cx.listener(|this, _: &ClearFilterSort, window, cx| {
-                this.clear_filter_sort(window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &RefreshTable, window, cx| {
-                this.reload_committed(true, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &StopLoad, _, _| this.stop()))
-            .on_action(
-                cx.listener(|this, _: &SortAscending, _, cx| this.sort_focused(Some(true), cx)),
-            )
-            .on_action(
-                cx.listener(|this, _: &SortDescending, _, cx| this.sort_focused(Some(false), cx)),
-            )
-            .on_action(cx.listener(|this, _: &SortNone, _, cx| this.sort_focused(None, cx)))
-            .on_action(cx.listener(|this, _: &FindData, window, cx| {
-                this.find_columns = false;
-                this.replace_mode = false;
-                this.open_find(false, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &FindReplaceMode, window, cx| {
-                this.find_columns = false;
-                this.open_find(true, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &FindColumnsMode, window, cx| {
-                this.find_columns = true;
-                this.replace_mode = false;
-                this.open_find(false, window, cx);
-                this.find_step(false, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleMatchCase, _, cx| {
-                this.find_case = !this.find_case;
-                this.sync_highlight(cx);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleHighlight, _, cx| {
-                this.find_highlight = !this.find_highlight;
-                this.sync_highlight(cx);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleIncremental, _, cx| {
-                this.find_incremental = !this.find_incremental;
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, a: &PickField, _, cx| {
-                if let Some(rule) = this.rules.get_mut(a.index) {
-                    rule.field = a.name.to_string();
-                    cx.notify();
-                }
-            }))
-            .on_action(cx.listener(|this, a: &PickOp, _, cx| {
-                let Some(op) = filter::Op::parse_key(&a.op) else {
-                    return;
-                };
-                if let Some(rule) = this.rules.get_mut(a.index) {
-                    rule.op = op;
-                    cx.notify();
-                }
-            }))
-            .on_action(cx.listener(|this, a: &PickSort, _, cx| {
-                if let Some(sort) = this.sorts.get_mut(a.index) {
-                    sort.field = a.name.to_string();
-                    cx.notify();
-                }
-            }))
-            .child(self.render_toolbar(cx))
-            .when(self.show_find, |v| v.child(self.render_find(cx)))
-            .when(self.show_filter, |v| v.child(self.render_filter(cx)))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .child(self.render_main(form, window, cx)),
-            )
-            .child(self.render_bottom_bar(cx))
-    }
-}
-
-fn refresh_spinning(busy: bool, until: Option<Instant>, now: Instant) -> bool {
-    busy || until.is_some_and(|t| now < t)
-}
-
-impl Drop for TableViewer {
-    fn drop(&mut self) {
-        if let Some(s) = self.session.take() {
-            close_session(s);
-        }
-    }
-}
+mod render;
+use render::refresh_spinning;
 
 #[cfg(test)]
 mod spin_tests {
@@ -2142,7 +1966,6 @@ mod ownership_tests {
     use navidog_core::{connection::Connection, crypto::Key, store::ConnectionStore};
     use navidog_db::{ConnectParams, Secrets, connect, sqlite::SqliteDriver};
     use std::sync::Arc;
-    use std::time::Duration;
 
     struct Host(Entity<TableViewer>);
     impl Render for Host {
@@ -2178,12 +2001,7 @@ mod ownership_tests {
     }
 
     fn wait(cx: &mut TestAppContext, done: impl Fn(&mut TestAppContext) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !done(cx) {
-            assert!(Instant::now() < deadline, "the viewer operation timed out");
-            cx.run_until_parked();
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        navidog_test_support::wait(cx, "the viewer operation", done);
     }
 
     fn discard_grid_changes(viewer: &mut TableViewer, cx: &mut Context<TableViewer>) {
@@ -2221,7 +2039,7 @@ mod ownership_tests {
             gpui_kit::init(cx);
             navidog_core::init(cx);
             navidog_ui::theme::init(cx);
-            navidog_db::init(cx);
+            navidog_session::init(cx);
             crate::init(cx);
             Settings::update(cx, |s| {
                 s.sync_record = false;

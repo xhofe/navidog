@@ -1,4 +1,5 @@
-//! SSH 本地端口转发：在 127.0.0.1 的随机端口监听，每个接入的连接开一条 direct-tcpip 通道。
+//! SSH local port forwarding: listen on a random 127.0.0.1 port and open one
+//! direct-tcpip channel per incoming connection.
 
 use std::sync::Arc;
 
@@ -10,25 +11,90 @@ use tokio::task::JoinHandle;
 use crate::driver::{DbError, DbResult};
 use crate::params::SshParams;
 
-struct AcceptAll;
+/// Trust-on-first-use host-key verification. An unknown key is learned into
+/// `~/.ssh/known_hosts`; a changed key is refused. `verify` can be turned off
+/// per connection (for appliances that rotate keys), but it defaults on.
+struct HostKeyVerifier {
+    host: String,
+    port: u16,
+    verify: bool,
+}
 
-impl client::Handler for AcceptAll {
+impl client::Handler for HostKeyVerifier {
     type Error = russh::Error;
 
-    // ponytail: 不校验服务器主机密钥（与 Navicat 行为一致）；后续可加 known_hosts 校验
     async fn check_server_key(
         &mut self,
-        _key: &russh::keys::PublicKeyOrCertificate,
+        key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        if !self.verify {
+            return Ok(true);
+        }
+        let public = key.public_key();
+        match russh::keys::check_known_hosts(&self.host, self.port, &public) {
+            Ok(true) => Ok(true),
+            Ok(false) => {
+                // `check_known_hosts` returns false both for a new host and for
+                // a recorded key with a different algorithm. Only the former may
+                // be learned; otherwise a changed RSA key could replace a
+                // recorded Ed25519 key.
+                match russh::keys::known_hosts::known_host_keys(&self.host, self.port) {
+                    Ok(keys) if keys.is_empty() => {
+                        match russh::keys::known_hosts::learn_known_hosts(
+                            &self.host, self.port, &public,
+                        ) {
+                            Ok(()) => {
+                                tracing::warn!(
+                                    host = %self.host,
+                                    port = self.port,
+                                    "SSH host key was new; added it to known_hosts"
+                                );
+                                Ok(true)
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    host = %self.host,
+                                    "could not record the SSH host key: {err}"
+                                );
+                                Ok(false)
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        tracing::error!(
+                            host = %self.host,
+                            port = self.port,
+                            "SSH host key does not match known_hosts"
+                        );
+                        Ok(false)
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            host = %self.host,
+                            port = self.port,
+                            "could not read known_hosts: {err}"
+                        );
+                        Ok(false)
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::error!(
+                    host = %self.host,
+                    port = self.port,
+                    "SSH host key is unknown or changed: {err}"
+                );
+                Ok(false)
+            }
+        }
     }
 }
 
-/// 隧道句柄；丢弃时停止监听并断开 SSH。
+/// Tunnel handle; dropping it stops the listener and disconnects SSH.
 pub struct Tunnel {
     pub local_port: u16,
     accept: JoinHandle<()>,
-    _session: Arc<Handle<AcceptAll>>,
+    _session: Arc<Handle<HostKeyVerifier>>,
 }
 
 impl Drop for Tunnel {
@@ -43,7 +109,12 @@ fn ssh_err(e: impl std::fmt::Display) -> DbError {
 
 pub async fn open(ssh: &SshParams, target_host: String, target_port: u16) -> DbResult<Tunnel> {
     let config = Arc::new(client::Config::default());
-    let mut session = client::connect(config, (ssh.host.as_str(), ssh.port), AcceptAll)
+    let verifier = HostKeyVerifier {
+        host: ssh.host.clone(),
+        port: ssh.port,
+        verify: ssh.verify_host_key,
+    };
+    let mut session = client::connect(config, (ssh.host.as_str(), ssh.port), verifier)
         .await
         .map_err(ssh_err)?;
 
@@ -69,7 +140,10 @@ pub async fn open(ssh: &SshParams, target_host: String, target_port: u16) -> DbR
             .success();
     }
     if !authed {
-        return Err(DbError::msg("SSH: 身份验证失败"));
+        return Err(DbError::coded(
+            "navidog.ssh_auth",
+            "SSH authentication failed.",
+        ));
     }
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(ssh_err)?;
@@ -92,7 +166,7 @@ pub async fn open(ssh: &SshParams, target_host: String, target_port: u16) -> DbR
                 {
                     Ok(ch) => ch,
                     Err(err) => {
-                        tracing::warn!("SSH 通道打开失败: {err}");
+                        tracing::warn!("opening the SSH channel failed: {err}");
                         return;
                     }
                 };

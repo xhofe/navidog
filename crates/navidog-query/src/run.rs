@@ -13,9 +13,9 @@ use navidog_core::actions::OpenConnectionId;
 use navidog_core::settings::{ResultsPosition, Settings};
 use navidog_core::workspace::Workspace;
 use navidog_db::dialect::Dialect;
-use navidog_db::sessions::{Sessions, SharedSession, run_on};
 use navidog_db::sql::{Statement, session_setup, split_script};
 use navidog_db::{CancelHandle, DbError, DbResult, Relational, ResultSet};
+use navidog_session::sessions::{Sessions, SharedSession, run_on};
 use navidog_ui::assets::lucide;
 use navidog_util::sql_text;
 use rust_i18n::t;
@@ -590,7 +590,7 @@ impl QueryEditor {
             .as_deref()
             .map(|id| Sessions::global(cx).read(cx).state(id).clone())
         {
-            Some(navidog_db::sessions::ConnState::Open { version, .. }) => version,
+            Some(navidog_session::sessions::ConnState::Open { version, .. }) => version,
             _ => String::new(),
         }
     }

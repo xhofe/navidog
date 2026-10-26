@@ -43,7 +43,7 @@ fn multi_select_drag_and_rename(cx: &mut TestAppContext) {
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_navigator::init(cx);
         ConnectionStore::global(cx).update(cx, |s, cx| {
             s.set_key(Key::random());

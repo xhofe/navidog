@@ -2,7 +2,7 @@
 //! the tab, and confirming the prompt writes the edit and then closes it.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{AnyWindowHandle, AppContext as _, ElementId, Focusable as _, TestAppContext};
@@ -13,9 +13,9 @@ use navidog_core::connection::Connection;
 use navidog_core::crypto::Key;
 use navidog_core::object::{ObjectKind, ObjectRef, Scope};
 use navidog_core::store::ConnectionStore;
-use navidog_db::sessions::Sessions;
 use navidog_db::sqlite::SqliteDriver;
 use navidog_db::{ConnectParams, Secrets, connect, runtime};
+use navidog_session::sessions::Sessions;
 use navidog_ui::tabs::{self, CloseTab};
 use navidog_ui::tokens;
 
@@ -28,14 +28,14 @@ fn fit(rem: gpui_kit::Pixels, header: &str, values: &[&str]) -> gpui_kit::Pixels
 }
 
 fn wait(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while !done(cx) {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        cx.run_until_parked();
-        // Headless timers (the dialog entrance among them) only fire when the clock moves.
-        cx.executor().advance_clock(Duration::from_millis(20));
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    navidog_test_support::wait_with(
+        cx,
+        what,
+        Duration::from_secs(30),
+        Duration::from_millis(20),
+        true,
+        done,
+    );
 }
 
 fn sql(file: &std::path::Path, statements: &str) -> Vec<Vec<Option<String>>> {

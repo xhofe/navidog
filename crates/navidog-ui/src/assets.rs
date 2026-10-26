@@ -72,16 +72,6 @@ pub fn lucide(name: &str) -> gpui_kit::component::Icon {
     gpui_kit::component::Icon::default().path(format!("icons/{name}.svg"))
 }
 
-/// Icon path of a database type.
-pub fn driver_icon(driver: &str) -> &'static str {
-    match driver {
-        "mariadb" => "icons/db/mariadb.svg",
-        "postgres" => "icons/db/postgresql.svg",
-        "sqlite" => "icons/db/sqlite.svg",
-        _ => "icons/db/mysql.svg",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

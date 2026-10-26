@@ -30,7 +30,7 @@ use navidog_core::settings::{ResultsPosition, Settings, ShowAfterRun};
 use navidog_core::store::ConnectionStore;
 use navidog_core::workspace::{Selection, Workspace};
 use navidog_db::dialect::Dialect;
-use navidog_db::sessions::{ConnState, Sessions, SessionsEvent};
+use navidog_session::sessions::{ConnState, Sessions, SessionsEvent};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
 use navidog_ui::{palette, tabs, tokens};
@@ -356,7 +356,14 @@ impl QueryEditor {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        Self::with_id(uuid_v4(), source, target, text, window, cx)
+        Self::with_id(
+            uuid::Uuid::new_v4().simple().to_string(),
+            source,
+            target,
+            text,
+            window,
+            cx,
+        )
     }
 
     fn with_id(
@@ -643,11 +650,7 @@ impl QueryEditor {
         let id = self.target.connection.as_deref()?;
         Sessions::global(cx).read(cx).dialect(id).or_else(|| {
             let driver = ConnectionStore::global(cx).read(cx).get(id)?.driver.clone();
-            Some(match driver.as_str() {
-                "postgres" => Dialect::Postgres,
-                "sqlite" => Dialect::Sqlite,
-                _ => Dialect::MySql,
-            })
+            navidog_session::DriverRegistry::dialect(cx, &driver)
         })
     }
 
@@ -849,37 +852,24 @@ impl QueryEditor {
                     enter.update(cx, |e, cx| e.save_and_close(window, cx));
                     true
                 })
-                .footer(
-                    h_flex()
-                        .w_full()
-                        .justify_end()
-                        .gap_2()
-                        .child(
-                            Button::new("query-close-cancel")
-                                .label(t!("query.cancel").to_string())
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(
-                            Button::new("query-close-discard")
-                                .label(t!("query.dont_save").to_string())
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    discard.update(cx, |e, cx| {
-                                        crate::recovery::forget(&e.id);
-                                        e.close_now(window, cx)
-                                    });
-                                }),
-                        )
-                        .child(
-                            Button::new("query-close-save")
-                                .primary()
-                                .label(t!("query.save").to_string())
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    save.update(cx, |e, cx| e.save_and_close(window, cx));
-                                }),
-                        ),
-                )
+                .footer(navidog_ui::skin::close_prompt_footer(
+                    "query-close",
+                    t!("query.cancel").to_string(),
+                    t!("query.dont_save").to_string(),
+                    t!("query.save").to_string(),
+                    |_, window, cx| window.close_dialog(cx),
+                    move |_, window, cx| {
+                        window.close_dialog(cx);
+                        discard.update(cx, |e, cx| {
+                            crate::recovery::forget(&e.id);
+                            e.close_now(window, cx)
+                        });
+                    },
+                    move |_, window, cx| {
+                        window.close_dialog(cx);
+                        save.update(cx, |e, cx| e.save_and_close(window, cx));
+                    },
+                ))
         });
     }
 
@@ -1367,26 +1357,6 @@ pub(crate) fn language_for(s: &Settings, len: usize) -> &'static str {
     } else {
         "sql"
     }
-}
-
-fn uuid_v4() -> String {
-    format!(
-        "{:016x}{:016x}",
-        rand_u64(),
-        rand_u64() ^ std::process::id() as u64
-    )
-}
-
-fn rand_u64() -> u64 {
-    use std::hash::{BuildHasher, Hasher};
-    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-    h.write_u128(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos(),
-    );
-    h.finish()
 }
 
 impl Render for QueryEditor {

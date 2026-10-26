@@ -47,7 +47,7 @@ fn one_enter_is_one_unlock_attempt(cx: &mut TestAppContext) {
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_connection::init(cx);
         assert!(ConnectionStore::global(cx).read(cx).is_locked());
         Workspace::global(cx).update(cx, |w, cx| w.select(Selection::Connection(id), cx));

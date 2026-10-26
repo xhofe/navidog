@@ -15,8 +15,8 @@ use gpui_kit::{
 use navidog_core::actions::InsertText;
 use navidog_core::workspace::Workspace;
 use navidog_db::dialect::Dialect;
-use navidog_db::outline::{OutlineCache, OutlineState};
-use navidog_db::sessions::Sessions;
+use navidog_session::outline::{OutlineCache, OutlineState};
+use navidog_session::sessions::Sessions;
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
 use navidog_ui::{palette, tokens};
@@ -185,7 +185,7 @@ impl InfoPanel {
                     }))
                     .into_any_element()
             }
-            Some(OutlineState::Failed(e)) => self.message(e, cx),
+            Some(OutlineState::Failed(e)) => self.message(e.to_string(), cx),
             _ if scope.is_none() => self.message(t!("snippet.no_database").to_string(), cx),
             _ => self.message(t!("nav.loading").to_string(), cx),
         };

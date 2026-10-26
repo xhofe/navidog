@@ -1,0 +1,11 @@
+[package]
+name = "navidog-test-support"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+navidog-db = { path = "../navidog-db" }

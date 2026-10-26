@@ -12,7 +12,7 @@ async fn query<R: Relational + ?Sized>(r: &mut R, sql: &str) -> DbResult<ResultS
     let mut sets = r.execute_read(sql).await?;
     sets.drain(..)
         .find(|s| !s.columns.is_empty())
-        .ok_or_else(|| DbError::msg("查询没有返回结果集"))
+        .ok_or_else(|| DbError::coded("navidog.no_result", "The query returned no result set."))
 }
 
 fn cell(row: &[Option<String>], ix: usize) -> String {
@@ -93,7 +93,10 @@ pub async fn list_objects<R: Relational + ?Sized>(
 }
 
 fn unsupported(kind: ObjectKind) -> DbError {
-    DbError::msg(format!("不支持的对象分类: {}", kind.key()))
+    DbError::coded(
+        "navidog.unsupported_kind",
+        format!("Unsupported object category: {}", kind.key()),
+    )
 }
 
 fn mysql_objects(

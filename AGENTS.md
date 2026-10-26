@@ -1,6 +1,6 @@
 # navidog Agent 指南
 
-navidog 用 gpui-kit 0.7 复刻 Navicat Premium 17（macOS）。决策、架构和工程规则的唯一来源是 [docs/design/00-overview.md](docs/design/00-overview.md)，术语以 [CONTEXT.md](CONTEXT.md) 为准；本文只补充开发流程和代码里看不出来的坑。
+navidog 用 gpui-kit 0.8 复刻 Navicat Premium 17（macOS）。决策、架构和工程规则的唯一来源是 [docs/design/00-overview.md](docs/design/00-overview.md)，术语以 [CONTEXT.md](CONTEXT.md) 为准；本文只补充开发流程和代码里看不出来的坑。
 
 ## 开工
 
@@ -23,7 +23,9 @@ navidog 用 gpui-kit 0.7 复刻 Navicat Premium 17（macOS）。决策、架构�
 - 组件能力不够时在外层补（delegate、自定义渲染），再不行基于 `gpui-base` 自建；gpui-kit 不 fork，`gpui-pre-*` 不单独覆盖。依赖不引入 GPL。
 - **CI 脚本**：工作流调用的 shell 脚本放 `scripts/`（如 `scripts/upload_asset.sh`），不要放进 `.github/workflows/`。
 
-## gpui-kit 0.7.3 已知的坑
+## gpui-kit 0.8 已知的坑
+
+以下条目在 0.7.3 上记录；升级到 0.8 后仍按此排查，遇到行为变化时更新本节。
 
 - 切换外观时，只有带 `highlight` 的主题才会替换编辑器配色，所以 `themes/navicat.json` 的两套主题都要写全 `highlight`（`editor.*` 和 `syntax`）。没开 tree-sitter 特性时，gpui-component 用的高亮器存根不认 `editor.*` 键，测试主题的 crate 要开 `tree-sitter-sql`。
 - `DataTable` 只在按下和抬起是同一格时发出 `SelectCell`；单元格不进测试元素注册表，UI 测试用 `click_at(("row", n), 偏移)` 点击。

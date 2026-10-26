@@ -30,8 +30,8 @@ use navidog_core::store::ConnectionStore;
 use navidog_core::vgroups::VirtualGroups;
 use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::dialect::Dialect;
-use navidog_db::sessions::{ConnState, Sessions, SessionsEvent};
-use navidog_ui::assets::{driver_icon, lucide};
+use navidog_session::sessions::{ConnState, Sessions, SessionsEvent};
+use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
 use navidog_ui::{palette, tabs, tokens};
 use rust_i18n::t;
@@ -306,23 +306,27 @@ impl DraggedConnections {
 
 impl Render for DraggedConnections {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
         let n = self.ids(cx).len();
         let label = if n > 1 {
             t!("nav.n_connections", n = n).to_string()
         } else {
             self.name.to_string()
         };
-        div()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(p.window_bg)
-            .border_1()
-            .border_color(p.separator)
-            .text_color(p.label)
-            .child(label)
+        drag_chip(label, cx)
     }
+}
+
+fn drag_chip(label: String, cx: &App) -> impl IntoElement {
+    let p = palette(cx);
+    div()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .bg(p.window_bg)
+        .border_1()
+        .border_color(p.separator)
+        .text_color(p.label)
+        .child(label)
 }
 
 fn move_connections(ids: &[String], group: Option<String>, window: &mut Window, cx: &mut App) {
@@ -359,22 +363,13 @@ impl DraggedObjects {
 
 impl Render for DraggedObjects {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
         let n = self.objects(cx).len();
         let label = if n > 1 {
             t!("nav.n_objects", n = n).to_string()
         } else {
             self.name.to_string()
         };
-        div()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(p.window_bg)
-            .border_1()
-            .border_color(p.separator)
-            .text_color(p.label)
-            .child(label)
+        drag_chip(label, cx)
     }
 }
 
@@ -407,8 +402,6 @@ pub struct NavigatorPanel {
     tree: Entity<TreeState>,
     filter: Entity<InputState>,
     expanded: HashSet<SharedString>,
-    /// Ids of all selected nodes (the workspace's primary and secondary selections)
-    marked: HashSet<SharedString>,
     /// Anchor of ⇧-click range selection
     anchor: Option<SharedString>,
     renaming: Option<Rename>,
@@ -462,14 +455,14 @@ impl BasePanel for NavigatorPanel {
 
 impl Panel for NavigatorPanel {
     fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        t!("nav.refresh").to_string()
+        t!("nav.title").to_string()
     }
     fn title_bar(&self, _: &App) -> bool {
         false
     }
 }
 
-fn kind_label(kind: ObjectKind) -> String {
+pub(crate) fn kind_label(kind: ObjectKind) -> String {
     t!(format!("kind.{}", kind.key())).to_string()
 }
 
@@ -532,7 +525,6 @@ impl NavigatorPanel {
                     if !matches!(e, WorkspaceEvent::SelectionChanged) {
                         return;
                     }
-                    this.marked = Self::selected_ids(cx).into_iter().collect();
                     // A selection made elsewhere (objects tab, editor tab) starts a new range
                     let anchor = this
                         .anchor
@@ -551,7 +543,6 @@ impl NavigatorPanel {
                 tree,
                 filter,
                 expanded: HashSet::new(),
-                marked: HashSet::new(),
                 anchor: None,
                 renaming: None,
                 view: ViewOptions::default(),
@@ -636,8 +627,15 @@ impl NavigatorPanel {
         } else {
             builder.groups(None)
         };
+        // `set_items` clears the focused row; keep it when it still exists so a
+        // field row is not mapped back to its table after a rebuild.
+        let previous = self
+            .tree
+            .read(cx)
+            .selected_item()
+            .map(|item| item.id.clone());
         self.tree.update(cx, |t, cx| t.set_items(items, cx));
-        self.sync_selection(cx);
+        self.sync_selection_from(previous, cx);
         cx.notify();
     }
 
@@ -800,6 +798,9 @@ fn step_offset(y: f32, max: f32, step: f32, down: bool) -> Option<f32> {
 
 impl Render for NavigatorPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Snapshot the multi-selection for this frame; no cached field can lag
+        // behind a click that has already updated the workspace.
+        let marked: HashSet<SharedString> = Self::selected_ids(cx).into_iter().collect();
         // Other panes read the catalog while they render, so gpui skips its
         // observers and only redraws those panes. This tree is a snapshot, and
         // would keep showing "Loading…" until the next click. Reading the
@@ -824,7 +825,7 @@ impl Render for NavigatorPanel {
                     .upgrade()
                     .map(|panel| {
                         panel.update(cx, |panel, cx| {
-                            panel.render_row(entry, selected, window, cx)
+                            panel.render_row(entry, selected, &marked, window, cx)
                         })
                     })
                     .unwrap_or_else(|| ListItem::new(ix));

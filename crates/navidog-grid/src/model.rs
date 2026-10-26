@@ -6,7 +6,7 @@ use std::ops::RangeInclusive;
 
 use gpui_kit::SharedString;
 use navidog_db::dialect::{ChangeSet, Dialect, RowKey, RowUpdate, Writes, Written};
-use navidog_util::sql_type::is_string_type;
+use navidog_util::sql_type::{TypeKind, is_string_type, type_kind};
 
 /// A cell value; `None` inside the `Option` is NULL, and a missing cell is an unfilled new row.
 pub type Cell = Option<SharedString>;
@@ -59,6 +59,8 @@ pub struct GridModel {
     /// While a commit or a load is running, edits are refused: the commit's success reloads the
     /// page (or marks every change committed), and a load replaces the rows, either way losing them.
     pub locked: bool,
+    kinds: Vec<TypeKind>,
+    text_columns: Vec<bool>,
     anchor: Pos,
     head: Pos,
 }
@@ -93,6 +95,7 @@ impl GridModel {
         }
         self.hidden_rows.clear();
         (self.columns, self.rows) = Self::project(&columns, &rows, hidden);
+        self.cache_columns();
         self.set_hidden_columns(&columns, &rows, hidden);
         for row in &mut self.new_rows {
             *row = vec![None; self.columns.len()];
@@ -109,6 +112,10 @@ impl GridModel {
         if self.has_changes() || col >= self.columns.len() {
             return;
         }
+        let numeric = self
+            .columns
+            .get(col)
+            .is_some_and(|column| matches!(type_kind(&column.type_name), TypeKind::Number));
         let mut order: Vec<_> = (0..self.rows.len()).collect();
         order.sort_by(|&a, &b| {
             let value = |ix: usize| self.rows[ix].get(col).and_then(Option::as_deref);
@@ -116,10 +123,16 @@ impl GridModel {
                 (None, None) => std::cmp::Ordering::Equal,
                 (None, Some(_)) => std::cmp::Ordering::Less,
                 (Some(_), None) => std::cmp::Ordering::Greater,
-                (Some(a), Some(b)) => match (a.parse::<f64>(), b.parse::<f64>()) {
-                    (Ok(a), Ok(b)) => a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal),
-                    _ => a.cmp(b),
+                (Some(a), Some(b)) if numeric => match (a.parse::<f64>(), b.parse::<f64>()) {
+                    // `total_cmp` gives NaN a fixed place instead of treating every
+                    // NaN comparison as equal. Unparsable values sort after numbers
+                    // and among themselves by text, which still makes a total order.
+                    (Ok(a), Ok(b)) => a.total_cmp(&b),
+                    (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+                    (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+                    (Err(_), Err(_)) => a.cmp(b),
                 },
+                (Some(a), Some(b)) => a.cmp(b),
             };
             if asc { ord } else { ord.reverse() }
         });
@@ -137,6 +150,7 @@ impl GridModel {
     pub fn set_data(&mut self, columns: Vec<GridColumn>, rows: Vec<Vec<Cell>>) {
         self.columns = columns;
         self.rows = rows;
+        self.cache_columns();
         self.hidden_columns.clear();
         self.hidden_rows.clear();
         self.discard();
@@ -166,6 +180,7 @@ impl GridModel {
             return;
         }
         self.columns = order.iter().map(|&i| self.columns[i].clone()).collect();
+        self.cache_columns();
         for row in &mut self.rows {
             let next = permute_cells(row, order);
             *row = next;
@@ -208,17 +223,41 @@ impl GridModel {
         let Some(Some(s)) = self.value(r, c) else {
             return SharedString::default();
         };
-        let quote = raw_mode
-            && !self.raw.contains(&(r, c))
-            && self
-                .columns
-                .get(c)
-                .is_some_and(|col| is_string_type(&col.type_name));
+        let quote = raw_mode && !self.raw.contains(&(r, c)) && self.is_text(c);
         if quote {
             dialect.string_literal(s).into()
         } else {
             s.clone()
         }
+    }
+
+    /// Cached from `columns` on every column change; the delegate calls this per cell per frame.
+    pub fn kind(&self, c: usize) -> TypeKind {
+        self.kinds.get(c).copied().unwrap_or(TypeKind::Other)
+    }
+
+    pub fn set_column_type(&mut self, c: usize, type_name: impl Into<SharedString>) {
+        if let Some(column) = self.columns.get_mut(c) {
+            column.type_name = type_name.into();
+            self.cache_columns();
+        }
+    }
+
+    pub fn is_text(&self, c: usize) -> bool {
+        self.text_columns.get(c).copied().unwrap_or(false)
+    }
+
+    fn cache_columns(&mut self) {
+        self.kinds = self
+            .columns
+            .iter()
+            .map(|column| type_kind(&column.type_name))
+            .collect();
+        self.text_columns = self
+            .columns
+            .iter()
+            .map(|column| is_string_type(&column.type_name))
+            .collect();
     }
 
     pub fn value(&self, r: usize, c: usize) -> Option<&Cell> {
@@ -637,21 +676,33 @@ impl GridModel {
     /// The selection as tab-separated text; NULL is copied as an empty string. `header` adds a name row.
     /// `raw` is the dialect in raw data mode: values are copied as the grid shows them (strings as
     /// quoted literals), so pasting them back in raw data mode, where text is SQL, writes the same values.
-    // ponytail: tabs and newlines inside a value are not escaped, so pasting back mis-aligns; quote the
-    // TSV if a round trip is needed
+    /// Cells containing a tab, a newline or a quote use quoted TSV (RFC 4180 with a tab delimiter),
+    /// so a copy/paste round trip keeps one value in one cell.
     pub fn selected_tsv(&self, header: bool, data: bool, raw: Option<Dialect>) -> String {
         let mut lines = Vec::new();
         if header {
-            lines.push(self.selected_columns().join("\t"));
+            lines.push(
+                self.selected_columns()
+                    .iter()
+                    .map(|name| tsv_field(name))
+                    .collect::<Vec<_>>()
+                    .join("\t"),
+            );
         }
         if data {
             let (rows, cols) = self.selection();
             for r in rows.filter(|&r| r < self.row_count()) {
-                let cells: Vec<SharedString> = cols
+                let cells: Vec<String> = cols
                     .clone()
                     .map(|c| match raw {
-                        Some(dialect) => self.shown_text(r, c, true, dialect),
-                        None => self.value(r, c).cloned().flatten().unwrap_or_default(),
+                        Some(dialect) => tsv_field(&self.shown_text(r, c, true, dialect)),
+                        None => tsv_field(
+                            self.value(r, c)
+                                .cloned()
+                                .flatten()
+                                .unwrap_or_default()
+                                .as_ref(),
+                        ),
                     })
                     .collect();
                 lines.push(cells.join("\t"));
@@ -777,21 +828,21 @@ impl GridModel {
     }
 
     /// Writes tab-separated text starting at the selection's top left, appending rows past the end.
+    /// Quoted TSV is accepted, matching [`selected_tsv`](Self::selected_tsv).
     pub fn paste(&mut self, text: &str, raw: bool) {
         if self.locked {
             return;
         }
         let (rows, cols) = self.selection();
         let (r0, c0) = (*rows.start(), *cols.start());
-        let lines: Vec<&str> = text.trim_end_matches(['\n', '\r']).split('\n').collect();
-        for (i, line) in lines.iter().enumerate() {
+        for (i, line) in parse_tsv(text).into_iter().enumerate() {
             let r = r0 + i;
             while r >= self.row_count() {
                 self.new_rows.push(vec![None; self.columns.len()]);
             }
-            for (j, v) in line.trim_end_matches('\r').split('\t').enumerate() {
+            for (j, v) in line.into_iter().enumerate() {
                 if c0 + j < self.columns.len() {
-                    let cell = Some(v.to_string().into());
+                    let cell = Some(v.into());
                     if raw {
                         self.set_raw(r, c0 + j, cell);
                     } else {
@@ -978,6 +1029,72 @@ fn rewrite(slots: &mut [SharedString], order: &[SharedString]) {
             *slot = next.clone();
         }
     }
+}
+
+fn tsv_field(value: &str) -> String {
+    if value.contains(['\t', '\n', '\r', '"']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+/// Rows of quoted-or-plain TSV. A quoted field may contain tabs, newlines and
+/// doubled quotes; CRLF input is accepted.
+fn end_tsv_row(row: &mut Vec<String>, field: &mut String, rows: &mut Vec<Vec<String>>) {
+    row.push(std::mem::take(field));
+    rows.push(std::mem::take(row));
+}
+
+fn parse_tsv(text: &str) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut started = false;
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if quoted {
+            match ch {
+                '"' if chars.peek() == Some(&'"') => {
+                    chars.next();
+                    field.push('"');
+                }
+                '"' => quoted = false,
+                other => field.push(other),
+            }
+            continue;
+        }
+        match ch {
+            '"' if field.is_empty() => {
+                quoted = true;
+                started = true;
+            }
+            '\t' => {
+                row.push(std::mem::take(&mut field));
+                started = false;
+            }
+            '\r' if chars.peek() == Some(&'\n') => {
+                // CRLF is a row delimiter; a CR at the end of a quoted field was
+                // already pushed while `quoted` was true and must survive.
+                chars.next();
+                end_tsv_row(&mut row, &mut field, &mut rows);
+                started = false;
+            }
+            '\n' => {
+                end_tsv_row(&mut row, &mut field, &mut rows);
+                started = false;
+            }
+            other => {
+                field.push(other);
+                started = true;
+            }
+        }
+    }
+    if started || !row.is_empty() {
+        end_tsv_row(&mut row, &mut field, &mut rows);
+    }
+    rows
 }
 
 fn contains(hay: &str, needle: &str, case_sensitive: bool) -> bool {
@@ -1262,8 +1379,54 @@ mod tests {
     }
 
     #[test]
+    fn sorting_uses_the_column_type_and_unicode_find_ignores_case() {
+        let mut numeric = model(true);
+        numeric.columns[0].type_name = "int".into();
+        numeric.set_data(
+            vec![numeric.columns[0].clone()],
+            vec![vec![Some("10".into())], vec![Some("9".into())]],
+        );
+        numeric.sort_rows(0, true);
+        assert_eq!(numeric.value(0, 0), Some(&Some("9".into())));
+
+        let mut text = model(true);
+        text.columns[0].type_name = "varchar".into();
+        text.set_data(
+            vec![text.columns[0].clone()],
+            vec![vec![Some("10".into())], vec![Some("9".into())]],
+        );
+        text.sort_rows(0, true);
+        assert_eq!(text.value(0, 0), Some(&Some("10".into())));
+
+        text.set_data(
+            vec![text.columns[0].clone()],
+            vec![vec![Some("Ärger".into())]],
+        );
+        assert_eq!(text.find_cell("ärger", (0, 0), false, false), Some((0, 0)));
+    }
+
+    #[test]
+    fn numeric_sort_is_a_total_order_for_nan_and_bad_values() {
+        let mut m = model(true);
+        m.columns[0].type_name = "double".into();
+        m.set_data(
+            vec![m.columns[0].clone()],
+            ["NaN", "2", "bad", "1"]
+                .into_iter()
+                .map(|value| vec![Some(value.into())])
+                .collect(),
+        );
+        m.sort_rows(0, true);
+        let values: Vec<_> = (0..m.row_count())
+            .map(|row| m.value(row, 0).cloned().flatten().unwrap().to_string())
+            .collect();
+        assert_eq!(values, ["1", "2", "NaN", "bad"]);
+    }
+
+    #[test]
     fn local_sort_puts_null_first_and_numbers_by_value() {
         let mut m = model(false);
+        m.columns[0].type_name = "int".into();
         m.set_data(
             vec![m.columns[0].clone()],
             vec![vec![Some("10".into())], vec![None], vec![Some("9".into())]],
@@ -1340,6 +1503,40 @@ mod tests {
         assert_eq!(m.row_count(), 3);
         assert_eq!(m.value(2, 1), Some(&Some("y".into())));
         assert_eq!(m.value(2, 0), None);
+    }
+
+    #[test]
+    fn tsv_preserves_a_cr_at_the_end_of_a_quoted_field() {
+        let mut m = model(true);
+        m.set_value(0, 1, Some("abc\r".into()));
+        m.select((0, 1), false);
+        let text = m.selected_tsv(false, true, None);
+        assert_eq!(text, "\"abc\r\"");
+        let mut out = model(true);
+        out.select((0, 1), false);
+        out.paste(&text, false);
+        assert_eq!(out.value(0, 1), Some(&Some("abc\r".into())));
+    }
+
+    #[test]
+    fn a_single_quoted_empty_field_replaces_the_cell() {
+        let mut m = model(true);
+        m.select((0, 1), false);
+        m.paste("\"\"", false);
+        assert_eq!(m.value(0, 1).cloned().flatten(), Some("".into()));
+    }
+
+    #[test]
+    fn tsv_quotes_round_trip_tabs_newlines_and_quotes() {
+        let mut m = model(true);
+        m.set_value(0, 1, Some("a\tb\nc\"d".into()));
+        m.select((0, 1), false);
+        let text = m.selected_tsv(false, true, None);
+        assert_eq!(text, "\"a\tb\nc\"\"d\"");
+        let mut out = model(true);
+        out.select((0, 1), false);
+        out.paste(&text, false);
+        assert_eq!(out.value(0, 1), Some(&Some("a\tb\nc\"d".into())));
     }
 
     #[test]
@@ -1427,7 +1624,7 @@ mod tests {
     #[test]
     fn raw_mode_quotes_string_values_only() {
         let mut m = model(true);
-        m.columns[1].type_name = "varchar(45)".into();
+        m.set_column_type(1, "varchar(45)");
         assert_eq!(m.raw_text(0, 1, true, Dialect::Sqlite), "'a'");
         assert_eq!(m.raw_text(0, 0, true, Dialect::Sqlite), "1");
         assert_eq!(m.raw_text(1, 1, true, Dialect::MySql), "");

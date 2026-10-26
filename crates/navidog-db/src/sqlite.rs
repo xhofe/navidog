@@ -27,7 +27,9 @@ impl Default for SqliteDriver {
                 id: "sqlite".into(),
                 name: "SQLite".into(),
                 family: Family::Relational,
-                default_port: None,
+                default_port: navidog_core::connection::driver_defaults("sqlite").port,
+                icon: "icons/db/sqlite.svg",
+                dialect: Dialect::Sqlite,
                 supports_ssl: false,
                 supports_ssh: false,
                 per_database_sessions: false,
@@ -89,16 +91,15 @@ impl Driver for SqliteDriver {
     fn connect(&self, params: ConnectParams) -> BoxFuture<'static, DbResult<Box<dyn Session>>> {
         let tag = Tag::new(&params.name, &self.info.name);
         async move {
-            let file = params
-                .file
-                .clone()
-                .ok_or_else(|| DbError::msg("未指定数据库文件"))?;
+            let file = params.file.clone().ok_or_else(|| {
+                DbError::coded("navidog.no_database_file", "No database file was selected.")
+            })?;
             let session = tokio::task::spawn_blocking(move || -> DbResult<SqliteSession> {
                 if !params.create_new && !file.exists() {
-                    return Err(DbError::msg(format!(
-                        "数据库文件不存在: {}",
-                        file.display()
-                    )));
+                    return Err(DbError::coded(
+                        "navidog.database_missing",
+                        file.display().to_string(),
+                    ));
                 }
                 let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_URI;
                 if params.create_new {

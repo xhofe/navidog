@@ -76,6 +76,38 @@ pub struct Profile {
     pub ssh: Ssh,
 }
 
+/// Navicat's connection defaults. Kept here (not in `DriverInfo`) because
+/// `Connection::new` lives in core; drivers reuse the port through this table.
+pub struct DriverDefaults {
+    pub host: &'static str,
+    pub port: Option<u16>,
+    pub user: &'static str,
+    pub database: Option<&'static str>,
+}
+
+pub fn driver_defaults(driver: &str) -> DriverDefaults {
+    match driver {
+        "postgres" => DriverDefaults {
+            host: "localhost",
+            port: Some(5432),
+            user: "postgres",
+            database: Some("postgres"),
+        },
+        "sqlite" => DriverDefaults {
+            host: "",
+            port: None,
+            user: "",
+            database: None,
+        },
+        _ => DriverDefaults {
+            host: "localhost",
+            port: Some(3306),
+            user: "root",
+            database: None,
+        },
+    }
+}
+
 impl Connection {
     /// Trades the active settings with `profiles[ix]`; swapping twice restores them.
     pub fn swap_profile(&mut self, ix: usize) {
@@ -85,6 +117,32 @@ impl Connection {
         std::mem::swap(&mut self.advanced, &mut p.advanced);
         std::mem::swap(&mut self.ssl, &mut p.ssl);
         std::mem::swap(&mut self.ssh, &mut p.ssh);
+    }
+
+    /// Runs `f` with profile `ix` swapped into the active fields (0 is the
+    /// active profile). The swap back also runs during unwinding, so a panic
+    /// cannot leave the active fields pointing at another profile.
+    pub fn with_active_profile<R>(&mut self, ix: usize, f: impl FnOnce(&mut Self) -> R) -> R {
+        if ix == 0 {
+            return f(self);
+        }
+        let profile = ix - 1;
+        self.swap_profile(profile);
+        struct Restore<'a> {
+            connection: &'a mut Connection,
+            profile: usize,
+        }
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.connection.swap_profile(self.profile);
+            }
+        }
+        let restore = Restore {
+            connection: self,
+            profile,
+        };
+        let connection = &mut *restore.connection;
+        f(connection)
     }
 
     pub fn switch_profile(&mut self, name: &str) -> bool {
@@ -124,12 +182,13 @@ impl Connection {
 
     /// Navicat's defaults for the given driver (11-connection.md §2).
     pub fn new(driver: &str) -> Self {
-        let (port, user, database) = match driver {
-            "postgres" => (Some(5432), "postgres", Some("postgres".to_string())),
-            "sqlite" => (None, "", None),
-            _ => (Some(3306), "root", None),
-        };
-        let host = if driver == "sqlite" { "" } else { "localhost" };
+        let defaults = driver_defaults(driver);
+        let (port, user, database) = (
+            defaults.port,
+            defaults.user,
+            defaults.database.map(str::to_string),
+        );
+        let host = defaults.host;
         let mut conn = Self {
             id: new_connection_id(),
             name: String::new(),
@@ -328,8 +387,11 @@ pub struct AttachedDatabase {
     pub file: String,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, strum::IntoStaticStr,
+)]
 #[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
 pub enum SslMode {
     Allow,
     #[default]
@@ -349,13 +411,7 @@ impl SslMode {
     ];
 
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Allow => "allow",
-            Self::Prefer => "prefer",
-            Self::Require => "require",
-            Self::VerifyCa => "verify-ca",
-            Self::VerifyFull => "verify-full",
-        }
+        self.into()
     }
 }
 
@@ -407,6 +463,8 @@ pub struct Ssh {
     pub private_key: Option<String>,
     pub save_passphrase: bool,
     pub passphrase: Option<Secret>,
+    /// Verify the SSH server key against `~/.ssh/known_hosts` (trust on first use).
+    pub verify_host_key: bool,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -424,6 +482,7 @@ impl Default for Ssh {
             private_key: None,
             save_passphrase: true,
             passphrase: None,
+            verify_host_key: true,
             extra: Map::new(),
         }
     }
@@ -493,6 +552,35 @@ mod tests {
         lite.general.file = Some("/tmp/app.db".into());
         assert_eq!(lite.suggested_name(), "app");
         assert!(!lite.supports_network());
+    }
+
+    #[test]
+    fn profile_swap_is_restored_when_the_operation_panics() {
+        let mut connection = Connection::new("mysql");
+        connection.add_profile("other".into());
+        let before = connection.clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            connection.with_active_profile(1, |_| panic!("fixture"));
+        }));
+        assert!(result.is_err());
+        assert_eq!(connection, before);
+    }
+
+    #[test]
+    fn driver_defaults_match_the_connection_constructor() {
+        let pg = Connection::new("postgres");
+        assert_eq!(driver_defaults("postgres").port, pg.general.port);
+        let lite = Connection::new("sqlite");
+        assert_eq!(lite.general.host, "");
+        assert_eq!(lite.general.port, None);
+    }
+
+    #[test]
+    fn ssl_mode_keys_match_their_serialized_names() {
+        for mode in SslMode::ALL {
+            let json = serde_json::to_string(&mode).unwrap();
+            assert_eq!(json, format!("\"{}\"", mode.as_str()));
+        }
     }
 
     #[test]

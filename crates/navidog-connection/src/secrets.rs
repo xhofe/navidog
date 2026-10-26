@@ -4,10 +4,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{WindowExt as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
@@ -224,16 +223,7 @@ pub(crate) fn footer(
     ok: String,
     on_ok: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    h_flex()
-        .justify_end()
-        .gap_2()
-        .pt_2()
-        .child(
-            Button::new("cancel")
-                .label(t!("conn.cancel").to_string())
-                .on_click(|_, window, cx| window.close_dialog(cx)),
-        )
-        .child(Button::new("ok").primary().label(ok).on_click(on_ok))
+    navidog_ui::skin::dialog_footer(t!("conn.cancel").to_string(), ok, on_ok)
 }
 
 struct Unlock {
@@ -329,6 +319,54 @@ mod tests {
 
     use super::*;
 
+    fn block_writes(path: &std::path::Path, block: bool) -> bool {
+        if !block {
+            restore_writes(path);
+            return true;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = path.parent().unwrap();
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+            let probe = dir.join(format!(".navidog-write-probe-{}", std::process::id()));
+            let blocked = std::fs::File::create(&probe).is_err();
+            let _ = std::fs::remove_file(&probe);
+            if !blocked {
+                restore_writes(path);
+            }
+            blocked
+        }
+        #[cfg(not(unix))]
+        {
+            let mut permissions = std::fs::metadata(path).unwrap().permissions();
+            permissions.set_readonly(true);
+            std::fs::set_permissions(path, permissions).unwrap();
+            let blocked = std::fs::OpenOptions::new().write(true).open(path).is_err();
+            if !blocked {
+                restore_writes(path);
+            }
+            blocked
+        }
+    }
+
+    #[allow(clippy::permissions_set_readonly_false)] // test helper; Windows needs the attribute cleared
+    fn restore_writes(path: &std::path::Path) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = path.parent().unwrap();
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        }
+        #[cfg(not(unix))]
+        {
+            let Ok(mut permissions) = std::fs::metadata(path).map(|m| m.permissions()) else {
+                return;
+            };
+            permissions.set_readonly(false);
+            let _ = std::fs::set_permissions(path, permissions);
+        }
+    }
     struct Host;
 
     impl Render for Host {
@@ -367,8 +405,8 @@ mod tests {
             let path = home.join("connections.json");
             let disk = serde_json::to_vec(&file).unwrap();
             std::fs::write(&path, &disk).unwrap();
-            if !locked {
-                std::fs::create_dir(path.with_extension("tmp")).unwrap();
+            if !locked && !block_writes(&path, true) {
+                return;
             }
             cx.update(|cx| {
                 navidog_core::init(cx);
@@ -448,7 +486,7 @@ mod tests {
             });
             assert!(std::fs::read(&path).unwrap() == disk);
             if !locked {
-                std::fs::remove_dir(path.with_extension("tmp")).unwrap();
+                block_writes(&path, false);
             }
         }
         let _ = std::fs::remove_dir_all(&home);

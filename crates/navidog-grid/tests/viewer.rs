@@ -1,8 +1,9 @@
 //! Headless UI test of the table viewer on a real SQLite table: paging with an uncommitted edit
 //! commits it first, and "auto begin transaction" still loads the first page.
 
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use navidog_test_support::sql;
+use navidog_test_support::wait;
+use std::time::Duration;
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
@@ -14,10 +15,9 @@ use navidog_core::crypto::Key;
 use navidog_core::object::{ObjectKind, ObjectRef, Scope};
 use navidog_core::settings::Settings;
 use navidog_core::store::ConnectionStore;
-use navidog_db::sessions::Sessions;
-use navidog_db::sqlite::SqliteDriver;
-use navidog_db::{ConnectParams, Secrets, connect, runtime};
+use navidog_db::Secrets;
 use navidog_grid::TableViewer;
+use navidog_session::sessions::Sessions;
 use navidog_ui::tokens;
 
 fn fit(rem: gpui_kit::Pixels, header: &str, values: &[&str]) -> gpui_kit::Pixels {
@@ -36,34 +36,6 @@ impl Render for Host {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().size_full().child(self.viewer.clone())
     }
-}
-
-fn wait(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !done(cx) {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        cx.run_until_parked();
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-fn sql(file: &std::path::Path, statements: &str) -> Vec<Vec<Option<String>>> {
-    runtime::runtime().block_on(async {
-        let params = ConnectParams {
-            file: Some(file.to_path_buf()),
-            create_new: !file.exists(),
-            ..Default::default()
-        };
-        let mut s = connect(Arc::new(SqliteDriver::default()), params)
-            .await
-            .unwrap();
-        let sets = s.relational().unwrap().execute(statements).await.unwrap();
-        s.close().await.unwrap();
-        sets.into_iter()
-            .last()
-            .map(|set| set.rows)
-            .unwrap_or_default()
-    })
 }
 
 fn open_viewer(cx: &mut TestAppContext, object: ObjectRef) -> AnyWindowHandle {
@@ -114,7 +86,7 @@ fn paging_commits_first_and_auto_transaction_still_loads(cx: &mut TestAppContext
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_grid::init(cx);
         Settings::update(cx, |s| {
             s.limit_records = true;

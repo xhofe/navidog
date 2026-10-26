@@ -13,7 +13,7 @@ use navidog_core::actions::{
 };
 use navidog_core::crypto::Key;
 use navidog_core::store::ConnectionStore;
-use navidog_db::sessions::{ConnState, Sessions};
+use navidog_session::sessions::{ConnState, Sessions};
 
 struct Host {
     focus: FocusHandle,
@@ -55,7 +55,7 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_connection::init(cx);
         // Keep away from the keychain
         ConnectionStore::global(cx).update(cx, |s, _| s.set_key(Key::random()));
@@ -169,64 +169,68 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
     assert_eq!(profile(cx), ("".into(), 1));
 
     // A failed profile save leaves the form and current live session available for retry.
-    let original = std::fs::read(home.join("connections.json")).unwrap();
-    std::fs::create_dir(home.join("connections.tmp")).unwrap();
-    let reconnects = std::rc::Rc::new(std::cell::Cell::new(0));
-    let seen = reconnects.clone();
-    let _subscription = cx.update(|cx| {
-        cx.subscribe(
-            &Sessions::global(cx),
-            move |_, event: &navidog_db::sessions::SessionsEvent, _| {
-                if matches!(event, navidog_db::sessions::SessionsEvent::Reopening(_)) {
-                    seen.set(seen.get() + 1);
-                }
-            },
-        )
-    });
-    dispatch(
-        cx,
-        Box::new(SwitchProfile {
-            name: "只读".into(),
-        }),
-    );
-    assert_eq!(profile(cx), ("".into(), 1));
-    assert_eq!(reconnects.get(), 0);
-    dispatch(cx, Box::new(NewProfile));
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("profile-name", cx);
-        window.input("retry", cx);
-        window.click("ok", cx);
-        window.render_frame(cx);
-        assert!(
-            window.try_find("profile-name").is_some(),
-            "failed save keeps the profile form"
+    if block_writes(&home.join("connections.json"), true) {
+        let original = std::fs::read(home.join("connections.json")).unwrap();
+        let reconnects = std::rc::Rc::new(std::cell::Cell::new(0));
+        let seen = reconnects.clone();
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(
+                &Sessions::global(cx),
+                move |_, event: &navidog_session::sessions::SessionsEvent, _| {
+                    if matches!(
+                        event,
+                        navidog_session::sessions::SessionsEvent::Reopening(_)
+                    ) {
+                        seen.set(seen.get() + 1);
+                    }
+                },
+            )
+        });
+        dispatch(
+            cx,
+            Box::new(SwitchProfile {
+                name: "只读".into(),
+            }),
         );
-    })
-    .unwrap();
-    assert_eq!(profile(cx), ("".into(), 1));
-    assert_eq!(
-        reconnects.get(),
-        0,
-        "no reconnect before persistence succeeds"
-    );
-    assert!(cx.update(|cx| Sessions::global(cx).read(cx).state(&id).is_open()));
-    assert!(std::fs::read(home.join("connections.json")).unwrap() == original);
-    std::fs::remove_dir(home.join("connections.tmp")).unwrap();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("ok", cx);
-        window.render_frame(cx);
-        assert!(
-            window.try_find("conn-name").is_some(),
-            "successful retry opens the profile editor"
+        assert_eq!(profile(cx), ("".into(), 1));
+        assert_eq!(reconnects.get(), 0);
+        dispatch(cx, Box::new(NewProfile));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("profile-name", cx);
+            window.input("retry", cx);
+            window.click("ok", cx);
+            window.render_frame(cx);
+            assert!(
+                window.try_find("profile-name").is_some(),
+                "failed save keeps the profile form"
+            );
+        })
+        .unwrap();
+        assert_eq!(profile(cx), ("".into(), 1));
+        assert_eq!(
+            reconnects.get(),
+            0,
+            "no reconnect before persistence succeeds"
         );
-        window.click("cancel", cx);
-    })
-    .unwrap();
-    wait_open(cx, &id);
-    assert_eq!(profile(cx), ("retry".into(), 2));
-    assert_eq!(reconnects.get(), 1);
+        assert!(cx.update(|cx| Sessions::global(cx).read(cx).state(&id).is_open()));
+        assert!(std::fs::read(home.join("connections.json")).unwrap() == original);
+        block_writes(&home.join("connections.json"), false);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("ok", cx);
+            window.render_frame(cx);
+            assert!(
+                window.try_find("conn-name").is_some(),
+                "successful retry opens the profile editor"
+            );
+            window.click("cancel", cx);
+        })
+        .unwrap();
+        wait_open(cx, &id);
+        assert_eq!(profile(cx), ("retry".into(), 2));
+        assert_eq!(reconnects.get(), 1);
+    }
 
     // Manage Connections: the search filters rows, the star button stars the selected connection
     dispatch(cx, Box::new(ManageConnections));
@@ -263,4 +267,53 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
             .starred
     }));
     let _ = std::fs::remove_dir_all(home);
+}
+
+fn block_writes(path: &std::path::Path, block: bool) -> bool {
+    if !block {
+        restore_writes(path);
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = path.parent().unwrap();
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let probe = dir.join(format!(".navidog-write-probe-{}", std::process::id()));
+        let blocked = std::fs::File::create(&probe).is_err();
+        let _ = std::fs::remove_file(&probe);
+        if !blocked {
+            restore_writes(path);
+        }
+        blocked
+    }
+    #[cfg(not(unix))]
+    {
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(path, permissions).unwrap();
+        let blocked = std::fs::OpenOptions::new().write(true).open(path).is_err();
+        if !blocked {
+            restore_writes(path);
+        }
+        blocked
+    }
+}
+
+#[allow(clippy::permissions_set_readonly_false)] // test helper; Windows needs the attribute cleared
+fn restore_writes(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = path.parent().unwrap();
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
+    #[cfg(not(unix))]
+    {
+        let Ok(mut permissions) = std::fs::metadata(path).map(|m| m.permissions()) else {
+            return;
+        };
+        permissions.set_readonly(false);
+        let _ = std::fs::set_permissions(path, permissions);
+    }
 }

@@ -14,8 +14,11 @@ pub fn encode_segment(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for (i, ch) in name.chars().enumerate() {
         match ch {
-            '/' | '\\' | ':' | '%' => out.push_str(&format!("%{:02X}", ch as u32)),
+            '/' | '\\' | ':' | '%' | '*' | '?' | '"' | '<' | '>' | '|' => {
+                out.push_str(&format!("%{:02X}", ch as u32))
+            }
             '.' if i == 0 => out.push_str("%2E"),
+            c if c.is_control() => out.push_str(&format!("%{:02X}", c as u32)),
             _ => out.push(ch),
         }
     }
@@ -138,7 +141,15 @@ mod tests {
 
     #[test]
     fn segments_round_trip_and_stay_inside() {
-        for name in ["a/b", "..", ".hidden", "50%:off", "普通"] {
+        for name in [
+            "a/b",
+            "..",
+            ".hidden",
+            "50%:off",
+            "普通",
+            "a*b?c\"d<e>f|g",
+            "tab\tname",
+        ] {
             let enc = encode_segment(name);
             assert!(!enc.contains(['/', ':']) && !enc.starts_with('.'), "{enc}");
             assert_eq!(decode_segment(&enc), name);

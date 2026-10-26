@@ -6,9 +6,7 @@
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
-use gpui_kit::{App, Global, SharedString};
 use navidog_core::object::{ObjectKind, Scope};
-use navidog_core::registry::Registry;
 
 use crate::dialect::Dialect;
 use crate::params::ConnectParams;
@@ -63,7 +61,7 @@ impl DbError {
         self.outcome_unknown
     }
 
-    pub(crate) fn with_session_loss(mut self, outcome_unknown: bool) -> Self {
+    pub fn with_session_loss(mut self, outcome_unknown: bool) -> Self {
         self.disconnected = true;
         self.outcome_unknown = outcome_unknown;
         self
@@ -82,10 +80,12 @@ pub enum Family {
 #[derive(Clone, Debug)]
 pub struct DriverInfo {
     /// Registry key, also the `driver` field in connections.json
-    pub id: SharedString,
-    pub name: SharedString,
+    pub id: String,
+    pub name: String,
     pub family: Family,
     pub default_port: Option<u16>,
+    pub icon: &'static str,
+    pub dialect: Dialect,
     pub supports_ssl: bool,
     pub supports_ssh: bool,
     /// A session can access only one database (PostgreSQL); browsing another database needs
@@ -187,6 +187,84 @@ pub struct ForeignKey {
     pub referenced: String,
 }
 
+/// Generates `execute`/`execute_read` for a session with `attempt`, `reconnect`,
+/// `remember`, `lost`, `recovery` and `cancellation`. Both network drivers differ
+/// only in how they decide a connection is lost, so keeping the recovery policy
+/// here prevents the two copies from drifting.
+/// Generates `ping` for a network session whose `$probe` future checks liveness.
+#[macro_export]
+macro_rules! recovering_ping {
+    ($self:ident, $probe:expr) => {
+        fn ping(&mut $self) -> BoxFuture<'_, DbResult<()>> {
+            async move {
+                let first = $probe.await;
+                let result = match first {
+                    Err(e) if $self.lost(&e) && $self.recovery.can_reconnect() => {
+                        tracing::warn!("metadata session lost ({e}); reconnecting");
+                        $self.reconnect().await?;
+                        $probe.await
+                    }
+                    other => other,
+                };
+                result.map_err(|e| {
+                    if $self.lost(&e) {
+                        $self.cancellation.clear();
+                        interrupted(e, false)
+                    } else {
+                        e
+                    }
+                })
+            }
+            .boxed()
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! recovering_execute {
+    () => {
+        fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
+            async move {
+                self.recovery.observe(sql);
+                let result = self.attempt(sql).await.map_err(|e| {
+                    if self.lost(&e) {
+                        self.cancellation.clear();
+                        interrupted(e, true)
+                    } else {
+                        e
+                    }
+                });
+                if result.is_ok() {
+                    self.remember(sql);
+                }
+                result
+            }
+            .boxed()
+        }
+
+        fn execute_read<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
+            async move {
+                let result = match self.attempt(sql).await {
+                    Err(e) if self.lost(&e) && self.recovery.can_reconnect() => {
+                        self.reconnect().await?;
+                        self.attempt(sql).await
+                    }
+                    other => other,
+                };
+                result.map_err(|e| {
+                    if self.lost(&e) {
+                        self.cancellation.clear();
+                        interrupted(e, false)
+                    } else {
+                        e
+                    }
+                })
+            }
+            .boxed()
+        }
+    };
+}
+
 pub trait Relational: Send {
     fn dialect(&self) -> Dialect;
     /// Execute once on the current physical session. Transport failures never replay the SQL.
@@ -285,24 +363,4 @@ pub trait KeyValue: Send {
         count: u32,
     ) -> BoxFuture<'a, DbResult<(u64, Vec<String>)>>;
     fn get<'a>(&'a mut self, db: u32, key: &'a str) -> BoxFuture<'a, DbResult<Option<String>>>;
-}
-
-/// Registered drivers, shared by built-in drivers and plugin JS drivers (M5).
-#[derive(Default)]
-pub struct DriverRegistry(pub Registry<Arc<dyn Driver>>);
-
-impl Global for DriverRegistry {}
-
-impl DriverRegistry {
-    pub fn get(cx: &App, id: &str) -> Option<Arc<dyn Driver>> {
-        cx.global::<Self>().0.get(id).cloned()
-    }
-
-    pub fn all(cx: &App) -> Vec<Arc<dyn Driver>> {
-        cx.global::<Self>()
-            .0
-            .iter()
-            .map(|(_, _, d)| d.clone())
-            .collect()
-    }
 }

@@ -15,11 +15,12 @@ use navidog_core::queries;
 use navidog_core::workspace::{Selection, Workspace};
 use navidog_db::DbError;
 use navidog_db::dialect::Dialect;
-use navidog_db::sessions::{Sessions, prepare_database};
+use navidog_session::sessions::{Sessions, prepare_database};
 use navidog_ui::assets::lucide;
 use rust_i18n::t;
 
 use crate::catalog::{Catalog, Load};
+use crate::navigator::kind_label;
 
 pub(crate) fn selected_objects(cx: &App) -> Vec<ObjectRef> {
     Workspace::global(cx)
@@ -122,10 +123,6 @@ fn duplicate_query(window: &mut Window, cx: &mut App) {
         }
         Err(e) => show_error(e.to_string(), window, cx),
     }
-}
-
-fn kind_label(kind: ObjectKind) -> String {
-    t!(format!("kind.{}", kind.key())).to_string()
 }
 
 fn delete(window: &mut Window, cx: &mut App) {
@@ -445,7 +442,7 @@ mod recovery_tests {
         cx.update(|cx| {
             gpui_kit::init(cx);
             navidog_ui::theme::init(cx);
-            navidog_db::init(cx);
+            navidog_session::init(cx);
         });
         let (handle, _) = cx.update(|cx| {
             gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {

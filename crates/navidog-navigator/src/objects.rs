@@ -27,8 +27,8 @@ use navidog_core::vgroups::VirtualGroups;
 use navidog_core::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::ObjectInfo;
 use navidog_db::dialect::Dialect;
-use navidog_db::sessions::{ConnState, Sessions};
-use navidog_ui::assets::{driver_icon, lucide};
+use navidog_session::sessions::{ConnState, Sessions};
+use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
 use navidog_ui::{palette, tabs, tokens};
 use rust_i18n::t;
@@ -66,6 +66,10 @@ pub struct ObjectsPanel {
     /// Detail view sort: (column key, ascending)
     sort: Option<(String, bool)>,
     scroll: UniformListScrollHandle,
+    /// Selection and row count from the last render. The status bar reads this
+    /// instead of rebuilding every row (and cloning every property) on each
+    /// frame, but only while the selection still matches.
+    last_rows: Option<(Selection, usize)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -176,13 +180,18 @@ impl ObjectsPanel {
         }
         let panel = cx.new(|cx: &mut Context<Self>| {
             let subs = vec![
-                cx.observe(&ConnectionStore::global(cx), |_, _, cx| cx.notify()),
+                cx.observe(&ConnectionStore::global(cx), |_, _, cx| {
+                    Self::defer_recount(cx);
+                    cx.notify();
+                }),
                 cx.observe(&Sessions::global(cx), |_, _, cx| {
                     Self::ensure_loaded(cx);
+                    Self::defer_recount(cx);
                     cx.notify();
                 }),
                 cx.observe(&Catalog::global(cx), |_, _, cx| {
                     Self::ensure_loaded(cx);
+                    Self::defer_recount(cx);
                     cx.notify();
                 }),
                 cx.subscribe(&Workspace::global(cx), |_, _, e: &WorkspaceEvent, cx| {
@@ -190,6 +199,7 @@ impl ObjectsPanel {
                         return;
                     }
                     Self::ensure_loaded(cx);
+                    Self::defer_recount(cx);
                     cx.notify();
                 }),
             ];
@@ -198,11 +208,40 @@ impl ObjectsPanel {
                 view: ViewMode::List,
                 sort: None,
                 scroll: UniformListScrollHandle::new(),
+                last_rows: None,
                 _subscriptions: subs,
             }
         });
         cx.set_global(SharedObjects(panel.downgrade()));
         panel
+    }
+
+    /// Recomputes the count after the current update finishes. `content` reads
+    /// the navigator's view options, which is not re-entrant when the navigator
+    /// itself triggered the workspace/catalog notification.
+    fn defer_recount(cx: &mut Context<Self>) {
+        let panel = cx.entity().downgrade();
+        cx.defer(move |cx| {
+            if let Some(panel) = panel.upgrade() {
+                panel.update(cx, |this, cx| {
+                    this.recount(cx);
+                    cx.notify();
+                });
+            }
+        });
+    }
+
+    fn recount(&mut self, cx: &App) {
+        let selection = Workspace::global(cx).read(cx).selection().clone();
+        self.last_rows = match Self::content(cx) {
+            Content::Rows(mut rows, listed) => {
+                if listed.is_some() && self.view == ViewMode::Detail {
+                    rows.retain(|row| row.target != Selection::None);
+                }
+                Some((selection, rows.len()))
+            }
+            _ => None,
+        };
     }
 
     /// Loads the object list when the selection changes (for MySQL / SQLite, selecting a database lists
@@ -257,6 +296,18 @@ impl ObjectsPanel {
             }
         }
         listed_kind(&selection).is_some_and(|(scope, kind)| missing(&scope, kind))
+    }
+
+    /// The row count of the last render, or `None` until the panel rendered once.
+    pub(crate) fn cached_rows(cx: &App) -> Option<usize> {
+        let current = Workspace::global(cx).read(cx).selection().clone();
+        let panel = cx.try_global::<SharedObjects>()?.0.upgrade()?;
+        let panel = panel.read(cx);
+        panel
+            .last_rows
+            .as_ref()
+            .filter(|(selection, _)| *selection == current)
+            .map(|(_, rows)| *rows)
     }
 
     pub(crate) fn content(cx: &App) -> Content {
@@ -550,6 +601,7 @@ impl ObjectsPanel {
                             .when(view == ViewMode::List, |b| b.selected(true))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.view = ViewMode::List;
+                                this.recount(cx);
                                 cx.notify();
                             })),
                     )
@@ -562,6 +614,7 @@ impl ObjectsPanel {
                             .when(view == ViewMode::Detail, |b| b.selected(true))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.view = ViewMode::Detail;
+                                this.recount(cx);
                                 cx.notify();
                             })),
                     ),
@@ -693,7 +746,7 @@ impl ObjectsPanel {
                         let row = &rows[ix];
                         let selected = row.target == selection;
                         let icon = match &row.icon {
-                            RowIcon::Driver(d) => img(driver_icon(d))
+                            RowIcon::Driver(d) => img(navidog_session::DriverRegistry::icon(cx, d))
                                 .size(tokens::navigator::ROW_ICON.rems())
                                 .into_any_element(),
                             RowIcon::Folder => lucide("folder")
@@ -797,8 +850,8 @@ impl Render for ObjectsPanel {
         }
         let p = palette(cx);
         let content = Self::content(cx);
-        let show_profile = crate::navigator::view_options(cx).show_table_profile;
         let selection = Workspace::global(cx).read(cx).selection().clone();
+        let show_profile = crate::navigator::view_options(cx).show_table_profile;
         let mut profile = None;
         let (body, listed) = match content {
             Content::Empty => (

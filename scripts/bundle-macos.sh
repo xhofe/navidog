@@ -42,7 +42,7 @@ PLIST
 ./scripts/sign-macos.sh "$app"
 
 # Stage the app beside a symlink to /Applications. The link's name stays
-# "Applications"; Finder shows the viewer's own localized name (应用程序, …)
+# "Applications"; Finder shows the viewer's own localized name
 # and dropping the app onto it installs into /Applications.
 stage="$out/dmg"
 rm -rf "$stage"

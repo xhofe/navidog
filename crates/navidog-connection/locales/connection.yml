@@ -1,5 +1,14 @@
 _version: 2
 conn:
+  bad_port:
+    en: "Enter a valid port for %{field}."
+    zh-CN: "请为%{field}输入有效端口。"
+  bad_number:
+    en: "Enter a valid number for %{field}."
+    zh-CN: "请为%{field}输入有效数字。"
+  bad_member:
+    en: "Invalid server address: %{line}"
+    zh-CN: "服务器地址无效：%{line}"
   new_connection:
     en: New Connection
     zh-CN: 新建连接
@@ -285,6 +294,9 @@ conn:
   use_ssh:
     en: Use SSH tunnel
     zh-CN: 使用 SSH 隧道
+  verify_host_key:
+    en: Verify host key (known_hosts)
+    zh-CN: 校验主机密钥（known_hosts）
   auth_method:
     en: Authentication Method
     zh-CN: 验证方法
@@ -336,12 +348,6 @@ conn:
   password_not_saved:
     en: "The password was not saved and will only be used for this connection attempt. %{detail}"
     zh-CN: "密码未保存，仅用于本次连接。%{detail}"
-  reload_session_lost:
-    en: "%{detail} The previous session state cannot be restored. Reopen the connection to continue."
-    zh-CN: "%{detail} 原会话状态无法恢复。请重新打开连接后继续。"
-  reload_outcome_unknown:
-    en: "%{detail} The execution outcome may be unknown. Check the database before retrying, then reopen the connection to continue."
-    zh-CN: "%{detail} 执行结果可能未知。请先检查数据库，确认后再重试，并重新打开连接后继续。"
   later:
     en: Later
     zh-CN: 稍后
@@ -375,88 +381,3 @@ conn:
   required_name:
     en: Connection name is required
     zh-CN: 请输入连接名称
-nav:
-  open_connection:
-    en: Open Connection
-    zh-CN: 打开连接
-  close_connection:
-    en: Close Connection
-    zh-CN: 关闭连接
-  edit_connection:
-    en: Edit Connection…
-    zh-CN: 编辑连接…
-  duplicate_connection:
-    en: Duplicate Connection
-    zh-CN: 复制连接
-  delete_connection:
-    en: Delete Connection…
-    zh-CN: 删除连接…
-  new_group:
-    en: New Group
-    zh-CN: 新建组
-  rename_group:
-    en: Rename Group…
-    zh-CN: 重命名…
-  delete_group:
-    en: Delete Group…
-    zh-CN: 删除组…
-  color:
-    en: Color
-    zh-CN: 颜色
-  color_none:
-    en: None
-    zh-CN: 无
-  color_red:
-    en: Red
-    zh-CN: 红
-  color_orange:
-    en: Orange
-    zh-CN: 橙
-  color_yellow:
-    en: Yellow
-    zh-CN: 黄
-  color_green:
-    en: Green
-    zh-CN: 绿
-  color_blue:
-    en: Blue
-    zh-CN: 蓝
-  color_purple:
-    en: Purple
-    zh-CN: 紫
-  color_gray:
-    en: Gray
-    zh-CN: 灰
-  move_to_group:
-    en: Move To Group
-    zh-CN: 移动到组
-  top_level:
-    en: Top Level
-    zh-CN: 顶层
-  refresh:
-    en: Refresh
-    zh-CN: 刷新
-  open_database:
-    en: Open Database
-    zh-CN: 打开数据库
-  close_database:
-    en: Close Database
-    zh-CN: 关闭数据库
-  new_query:
-    en: New Query
-    zh-CN: 新建查询
-  console:
-    en: Console
-    zh-CN: 命令列界面
-  new_database:
-    en: New Database…
-    zh-CN: 新建数据库…
-  filter_types:
-    en: Filter by connection type
-    zh-CN: 按连接类型筛选
-  filter_active:
-    en: Show only active objects
-    zh-CN: 仅显示活跃对象
-  filter_starred:
-    en: Show starred
-    zh-CN: 显示已标星

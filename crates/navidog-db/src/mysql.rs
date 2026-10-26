@@ -37,7 +37,13 @@ impl MySqlDriver {
                 id: id.into(),
                 name: name.into(),
                 family: Family::Relational,
-                default_port: Some(3306),
+                default_port: navidog_core::connection::driver_defaults(id).port,
+                icon: if id == "mariadb" {
+                    "icons/db/mariadb.svg"
+                } else {
+                    "icons/db/mysql.svg"
+                },
+                dialect: Dialect::MySql,
                 supports_ssl: true,
                 supports_ssh: true,
                 per_database_sessions: false,
@@ -119,7 +125,7 @@ impl Driver for MySqlDriver {
             let opts = build_opts(&params);
             let mut conn = tokio::time::timeout(params.timeout(), Conn::new(opts.clone()))
                 .await
-                .map_err(|_| DbError::msg("连接超时"))?
+                .map_err(|_| DbError::coded("navidog.timeout", "The connection timed out."))?
                 .map_err(err)?;
             let version: Option<String> =
                 conn.query_first("SELECT VERSION()").await.map_err(err)?;
@@ -165,7 +171,7 @@ impl MySqlSession {
         self.cancellation.clear();
         let conn = tokio::time::timeout(self.connect_timeout, Conn::new(self.opts.clone()))
             .await
-            .map_err(|_| DbError::msg("连接超时"))?
+            .map_err(|_| DbError::coded("navidog.timeout", "The connection timed out."))?
             .map_err(err)?;
         drop(std::mem::replace(&mut self.conn, conn));
         self.tag.session = self.conn.id() as u64;
@@ -175,6 +181,10 @@ impl MySqlSession {
         self.cancellation
             .replace(Arc::new(move || kill_query(opts.clone(), id).boxed()));
         Ok(())
+    }
+
+    fn lost(&self, e: &DbError) -> bool {
+        e.disconnected
     }
 
     fn remember(&mut self, sql: &str) {
@@ -208,7 +218,10 @@ impl MySqlSession {
                         tracing::warn!("KILL QUERY after the read timeout failed: {e}");
                     }
                     let _ = run.await;
-                    Err(DbError::msg(format!("读取超时（{} 秒）", limit.as_secs())))
+                    Err(DbError::coded(
+                        "navidog.read_timeout",
+                        format!("The query timed out after {} seconds.", limit.as_secs()),
+                    ))
                 }
             }
         };
@@ -231,27 +244,7 @@ impl Session for MySqlSession {
         &self.version
     }
 
-    fn ping(&mut self) -> BoxFuture<'_, DbResult<()>> {
-        async move {
-            let result = match self.conn.ping().await.map_err(err) {
-                Err(e) if e.disconnected && self.recovery.can_reconnect() => {
-                    tracing::warn!("MySQL metadata session lost ({e}); reconnecting");
-                    self.reconnect().await?;
-                    self.conn.ping().await.map_err(err)
-                }
-                other => other,
-            };
-            result.map_err(|e| {
-                if e.disconnected {
-                    self.cancellation.clear();
-                    interrupted(e, false)
-                } else {
-                    e
-                }
-            })
-        }
-        .boxed()
-    }
+    crate::recovering_ping!(self, async { self.conn.ping().await.map_err(err) });
 
     fn cancel_handle(&self) -> Option<CancelHandle> {
         Some(self.cancellation.handle())
@@ -276,45 +269,7 @@ impl Relational for MySqlSession {
         Dialect::MySql
     }
 
-    fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
-        async move {
-            self.recovery.observe(sql);
-            let result = self.attempt(sql).await.map_err(|e| {
-                if e.disconnected {
-                    self.cancellation.clear();
-                    interrupted(e, true)
-                } else {
-                    e
-                }
-            });
-            if result.is_ok() {
-                self.remember(sql);
-            }
-            result
-        }
-        .boxed()
-    }
-
-    fn execute_read<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
-        async move {
-            let result = match self.attempt(sql).await {
-                Err(e) if e.disconnected && self.recovery.can_reconnect() => {
-                    self.reconnect().await?;
-                    self.attempt(sql).await
-                }
-                other => other,
-            };
-            result.map_err(|e| {
-                if e.disconnected {
-                    self.cancellation.clear();
-                    interrupted(e, false)
-                } else {
-                    e
-                }
-            })
-        }
-        .boxed()
-    }
+    crate::recovering_execute!();
 }
 
 async fn query(conn: &mut Conn, sql: &str) -> DbResult<Vec<ResultSet>> {

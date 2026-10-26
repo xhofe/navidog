@@ -93,6 +93,12 @@ pub fn split_script(sql: &str, dialect: Dialect) -> Vec<Statement> {
             i = end;
             continue;
         }
+        if !sql.is_char_boundary(i) {
+            // A custom delimiter scan advances byte by byte; a multi-byte
+            // character can leave `i` inside a code point.
+            i += 1;
+            continue;
+        }
         let c = bytes[i];
         if delimiter != ";" && sql[i..].starts_with(delimiter.as_str()) {
             push(&mut out, sql, start..i, has_code);
@@ -105,7 +111,7 @@ pub fn split_script(sql: &str, dialect: Dialect) -> Vec<Statement> {
             b'\'' | b'"' | b'`' => {
                 let escapes =
                     mysql || (dialect == Dialect::Postgres && c == b'\'' && e_prefix(bytes, i));
-                i = skip_quoted(bytes, i, c, escapes);
+                i = navidog_util::sql_text::skip_quoted(sql, i, escapes);
                 has_code = true;
                 continue;
             }
@@ -123,8 +129,10 @@ pub fn split_script(sql: &str, dialect: Dialect) -> Vec<Statement> {
                     .map_or(bytes.len(), |n| i + 2 + n + 2);
                 continue;
             }
-            b'$' if dialect == Dialect::Postgres => {
-                if let Some(end) = skip_dollar(sql, i) {
+            b'$' if dialect == Dialect::Postgres
+                && navidog_util::sql_text::is_dollar_quote_start(sql, i) =>
+            {
+                if let Some(end) = navidog_util::sql_text::skip_dollar_quoted(sql, i) {
                     i = end;
                     has_code = true;
                     continue;
@@ -225,45 +233,6 @@ fn is_routine(prefix: &str) -> bool {
             .any(|k| p.contains(k))
 }
 
-/// Skips a quoted span (a doubled quote escapes; with `escapes`, so does a backslash) and
-/// returns the position after the closing quote.
-fn skip_quoted(bytes: &[u8], start: usize, quote: u8, escapes: bool) -> usize {
-    let mut i = start + 1;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' if escapes && quote != b'`' => i += 2,
-            b if b == quote => {
-                if bytes.get(i + 1) == Some(&quote) {
-                    i += 2;
-                } else {
-                    return i + 1;
-                }
-            }
-            _ => i += 1,
-        }
-    }
-    bytes.len()
-}
-
-/// PostgreSQL `$tag$ … $tag$`; `None` when this is not a valid opening tag.
-fn skip_dollar(sql: &str, start: usize) -> Option<usize> {
-    let rest = &sql[start + 1..];
-    let tag_len = rest.find('$')?;
-    let tag = &rest[..tag_len];
-    if !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        || tag.starts_with(|c: char| c.is_ascii_digit())
-    {
-        return None;
-    }
-    let delim = &sql[start..start + tag_len + 2];
-    let body_start = start + tag_len + 2;
-    Some(
-        sql[body_start..]
-            .find(delim)
-            .map_or(sql.len(), |n| body_start + n + delim.len()),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,6 +297,10 @@ mod tests {
             ),
             ["DO $body$ BEGIN PERFORM 1; END $body$", "SELECT $1"]
         );
+        assert_eq!(
+            texts("SELECT foo$tag$ FROM t; DELETE FROM u", Dialect::Postgres),
+            ["SELECT foo$tag$ FROM t", "DELETE FROM u"]
+        );
         assert!(texts("  -- only comment\n", Dialect::Sqlite).is_empty());
         // `#` is a comment in MySQL only; PostgreSQL uses it as an operator
         assert_eq!(texts("SELECT 1 # ;\n", Dialect::MySql), ["SELECT 1 # ;"]);
@@ -360,6 +333,11 @@ mod tests {
         assert_eq!(
             texts("DELIMITER //\nSELECT 1//", Dialect::Postgres).len(),
             1
+        );
+        // Non-ASCII text under a custom delimiter must not panic while scanning
+        assert_eq!(
+            texts("DELIMITER //\nSELECT 你好//", Dialect::MySql),
+            ["SELECT 你好"]
         );
     }
 

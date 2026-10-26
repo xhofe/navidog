@@ -330,6 +330,17 @@ impl ResultGrid {
         });
     }
 
+    pub fn raw_mode(&self) -> bool {
+        self.raw
+    }
+
+    /// SQLite ROWID column. Reloads are the caller's job; the menu state is
+    /// notified here so the checkmark follows the field.
+    pub fn set_show_rowid(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_rowid = show;
+        cx.notify();
+    }
+
     /// Raw data mode: string cells gain SQL quotes, and later edits are expressions.
     pub fn set_raw_mode(&mut self, raw: bool, cx: &mut Context<Self>) {
         self.raw = raw;
@@ -896,11 +907,17 @@ fn grid_em(rem: Pixels, cx: &App) -> Pixels {
 }
 
 /// Text the cell paints, so the fit matches the grid rather than the stored value.
-fn cell_text(model: &GridModel, r: usize, c: usize, raw: bool, dialect: Dialect) -> String {
+fn cell_text(
+    model: &GridModel,
+    r: usize,
+    c: usize,
+    raw: bool,
+    dialect: Dialect,
+) -> gpui_kit::SharedString {
     match model.value(r, c) {
-        Some(Some(_)) => model.shown_text(r, c, raw, dialect).to_string(),
-        Some(None) => "(NULL)".to_string(),
-        None => String::new(),
+        Some(Some(_)) => model.shown_text(r, c, raw, dialect),
+        Some(None) => "(NULL)".into(),
+        None => gpui_kit::SharedString::default(),
     }
 }
 
@@ -922,12 +939,12 @@ fn refit_auto(d: &mut GridDelegate, cx: &App) {
         if d.widths.contains_key(&name) {
             continue;
         }
-        let texts: Vec<String> = (0..rows)
+        let texts: Vec<gpui_kit::SharedString> = (0..rows)
             .map(|r| cell_text(&d.model, r, c, raw, dialect))
             .collect();
         auto.insert(
             name.clone(),
-            auto_width(&name, texts.iter().map(String::as_str), em),
+            auto_width(&name, texts.iter().map(|text| text.as_str()), em),
         );
     }
     d.auto = auto;

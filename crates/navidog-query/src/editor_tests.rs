@@ -1,8 +1,10 @@
 //! Headless query editor tests on a real SQLite file: running scripts, messages and summary,
 //! stopping at errors, result naming, parameters and editing a single-table result.
 
+use navidog_test_support::sql;
+use navidog_test_support::wait;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
@@ -15,9 +17,9 @@ use navidog_core::crypto::Key;
 use navidog_core::settings::{ResultsPosition, Settings};
 use navidog_core::store::ConnectionStore;
 use navidog_core::workspace::{Workspace, WorkspaceEvent};
-use navidog_db::sessions::Sessions;
 use navidog_db::sqlite::SqliteDriver;
 use navidog_db::{ConnectParams, Secrets, connect, runtime};
+use navidog_session::sessions::Sessions;
 
 use crate::editor::{QueryEditor, QuerySource, Target};
 use crate::results::Body;
@@ -31,34 +33,6 @@ impl Render for Host {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().size_full().child(self.editor.clone())
     }
-}
-
-fn wait(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !done(cx) {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        cx.run_until_parked();
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-fn sql(file: &std::path::Path, statements: &str) -> Vec<Vec<Option<String>>> {
-    runtime::runtime().block_on(async {
-        let params = ConnectParams {
-            file: Some(file.to_path_buf()),
-            create_new: !file.exists(),
-            ..Default::default()
-        };
-        let mut s = connect(Arc::new(SqliteDriver::default()), params)
-            .await
-            .unwrap();
-        let sets = s.relational().unwrap().execute(statements).await.unwrap();
-        s.close().await.unwrap();
-        sets.into_iter()
-            .last()
-            .map(|set| set.rows)
-            .unwrap_or_default()
-    })
 }
 
 fn live_sql(driver: &str, port: u16, database: &str, statements: &str) {
@@ -174,7 +148,7 @@ fn closing_query_and_console_windows_preserves_in_flight_refreshes(cx: &mut Test
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_grid::init(cx);
         crate::init(cx);
         ConnectionStore::global(cx).update(cx, |store, cx| {
@@ -362,7 +336,7 @@ fn query_runs_publish_one_refresh_for_the_original_connection(cx: &mut TestAppCo
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_grid::init(cx);
         crate::init(cx);
         Settings::update(cx, |settings| settings.continue_on_error = false);
@@ -550,7 +524,7 @@ fn accepted_results_keep_their_rows_and_original_source(cx: &mut TestAppContext)
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_grid::init(cx);
         crate::init(cx);
         Settings::update(cx, |s| s.sync_record = false);
@@ -1181,7 +1155,7 @@ fn runs_scripts_into_messages_summary_and_editable_results(cx: &mut TestAppConte
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_grid::init(cx);
         crate::init(cx);
         ConnectionStore::global(cx).update(cx, |s, cx| {
@@ -1575,7 +1549,7 @@ fn typing_a_character_does_not_reenter_the_editor(cx: &mut TestAppContext) {
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_grid::init(cx);
         crate::init(cx);
     });
@@ -1612,7 +1586,7 @@ fn format_commands_undo_in_one_step_and_the_stack_cycles(cx: &mut TestAppContext
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_grid::init(cx);
         crate::init(cx);
     });
@@ -1743,7 +1717,7 @@ fn saves_untitled_queries_reloads_outside_edits_and_recovers(cx: &mut TestAppCon
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_grid::init(cx);
         crate::init(cx);
         // Reduced motion settles the dialog entrance on its first frame. A click
@@ -1881,7 +1855,7 @@ fn history_log_follows_the_log_and_the_console_runs_statements(cx: &mut TestAppC
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_grid::init(cx);
         crate::init(cx);
         ConnectionStore::global(cx).update(cx, |s, cx| {
@@ -2059,7 +2033,7 @@ fn live_editor_runs_selection_current_errors_and_stop(cx: &mut TestAppContext) {
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_grid::init(cx);
         crate::init(cx);
         ConnectionStore::global(cx).update(cx, |s, _| s.set_key(Key::random()));
@@ -2375,7 +2349,7 @@ fn a_dirty_result_keeps_its_sort_arrow(cx: &mut TestAppContext) {
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_grid::init(cx);
         crate::init(cx);
         Settings::update(cx, |s| s.sync_record = false);

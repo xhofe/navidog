@@ -13,7 +13,7 @@ use gpui_kit::{
 use navidog_core::actions::{OpenConnectionId, ReopenConnectionId};
 use navidog_core::connection::Connection;
 use navidog_core::store::ConnectionStore;
-use navidog_db::sessions::{ConnState, Sessions, SessionsEvent};
+use navidog_session::sessions::{ConnState, Sessions, SessionsEvent};
 
 struct Host {
     focus: FocusHandle,
@@ -51,7 +51,7 @@ fn reopening_requires_confirmation_and_preserves_the_editor_lifecycle(cx: &mut T
         gpui_kit::init(cx);
         navidog_core::init(cx);
         navidog_ui::theme::init(cx);
-        navidog_db::init(cx);
+        navidog_session::init(cx);
         navidog_connection::init(cx);
         cx.set_reduce_motion(true);
         let mut connection = Connection::new("sqlite");

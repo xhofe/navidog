@@ -8,9 +8,9 @@ repository.workspace = true
 description = "Domain model, settings, encrypted storage, and cross-feature actions for navidog."
 
 [dependencies]
+navidog-model = { path = "../navidog-model" }
 gpui-kit.workspace = true
 rust-i18n.workspace = true
-anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -19,6 +19,11 @@ uuid.workspace = true
 chacha20poly1305 = "0.10"
 argon2 = "0.5"
 base64 = "0.22"
+dirs = "6"
+shellexpand = "3"
+tempfile = "3"
+sys-locale = "0.3"
+strum = { version = "0.28", features = ["derive"] }
 
 # macOS Keychain and Windows Credential Manager. Linux keeps the machine key
 # in a 0600 file (see `crypto::machine_key`); secret-service is not linked.

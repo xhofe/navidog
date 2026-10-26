@@ -20,9 +20,9 @@ use gpui_kit::{App, InteractiveElement, SharedString, Window};
 use navidog_core::actions::*;
 use navidog_core::connection::SecretField;
 use navidog_core::registry::{CommandInfo, CommandRegistry, Source};
-use navidog_core::store::{ConnectionStore, StoreError};
+use navidog_core::store::ConnectionStore;
 use navidog_core::workspace::{Selection, Workspace};
-use navidog_db::sessions::Sessions;
+use navidog_session::sessions::Sessions;
 use rust_i18n::t;
 
 pub fn init(cx: &mut App) {
@@ -271,7 +271,7 @@ fn confirm_delete_connection(window: &mut Window, cx: &mut App) {
                 }
                 Sessions::global(cx).update(cx, |s, cx| s.close(&id, cx));
                 navidog_core::vgroups::VirtualGroups::drop_connection(&id, cx);
-                navidog_db::outline::OutlineCache::drop_connection(&id, cx);
+                navidog_session::outline::OutlineCache::drop_connection(&id, cx);
                 let _ = std::fs::remove_dir_all(navidog_core::paths::profile_dir(&id));
                 Workspace::global(cx).update(cx, |w, cx| w.select(Selection::None, cx));
                 true
@@ -315,12 +315,6 @@ fn confirm_delete_group(window: &mut Window, cx: &mut App) {
     });
 }
 
-/// A store or key error in the interface language. `Display` remains suitable for logs.
-#[deprecated(note = "Use navidog_core::store::StoreError::localized_message instead")]
-pub fn store_error_message(error: &StoreError) -> String {
-    error.localized_message()
-}
-
 pub(crate) fn show_error(
     title: SharedString,
     message: SharedString,
@@ -336,14 +330,8 @@ pub(crate) fn show_error(
     });
 }
 
-pub(crate) fn driver_name(driver: &str, cx: &App) -> SharedString {
-    navidog_db::DriverRegistry::get(cx, driver)
-        .map(|d| d.info().name.clone())
-        .unwrap_or_else(|| driver.to_string().into())
-}
-
 pub(crate) fn drivers(cx: &App) -> Vec<Arc<dyn navidog_db::Driver>> {
-    navidog_db::DriverRegistry::all(cx)
+    navidog_session::DriverRegistry::all(cx)
 }
 
 pub(crate) fn secret_label(field: SecretField) -> String {

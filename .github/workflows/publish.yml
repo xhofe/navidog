@@ -562,16 +562,9 @@ jobs:
           gh release edit "$TAG" --notes-file notes.md
           cat "${meta_files[@]}" > all-meta.txt
           awk '{print $5"  "$4}' all-meta.txt | sort -k2 > SHA256SUMS
-          items=""
-          while read -r os arch kind name sha size; do
-            [ -z "${name:-}" ] && continue
-            item=$(printf '{"os":"%s","arch":"%s","kind":"%s","name":"%s","url":"%s/%s","sha256":"%s","size":%s}' \
-              "$os" "$arch" "$kind" "$name" "$BASE" "$name" "$sha" "$size")
-            if [ -z "$items" ]; then items="$item"; else items="$items,$item"; fi
-          done < all-meta.txt
-          printf '{"version":"%s","tag":"%s","notes":"https://github.com/%s/releases/tag/%s","assets":[%s]}' \
-            "$VERSION" "$TAG" "$REPO" "$TAG" "$items" \
-            | jq --rawfile body notes.md '. + {body: $body}' > latest.json
+          cargo run --quiet -p xtask -- manifest \
+            --meta all-meta.txt --version "$VERSION" --tag "$TAG" \
+            --repo "$REPO" --notes notes.md > latest.json
           ./scripts/upload_asset.sh ./SHA256SUMS
           # Keep the release being published in the index even while its tag is a
           # draft. Other drafts stay out.

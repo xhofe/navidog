@@ -19,12 +19,13 @@ use navidog_core::connection::{
 };
 use navidog_core::store::ConnectionStore;
 use navidog_core::workspace::{Selection, Workspace};
-use navidog_db::{ConnectParams, DriverRegistry, Secrets, runtime};
+use navidog_db::{ConnectParams, Secrets, runtime};
+use navidog_session::DriverRegistry;
 use navidog_ui::skin::{FormRow, confirm_with, form_note};
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
 
-use navidog_db::sessions::Sessions;
+use navidog_session::sessions::Sessions;
 
 pub fn open_new(driver: SharedString, window: &mut Window, cx: &mut App) {
     let mut conn = Connection::new(&driver);
@@ -70,12 +71,19 @@ pub fn open_edit(id: String, window: &mut Window, cx: &mut App) {
 
 fn open(conn: Connection, secrets: Option<[Option<String>; 3]>, window: &mut Window, cx: &mut App) {
     let form = cx.new(|cx| ConnectionForm::new(conn, secrets, window, cx));
+    let focus = form.clone();
     window.open_dialog(cx, move |dialog, window, _| {
         // Enter in a single-line field saves, like OK, instead of closing and losing the input
         confirm_with(dialog, &form, ConnectionForm::save)
             .w(tokens::conn_form::WIDTH.to_pixels(window.rem_size()))
             .close_button(false)
             .child(form.clone())
+    });
+    // `open_dialog` focuses the dialog itself, so focus the first field after it.
+    window.defer(cx, move |window, cx| {
+        focus.update(cx, |form, cx| {
+            form.name.update(cx, |input, cx| input.focus(window, cx));
+        });
     });
 }
 
@@ -193,6 +201,43 @@ fn opt_num(v: Option<u32>) -> String {
 
 const SSH_AUTHS: [SshAuth; 3] = [SshAuth::Password, SshAuth::PublicKey, SshAuth::Both];
 
+/// Validate a port field. An empty field means "use the server default" for
+/// optional ports; a non-numeric or out-of-range value is an error, not a
+/// silent `None`.
+fn port_value(text: &str, field: &str) -> Result<Option<u16>, SharedString> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+    text.parse::<u16>()
+        .map(Some)
+        .map_err(|_| t!("conn.bad_port", field = field).to_string().into())
+}
+
+fn port_or_default(text: &str, default: u16, field: &str) -> Result<u16, SharedString> {
+    Ok(port_value(text, field)?.unwrap_or(default))
+}
+
+fn number_value(text: &str, field: &str) -> Result<Option<u32>, SharedString> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+    text.parse::<u32>()
+        .map(Some)
+        .map_err(|_| t!("conn.bad_number", field = field).to_string().into())
+}
+
+/// Parse the multi-node editor; an invalid line is an error. The previous
+/// `filter_map` silently dropped it and saved a different server list.
+fn member_list(text: &str) -> Result<Vec<Member>, SharedString> {
+    let mut out = Vec::new();
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let member =
+            Member::parse(line).ok_or_else(|| t!("conn.bad_member", line = line).to_string())?;
+        out.push(member);
+    }
+    Ok(out)
+}
+
 impl ConnectionForm {
     fn new(
         conn: Connection,
@@ -233,7 +278,6 @@ impl ConnectionForm {
             t!("conn.auth_both").to_string().into(),
         ];
         let name = text(conn.name.clone(), window, cx);
-        name.update(cx, |s, cx| s.focus(window, cx));
         let g = &conn.general;
         let node_type = choice(
             vec![
@@ -414,11 +458,11 @@ impl ConnectionForm {
         }
     }
 
-    fn num(input: &Text, on: bool, cx: &App) -> Option<u32> {
+    fn num(input: &Text, on: bool, field: &str, cx: &App) -> Result<Option<u32>, SharedString> {
         if !on {
-            return None;
+            return Ok(None);
         }
-        Self::value(input, cx).parse().ok()
+        number_value(&Self::value(input, cx), field)
     }
 
     /// Collects the full connection settings from the form controls.
@@ -437,13 +481,12 @@ impl ConnectionForm {
         c.group = self.group_ids.get(group_ix).cloned().flatten();
         let g = &mut c.general;
         g.host = Self::value(&self.host, cx);
-        g.port = Self::value(&self.port, cx).parse().ok();
         g.database = Self::opt(&self.database, cx);
         g.file = Self::opt(&self.file, cx);
         g.user = Self::value(&self.user, cx);
         if self.multi_node(cx) {
             let text = self.members.read(cx).value().to_string();
-            let mut members: Vec<Member> = text.lines().filter_map(Member::parse).collect();
+            let mut members = member_list(&text)?;
             if members.is_empty() {
                 return Err(t!("conn.members_required").to_string().into());
             }
@@ -452,19 +495,43 @@ impl ConnectionForm {
             let ix = Self::selected(&self.host_preference, cx);
             g.host_preference = HostPreference::ALL[ix.min(2)];
         } else {
+            g.port = port_value(&Self::value(&self.port, cx), &t!("conn.port"))?;
             g.members.clear();
             g.host_preference = HostPreference::Any;
         }
         let a = &mut c.advanced;
-        a.keepalive_secs = Self::num(&self.keepalive, self.keepalive_on, cx);
-        a.connect_timeout_secs = Self::value(&self.connect_timeout, cx).parse().ok();
-        a.read_timeout_secs = Self::num(&self.read_timeout, self.read_timeout_on, cx);
-        a.write_timeout_secs = Self::num(&self.write_timeout, self.write_timeout_on, cx);
+        a.keepalive_secs = Self::num(
+            &self.keepalive,
+            self.keepalive_on,
+            &t!("conn.keepalive"),
+            cx,
+        )?;
+        a.connect_timeout_secs = number_value(
+            &Self::value(&self.connect_timeout, cx),
+            &t!("conn.connect_timeout"),
+        )?;
+        a.read_timeout_secs = Self::num(
+            &self.read_timeout,
+            self.read_timeout_on,
+            &t!("conn.read_timeout"),
+            cx,
+        )?;
+        a.write_timeout_secs = Self::num(
+            &self.write_timeout,
+            self.write_timeout_on,
+            &t!("conn.write_timeout"),
+            cx,
+        )?;
         a.socket = self
             .socket_on
             .then(|| Self::value(&self.socket, cx))
             .filter(|s| !s.is_empty());
-        a.session_limit = Self::num(&self.session_limit, self.session_limit_on, cx);
+        a.session_limit = Self::num(
+            &self.session_limit,
+            self.session_limit_on,
+            &t!("conn.session_limit"),
+            cx,
+        )?;
         a.params = Self::value(&self.params, cx);
         a.initial_queries = Self::value(&self.initial_queries, cx);
         let ssl_ix = self
@@ -480,7 +547,9 @@ impl ConnectionForm {
         c.ssl.cipher = Self::opt(&self.cipher, cx);
         c.ssl.crl = Self::opt(&self.crl, cx);
         c.ssh.host = Self::value(&self.ssh_host, cx);
-        c.ssh.port = Self::value(&self.ssh_port, cx).parse().unwrap_or(22);
+        if c.ssh.enabled {
+            c.ssh.port = port_or_default(&Self::value(&self.ssh_port, cx), 22, &t!("conn.port"))?;
+        }
         c.ssh.user = Self::value(&self.ssh_user, cx);
         let auth_ix = self
             .ssh_auth
@@ -518,7 +587,7 @@ impl ConnectionForm {
         let Some(driver) = DriverRegistry::get(cx, &conn.driver) else {
             return;
         };
-        let params = ConnectParams::from_connection(&conn, self.secrets(cx));
+        let params = ConnectParams::from_connection(&conn, self.secrets(cx), driver.info());
         let job = runtime::spawn(navidog_db::test_connection(driver, params));
         self.testing = Some(cx.spawn_in(window, async move |this, cx| {
             let result = job
@@ -1223,6 +1292,16 @@ impl ConnectionForm {
             .into_any_element(),
         );
         rows.push(
+            FormRow::bare(self.check(
+                "verify-host-key",
+                t!("conn.verify_host_key").to_string(),
+                s.verify_host_key,
+                |t, v| t.draft.ssh.verify_host_key = v,
+                cx,
+            ))
+            .into_any_element(),
+        );
+        rows.push(
             FormRow::new(t!("conn.user").to_string(), Input::new(&self.ssh_user).w(w))
                 .into_any_element(),
         );
@@ -1309,7 +1388,7 @@ impl Render for ConnectionForm {
         let title = if self.is_new {
             t!(
                 "conn.new_connection_of",
-                driver = crate::driver_name(&self.draft.driver, cx)
+                driver = navidog_session::DriverRegistry::name(cx, &self.draft.driver)
             )
             .to_string()
         } else {
@@ -1392,5 +1471,23 @@ impl Render for ConnectionForm {
                             ),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_ports_and_server_lines_are_errors() {
+        assert_eq!(port_value("", "Port").unwrap(), None);
+        assert_eq!(port_value("3306", "Port").unwrap(), Some(3306));
+        assert!(port_value("3306x", "Port").is_err());
+        assert!(port_value("70000", "Port").is_err());
+        assert_eq!(port_or_default("", 22, "Port").unwrap(), 22);
+        assert_eq!(number_value("30", "Timeout").unwrap(), Some(30));
+        assert!(number_value("-1", "Timeout").is_err());
+        assert_eq!(member_list("db1:3306\n[::1]:3307\n").unwrap().len(), 2);
+        assert!(member_list("db1:3306\nnot a host:port\n").is_err());
     }
 }

@@ -2,22 +2,18 @@
 //! node expands or the selection changes (never in render), and are invalidated when the
 //! connection closes or refreshes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
-use gpui_kit::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
+use gpui_kit::{App, AppContext as _, Context, Entity, Global, Task};
 use navidog_core::object::{ObjectKind, ObjectRef, Scope};
+use navidog_core::store::{ConnectionStore, StoreEvent};
 use navidog_core::workspace::{Workspace, WorkspaceEvent};
-use navidog_db::sessions::{Sessions, SessionsEvent};
 use navidog_db::{ColumnInfo, DbResult, ObjectInfo, TableChildren};
+use navidog_session::sessions::{Sessions, SessionsEvent};
 use tokio::task::JoinHandle;
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Load<T> {
-    Loading,
-    Ready(T),
-    Failed(SharedString),
-}
+pub use navidog_session::scope_cache::Load;
 
 #[derive(Default)]
 pub struct Catalog {
@@ -225,6 +221,20 @@ impl Catalog {
         self.load("children", key, |c| &mut c.children, job, force, cx);
     }
 
+    /// Drops caches for connections that no longer exist in the store.
+    pub fn retain_connections(&mut self, live: &HashSet<String>, cx: &mut Context<Self>) {
+        self.bump();
+        self.schemas.retain(|(c, _), _| live.contains(c));
+        self.objects
+            .retain(|(s, _), _| live.contains(&s.connection));
+        self.ddl.retain(|o, _| live.contains(&o.scope.connection));
+        self.columns
+            .retain(|(s, _), _| live.contains(&s.connection));
+        self.children
+            .retain(|(s, _), _| live.contains(&s.connection));
+        cx.notify();
+    }
+
     /// Drops everything cached for a connection (closed or refreshed).
     pub fn invalidate_connection(&mut self, conn: &str, cx: &mut Context<Self>) {
         self.bump();
@@ -258,7 +268,8 @@ impl Catalog {
 
     /// Reloads existing entries after SQL on this connection, without expanding unopened nodes.
     fn refresh_connection(&mut self, conn: &str, cx: &mut Context<Self>) {
-        Sessions::global(cx).update(cx, |sessions, cx| sessions.refresh(conn, cx));
+        // The catalog only owns metadata; the shell decides whether a database
+        // switch also refreshes the session (see `init` below).
         let schemas: Vec<_> = self
             .schemas
             .keys()
@@ -334,6 +345,8 @@ pub(crate) fn init(cx: &mut App) {
             &Workspace::global(cx),
             |this, _, event: &WorkspaceEvent, cx| match event {
                 WorkspaceEvent::DatabaseChanged(connection) => {
+                    Sessions::global(cx)
+                        .update(cx, |sessions, cx| sessions.refresh(connection, cx));
                     this.refresh_connection(connection, cx);
                 }
                 WorkspaceEvent::QueriesChanged => {
@@ -348,6 +361,19 @@ pub(crate) fn init(cx: &mut App) {
                     }
                 }
                 WorkspaceEvent::SelectionChanged => {}
+            },
+        )
+        .detach();
+        cx.subscribe(
+            &ConnectionStore::global(cx),
+            |this, _, _: &StoreEvent, cx| {
+                let live: HashSet<String> = ConnectionStore::global(cx)
+                    .read(cx)
+                    .connections()
+                    .iter()
+                    .map(|connection| connection.id.clone())
+                    .collect();
+                this.retain_connections(&live, cx);
             },
         )
         .detach();

@@ -29,7 +29,7 @@ const REPO: &str = "https://github.com/xhofe/navidog";
 
 /// The app log goes to the log folder from the preferences; "diagnostic log" records debug
 /// messages too (F-PREF-010). A changed folder applies at the next start.
-fn init_logging() -> tracing_appender::non_blocking::WorkerGuard {
+fn init_logging() -> (Settings, tracing_appender::non_blocking::WorkerGuard) {
     let settings = Settings::load();
     let dir = settings.log_dir();
     navidog_db::log::set_dir(dir.clone());
@@ -48,16 +48,16 @@ fn init_logging() -> tracing_appender::non_blocking::WorkerGuard {
         .with_writer(writer)
         .with_ansi(false)
         .init();
-    guard
+    (settings, guard)
 }
 
 pub fn run() {
-    let _log_guard = init_logging();
+    let (settings, _log_guard) = init_logging();
     update::arm_smoke_watchdog();
     gpui_kit::application()
         .with_assets(NavidogAssets)
-        .run(|cx| {
-            init(cx);
+        .run(move |cx| {
+            init_with_settings(cx, settings);
             cx.set_app_identity("ci.nn.navidog", "Navidog");
             set_dock_icon();
             menus::bind_keys(cx);
@@ -68,8 +68,12 @@ pub fn run() {
                 .detach();
             register_app_actions(cx);
 
-            let state = AppState::load();
-            let (window, view) = open_main_window(state, cx);
+            let state = cx.global::<AppState>().clone();
+            let Some((window, view)) = open_main_window(state, cx) else {
+                tracing::error!("cannot open the main window");
+                cx.quit();
+                return;
+            };
             // The recovery dialog needs the window root, which exists only after open_window returns.
             let _ = window.update(cx, |_, window, cx| {
                 view.update(cx, |v, cx| v.check_recovery(window, cx));
@@ -89,20 +93,24 @@ pub fn run() {
 
 /// Initializes every layer (no platform UI such as the menu bar, so headless rendering uses it too).
 pub fn init(cx: &mut App) {
+    init_with_settings(cx, Settings::load());
+}
+
+/// Like [`init`], with settings already read by the caller.
+pub fn init_with_settings(cx: &mut App, settings: Settings) {
     use gpui_kit::component as gpui_component;
     rust_i18n::extend!(gpui_component);
     gpui_kit::init(cx);
-    navidog_core::init(cx);
+    navidog_core::init_with_settings(cx, settings);
     gpui_kit::component::set_locale(Settings::global(cx).language.locale());
     navidog_ui::theme::init(cx);
     navidog_ui::tabs::init(cx);
-    navidog_db::init(cx);
+    navidog_session::init(cx);
     navidog_connection::init(cx);
     navidog_navigator::init(cx);
     navidog_grid::init(cx);
     navidog_query::init(cx);
     navidog_designer::init(cx);
-    navidog_plugin::init(cx);
     register_commands(cx);
     cx.set_global(AppState::load());
 }
@@ -160,7 +168,7 @@ pub fn main_window_options(state: &AppState, cx: &mut App) -> WindowOptions {
 fn open_main_window(
     state: AppState,
     cx: &mut App,
-) -> (gpui_kit::AnyWindowHandle, gpui_kit::Entity<MainWindow>) {
+) -> Option<(gpui_kit::AnyWindowHandle, gpui_kit::Entity<MainWindow>)> {
     let options = main_window_options(&state, cx);
     gpui_kit::open_window(options, cx, move |window, cx| {
         apply_theme(Some(window), cx);
@@ -175,7 +183,7 @@ fn open_main_window(
         view.update(cx, |v, cx| v.open_startup_tabs(window, cx));
         view
     })
-    .expect("无法打开主窗口")
+    .ok()
 }
 
 /// The key window, else the frontmost, else any window GPUI still has open.
@@ -207,7 +215,7 @@ pub fn register_app_actions(cx: &mut App) {
     cx.on_action(|a: &navidog_core::actions::TableStructureChanged, cx| {
         navidog_navigator::catalog::Catalog::global(cx)
             .update(cx, |catalog, cx| catalog.refresh_scope(&a.scope, cx));
-        navidog_db::outline::OutlineCache::global(cx)
+        navidog_session::outline::OutlineCache::global(cx)
             .update(cx, |cache, cx| cache.ensure(&a.scope, true, cx));
     });
     cx.on_action(|_: &Quit, cx| cx.quit());
@@ -242,49 +250,23 @@ pub fn register_app_actions(cx: &mut App) {
 /// `scripts/bundle-macos.sh`; gpui ignores `WindowOptions::icon` on macOS.
 #[cfg(target_os = "macos")]
 fn set_dock_icon() {
-    use std::ffi::{CStr, c_char, c_void};
-
-    #[link(name = "objc", kind = "dylib")]
-    unsafe extern "C" {
-        fn objc_getClass(name: *const c_char) -> *mut c_void;
-        fn sel_registerName(name: *const c_char) -> *mut c_void;
-        // Not variadic: on arm64 a variadic declaration uses another ABI, so
-        // the extra arguments never arrive and AppKit throws.
-        fn objc_msgSend();
-    }
+    use objc2::{AnyThread, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::NSData;
 
     const SVG: &[u8] = include_bytes!("../resources/navidog.svg");
-    type Send0 = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void;
-    type Send1 = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void;
-    type SendBytes =
-        unsafe extern "C" fn(*mut c_void, *mut c_void, *const u8, usize) -> *mut c_void;
-
-    unsafe {
-        let sel = |name: &CStr| sel_registerName(name.as_ptr());
-        let send0: Send0 = std::mem::transmute(objc_msgSend as *const ());
-        let send1: Send1 = std::mem::transmute(objc_msgSend as *const ());
-        let send_bytes: SendBytes = std::mem::transmute(objc_msgSend as *const ());
-        let data = send_bytes(
-            objc_getClass(c"NSData".as_ptr()),
-            sel(c"dataWithBytes:length:"),
-            SVG.as_ptr(),
-            SVG.len(),
-        );
-        let image = send1(
-            send0(objc_getClass(c"NSImage".as_ptr()), sel(c"alloc")),
-            sel(c"initWithData:"),
-            data,
-        );
-        if image.is_null() {
-            tracing::warn!("the dock icon SVG did not load");
-            return;
-        }
-        let app = send0(
-            objc_getClass(c"NSApplication".as_ptr()),
-            sel(c"sharedApplication"),
-        );
-        send1(app, sel(c"setApplicationIconImage:"), image);
-    }
+    let Some(mtm) = MainThreadMarker::new() else {
+        tracing::warn!("the dock icon must be set on the main thread");
+        return;
+    };
+    let data =
+        unsafe { NSData::initWithBytes_length(NSData::alloc(), SVG.as_ptr().cast(), SVG.len()) };
+    let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) else {
+        tracing::warn!("the dock icon SVG did not load");
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    unsafe { app.setApplicationIconImage(Some(&image)) };
 }
 
 #[cfg(not(target_os = "macos"))]
