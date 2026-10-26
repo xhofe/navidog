@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, TabGroup, panel_handle,
@@ -130,7 +132,7 @@ pub struct TableDesigner {
     selected: Option<u64>,
     next_id: u64,
     page: Page,
-    dialect: Dialect,
+    dialect: Arc<dyn Dialect>,
     busy: bool,
     loaded: bool,
     needs_reload: bool,
@@ -268,14 +270,15 @@ impl TableDesigner {
                         .clone();
                     navidog_session::DriverRegistry::dialect(cx, &driver)
                 })
-                .unwrap_or(Dialect::Sqlite);
-            let migration_error = if dialect == Dialect::Postgres {
+                .expect("the connection's driver is registered");
+            let migration_error = if dialect.id() == "postgres" {
                 saved
                     .draft
-                    .migrate_comments(&saved.scope)
+                    .migrate_comments(&saved.scope, dialect.as_ref())
                     .and_then(|_| {
                         if let Some(old) = &mut saved.baseline {
-                            old.design.migrate_comments(&saved.scope)?;
+                            old.design
+                                .migrate_comments(&saved.scope, dialect.as_ref())?;
                         }
                         Ok(())
                     })
@@ -399,23 +402,24 @@ impl TableDesigner {
                     },
                 ));
             }
-            let table_option_inputs: std::collections::BTreeMap<_, _> = options::keys(dialect)
-                .iter()
-                .enumerate()
-                .map(|(ix, key)| {
-                    let input = input(String::new(), window, cx);
-                    subscriptions.push(cx.subscribe_in(
-                        &input,
-                        window,
-                        move |this, _, event: &InputEvent, w, cx| {
-                            if matches!(event, InputEvent::Change) && !this.syncing {
-                                this.table_option_changed(ix, w, cx);
-                            }
-                        },
-                    ));
-                    (*key, input)
-                })
-                .collect();
+            let table_option_inputs: std::collections::BTreeMap<_, _> =
+                options::keys(dialect.as_ref())
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, key)| {
+                        let input = input(String::new(), window, cx);
+                        subscriptions.push(cx.subscribe_in(
+                            &input,
+                            window,
+                            move |this, _, event: &InputEvent, w, cx| {
+                                if matches!(event, InputEvent::Change) && !this.syncing {
+                                    this.table_option_changed(ix, w, cx);
+                                }
+                            },
+                        ));
+                        (*key, input)
+                    })
+                    .collect();
             let mut this = Self {
                 table,
                 properties,
@@ -495,7 +499,7 @@ impl TableDesigner {
             .map(String::from)
             .collect();
         self.draft.indexes =
-            navidog_db::sql::split_script(&self.indexes.read(cx).value(), self.dialect)
+            navidog_db::sql::split_script(&self.indexes.read(cx).value(), self.dialect.lex())
                 .into_iter()
                 .map(|s| s.text)
                 .collect();
@@ -521,7 +525,7 @@ impl TableDesigner {
             .iter()
             .find(|c| Some(c.id) == self.selected);
         let props = c
-            .map(|c| column_properties(&c.definition, self.dialect))
+            .map(|c| column_properties(&c.definition, self.dialect.as_ref()))
             .unwrap_or_default();
         self.syncing = true;
         self.name.update(cx, |s, cx| {
@@ -538,7 +542,7 @@ impl TableDesigner {
             props.data_type,
             props.length,
             props.scale,
-            if self.dialect == Dialect::Postgres {
+            if self.dialect.id() == "postgres" {
                 c.map(|c| c.comment.clone()).unwrap_or_default()
             } else {
                 props.comment
@@ -646,7 +650,7 @@ impl TableDesigner {
             return;
         }
         self.flush(cx);
-        if self.dialect == Dialect::Sqlite
+        if self.dialect.id() == "sqlite"
             && self.baseline.is_some()
             && let Some(job) = Sessions::global(cx)
                 .read(cx)
@@ -680,7 +684,7 @@ impl TableDesigner {
                     match names {
                         Ok(names) => this.publish_preview(
                             table_design::plan_with(
-                                this.dialect,
+                                this.dialect.as_ref(),
                                 &this.scope,
                                 this.baseline.as_ref(),
                                 &this.draft,
@@ -701,7 +705,7 @@ impl TableDesigner {
         }
         self.publish_preview(
             table_design::plan(
-                self.dialect,
+                self.dialect.as_ref(),
                 &self.scope,
                 self.baseline.as_ref(),
                 &self.draft,
@@ -808,12 +812,9 @@ impl TableDesigner {
                                 "This connection is not a relational database.",
                             )
                         })?;
-                        if r.dialect() == Dialect::MySql {
-                            r.execute(&format!(
-                                "USE {}",
-                                Dialect::MySql.quote_ident(&scope.database)
-                            ))
-                            .await?;
+                        if r.dialect().id() == "mysql" {
+                            r.execute(&format!("USE {}", r.dialect().quote_ident(&scope.database)))
+                                .await?;
                         }
                         if save {
                             table_design::apply(r, &scope, baseline.as_ref(), &draft).await
@@ -845,7 +846,7 @@ impl TableDesigner {
                     }
                     Err(e) => {
                         this.error = Some(e.to_string());
-                        if save && this.dialect == Dialect::MySql {
+                        if save && this.dialect.id() == "mysql" {
                             this.needs_reload = true;
                         }
                     }

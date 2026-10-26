@@ -14,7 +14,9 @@ impl TableViewer {
             return true;
         }
         if let Some(row) = self.view.form_for {
-            let dialect = self.dialect.unwrap_or(Dialect::Sqlite);
+            let Some(dialect) = self.dialect.as_deref() else {
+                return true;
+            };
             if self
                 .view
                 .form_inputs
@@ -70,7 +72,7 @@ impl TableViewer {
             cx.notify();
             return;
         }
-        let (Some(session), Some(dialect)) = (self.session.clone(), self.dialect) else {
+        let (Some(session), Some(dialect)) = (self.session.clone(), self.dialect.clone()) else {
             return;
         };
         let generation = self.session_generation;

@@ -48,7 +48,7 @@ impl ConnectionForm {
             .into_any_element(),
         ];
         if self.draft.supports_network() {
-            let postgres = self.draft.driver == "postgres";
+            let postgres = super::driver_flag(cx, &self.draft.driver, |info| info.multi_host);
             if postgres {
                 rows.push(
                     FormRow::new(
@@ -197,9 +197,10 @@ impl ConnectionForm {
             .compact()
             .into_any_element(),
         ];
-        let mysql = matches!(self.draft.driver.as_str(), "mysql" | "mariadb");
-        let pg = self.draft.driver == "postgres";
-        if mysql || pg {
+        let network = self.draft.supports_network();
+        let mysql = super::driver_flag(cx, &self.draft.driver, |info| info.protocol_timeouts);
+        let pg = super::driver_flag(cx, &self.draft.driver, |info| info.connection_params);
+        if network {
             rows.push(self.toggled_number(
                 "keepalive",
                 t!("conn.keepalive").to_string(),
@@ -283,7 +284,7 @@ impl ConnectionForm {
                 .into_any_element(),
             );
         }
-        if mysql || pg {
+        if network {
             rows.push(self.toggled_number(
                 "session-limit",
                 t!("conn.session_limit").to_string(),
@@ -466,7 +467,7 @@ impl ConnectionForm {
     }
 
     pub(crate) fn render_ssl(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let pg = self.draft.driver == "postgres";
+        let pg = super::driver_flag(cx, &self.draft.driver, |info| info.chooses_ssl_mode);
         let mut rows = vec![
             FormRow::bare(self.check(
                 "use-ssl",

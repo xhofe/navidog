@@ -24,5 +24,8 @@ tokio.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+navidog-mysql = { path = "../navidog-mysql" }
+navidog-postgres = { path = "../navidog-postgres" }
+navidog-sqlite = { path = "../navidog-sqlite" }
 navidog-test-support = { path = "../navidog-test-support" }
 gpui-kit = { workspace = true, features = ["test-support"] }

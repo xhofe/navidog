@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use gpui_kit::SharedString;
-use navidog_db::dialect::{Dialect, RowKey, RowUpdate, Written};
+use navidog_db::dialect::{RowKey, RowUpdate, Written};
 
 use super::*;
 
@@ -472,17 +472,30 @@ fn raw_edits_stay_unquoted_and_reverting_clears_the_flag() {
 fn raw_mode_quotes_string_values_only() {
     let mut m = model(true);
     m.set_column_type(1, "varchar(45)");
-    assert_eq!(m.raw_text(0, 1, true, Dialect::Sqlite), "'a'");
-    assert_eq!(m.raw_text(0, 0, true, Dialect::Sqlite), "1");
-    assert_eq!(m.raw_text(1, 1, true, Dialect::MySql), "");
+    assert_eq!(
+        m.raw_text(0, 1, true, &navidog_sqlite::SqliteDialect),
+        "'a'"
+    );
+    assert_eq!(m.raw_text(0, 0, true, &navidog_sqlite::SqliteDialect), "1");
+    assert_eq!(m.raw_text(1, 1, true, &navidog_mysql::MysqlDialect), "");
     m.set_value(0, 1, Some("O'Brien".into()));
-    assert_eq!(m.raw_text(0, 1, true, Dialect::MySql), "'O''Brien'");
-    assert_eq!(m.raw_text(0, 1, false, Dialect::MySql), "O'Brien");
+    assert_eq!(
+        m.raw_text(0, 1, true, &navidog_mysql::MysqlDialect),
+        "'O''Brien'"
+    );
+    assert_eq!(
+        m.raw_text(0, 1, false, &navidog_mysql::MysqlDialect),
+        "O'Brien"
+    );
     // Copy in raw mode is what the grid shows, so pasting it back as SQL writes the same value
     m.select((0, 0), false);
     m.select((0, 1), true);
     assert_eq!(
-        m.selected_tsv(false, true, Some(Dialect::MySql)),
+        m.selected_tsv(
+            false,
+            true,
+            Some(std::sync::Arc::new(navidog_mysql::MysqlDialect))
+        ),
         "1\t'O''Brien'"
     );
     assert_eq!(m.selected_tsv(false, true, None), "1\tO'Brien");

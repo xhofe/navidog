@@ -3,6 +3,8 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use std::sync::Arc;
+
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::component::native_menu::NativeMenu;
@@ -137,7 +139,7 @@ pub(crate) fn init(cx: &mut App) {
 /// The table behind the grid; "Copy As INSERT / UPDATE" is only available when it is set.
 #[derive(Clone)]
 pub struct GridTarget {
-    pub dialect: Dialect,
+    pub dialect: Arc<dyn Dialect>,
     pub scope: Scope,
     pub table: String,
 }
@@ -198,7 +200,7 @@ impl ResultGrid {
             show_type: true,
             show_comment: false,
             raw: false,
-            dialect: Dialect::Sqlite,
+            dialect: None,
             find: None,
             layout: ColumnLayout::default(),
             widths: BTreeMap::new(),
@@ -302,10 +304,7 @@ impl ResultGrid {
     }
 
     pub fn set_target(&mut self, target: Option<GridTarget>, cx: &mut Context<Self>) {
-        let dialect = target
-            .as_ref()
-            .map(|t| t.dialect)
-            .unwrap_or(Dialect::Sqlite);
+        let dialect = target.as_ref().map(|t| t.dialect.clone());
         self.target = target;
         let widths = self
             .target
@@ -912,7 +911,7 @@ fn cell_text(
     r: usize,
     c: usize,
     raw: bool,
-    dialect: Dialect,
+    dialect: &dyn Dialect,
 ) -> gpui_kit::SharedString {
     match model.value(r, c) {
         Some(Some(_)) => model.shown_text(r, c, raw, dialect),
@@ -926,7 +925,7 @@ fn refit_auto(d: &mut GridDelegate, cx: &App) {
     let em = grid_em(d.rem, cx).as_f32();
     let rows = d.model.row_count().min(FIT_ROWS);
     let raw = d.raw;
-    let dialect = d.dialect;
+    let dialect = d.dialect.clone();
     let columns: Vec<(usize, SharedString)> = d
         .model
         .columns
@@ -940,7 +939,12 @@ fn refit_auto(d: &mut GridDelegate, cx: &App) {
             continue;
         }
         let texts: Vec<gpui_kit::SharedString> = (0..rows)
-            .map(|r| cell_text(&d.model, r, c, raw, dialect))
+            .map(|r| {
+                dialect
+                    .as_deref()
+                    .map(|dialect| cell_text(&d.model, r, c, raw, dialect))
+                    .unwrap_or_default()
+            })
             .collect();
         auto.insert(
             name.clone(),

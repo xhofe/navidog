@@ -164,7 +164,7 @@ impl TableDesigner {
                         if ix == 10 { 90 } else { ix },
                         if ix == 10 {
                             vec!["".into(), "ALWAYS".into(), "BY DEFAULT".into()]
-                        } else if self.dialect == Dialect::Postgres {
+                        } else if self.dialect.id() == "postgres" {
                             vec!["STORED".into()]
                         } else {
                             vec!["VIRTUAL".into(), "STORED".into()]
@@ -181,7 +181,7 @@ impl TableDesigner {
             .iter()
             .find(|c| Some(c.id) == self.selected);
         let p = c
-            .map(|c| column_properties(&c.definition, self.dialect))
+            .map(|c| column_properties(&c.definition, self.dialect.as_ref()))
             .unwrap_or_default();
         let disabled = self.busy || !self.loaded || c.is_none();
         let numeric = navidog_util::sql_type::type_kind(&p.data_type)
@@ -201,10 +201,10 @@ impl TableDesigner {
                 cx,
             ))
             .child(self.property_row(5, "collation", disabled, cx))
-            .when(text && self.dialect == Dialect::MySql, |v| {
+            .when(text && self.dialect.id() == "mysql", |v| {
                 v.child(self.property_row(6, "charset", disabled, cx))
             })
-            .when(numeric && self.dialect != Dialect::Postgres, |v| {
+            .when(numeric && self.dialect.id() != "postgres", |v| {
                 v.child(FormRow::bare(
                     Checkbox::new("designer-auto-increment")
                         .label(t!("designer.auto_increment").to_string())
@@ -215,7 +215,7 @@ impl TableDesigner {
                         })),
                 ))
             })
-            .when(numeric && self.dialect == Dialect::MySql, |v| {
+            .when(numeric && self.dialect.id() == "mysql", |v| {
                 v.child(FormRow::bare(
                     Checkbox::new("designer-unsigned")
                         .label(t!("designer.unsigned").to_string())
@@ -226,7 +226,7 @@ impl TableDesigner {
                         })),
                 ))
             })
-            .when(self.dialect == Dialect::MySql && numeric, |v| {
+            .when(self.dialect.id() == "mysql" && numeric, |v| {
                 v.child(FormRow::bare(
                     Checkbox::new("designer-zerofill")
                         .label(t!("designer.zerofill").to_string())
@@ -238,13 +238,13 @@ impl TableDesigner {
                 ))
             })
             .when(
-                self.dialect == Dialect::MySql
+                self.dialect.id() == "mysql"
                     && ["TIMESTAMP", "DATETIME"]
                         .iter()
                         .any(|ty| p.data_type.to_ascii_uppercase().contains(ty)),
                 |v| v.child(self.property_row(9, "on_update_expression", disabled, cx)),
             )
-            .when(self.dialect == Dialect::Postgres && numeric, |v| {
+            .when(self.dialect.id() == "postgres" && numeric, |v| {
                 v.child(self.property_row(10, "identity_mode", disabled || p.generated, cx))
             })
             .when(p.generated, |v| {
@@ -284,15 +284,15 @@ impl TableDesigner {
                             && entry.as_ref().is_some_and(|e| e.kind != EntryKind::Index))
                             && !(self.page == Page::ForeignKeys
                                 && *ix == 4
-                                && self.dialect == Dialect::Sqlite)
+                                && self.dialect.id() == "sqlite")
                     })
                     .map(|ix| {
                         let control_disabled = disabled
-                            || (ix == 3 && self.dialect != Dialect::MySql)
-                            || (ix == 2 && self.dialect == Dialect::Sqlite)
+                            || (ix == 3 && self.dialect.id() != "mysql")
+                            || (ix == 2 && self.dialect.id() == "sqlite")
                             || (ix == 9
                                 && self.page == Page::Indexes
-                                && self.dialect == Dialect::MySql);
+                                && self.dialect.id() == "mysql");
                         FormRow::new(
                             t!(format!("designer.{}", ENTRY_KEYS[ix])).to_string(),
                             h_flex()
@@ -322,7 +322,7 @@ impl TableDesigner {
                                                 .iter()
                                                 .map(|c| c.name.clone())
                                                 .collect(),
-                                            2 => (if self.dialect == Dialect::MySql {
+                                            2 => (if self.dialect.id() == "mysql" {
                                                 vec!["BTREE", "HASH"]
                                             } else {
                                                 vec!["BTREE", "HASH", "GIN", "GIST", "BRIN"]
@@ -522,7 +522,7 @@ impl Render for TableDesigner {
                     .constraints
                     .iter()
                     .chain(&self.draft.indexes)
-                    .any(|s| parse_entry(s, self.dialect).is_none()),
+                    .any(|s| parse_entry(s, self.dialect.as_ref()).is_none()),
                 |v| {
                     v.child(
                         h_flex()

@@ -9,14 +9,17 @@ use mysql_async::consts::{ColumnFlags, ColumnType};
 use mysql_async::prelude::Queryable as _;
 use mysql_async::{Conn, Opts, OptsBuilder, SslOpts};
 
-use crate::dialect::Dialect;
-use crate::driver::{
+use navidog_db::driver::{
     CancelHandle, Column, ColumnOrigin, DbError, DbResult, Driver, DriverInfo, Family, Relational,
     ResultSet, Session,
 };
-use crate::execution::{Cancellation, RecoveryState, interrupted};
-use crate::log::{Tag, logged};
-use crate::params::ConnectParams;
+use navidog_db::execution::{Cancellation, RecoveryState};
+use navidog_db::log::{Tag, logged};
+use navidog_db::params::ConnectParams;
+
+use navidog_sql::Dialect as _;
+
+use super::MysqlDialect;
 
 pub struct MySqlDriver {
     info: DriverInfo,
@@ -43,8 +46,14 @@ impl MySqlDriver {
                 } else {
                     "icons/db/mysql.svg"
                 },
-                dialect: Dialect::MySql,
+                dialect: Arc::new(MysqlDialect),
+                file_based: false,
+                multi_host: false,
+                supports_network: true,
                 supports_ssl: true,
+                chooses_ssl_mode: false,
+                protocol_timeouts: true,
+                connection_params: false,
                 supports_ssh: true,
                 per_database_sessions: false,
             },
@@ -85,9 +94,9 @@ fn build_opts(p: &ConnectParams) -> Opts {
         .user(Some(p.user.clone()))
         .pass(p.password.clone())
         .db_name(p.database.clone())
-        .init(crate::sql::split_statements(
+        .init(navidog_db::sql::split_statements(
             &p.initial_queries,
-            Dialect::MySql,
+            MysqlDialect.lex(),
         ))
         .socket(p.socket.clone())
         .prefer_socket(p.socket.is_some());
@@ -144,7 +153,7 @@ impl Driver for MySqlDriver {
                 connect_timeout: params.timeout(),
                 tag,
                 setup: None,
-                recovery: RecoveryState::new(&params.initial_queries, Dialect::MySql),
+                recovery: RecoveryState::new(&params.initial_queries, &MysqlDialect),
                 cancellation,
             }) as Box<dyn Session>)
         }
@@ -188,7 +197,7 @@ impl MySqlSession {
     }
 
     fn remember(&mut self, sql: &str) {
-        if let Some(setup) = crate::sql::session_setup(sql) {
+        if let Some(setup) = navidog_db::sql::session_setup(sql) {
             self.setup = Some(setup);
         }
     }
@@ -244,7 +253,7 @@ impl Session for MySqlSession {
         &self.version
     }
 
-    crate::recovering_ping!(self, async { self.conn.ping().await.map_err(err) });
+    navidog_db::recovering_ping!(self, async { self.conn.ping().await.map_err(err) });
 
     fn cancel_handle(&self) -> Option<CancelHandle> {
         Some(self.cancellation.handle())
@@ -265,11 +274,61 @@ impl Session for MySqlSession {
 }
 
 impl Relational for MySqlSession {
-    fn dialect(&self) -> Dialect {
-        Dialect::MySql
+    fn dialect(&self) -> std::sync::Arc<dyn navidog_sql::Dialect> {
+        std::sync::Arc::new(MysqlDialect)
     }
 
-    crate::recovering_execute!();
+    navidog_db::recovering_execute!();
+
+    fn list_databases(&mut self) -> BoxFuture<'_, DbResult<Vec<String>>> {
+        Box::pin(crate::metadata::list_databases(self))
+    }
+    fn list_schemas(&mut self) -> BoxFuture<'_, DbResult<Vec<String>>> {
+        Box::pin(crate::metadata::list_schemas(self))
+    }
+    fn list_objects<'a>(
+        &'a mut self,
+        scope: &'a navidog_model::object::Scope,
+        kind: navidog_model::object::ObjectKind,
+    ) -> BoxFuture<'a, DbResult<Vec<navidog_db::ObjectInfo>>> {
+        Box::pin(crate::metadata::list_objects(self, scope, kind))
+    }
+    fn object_ddl<'a>(
+        &'a mut self,
+        scope: &'a navidog_model::object::Scope,
+        kind: navidog_model::object::ObjectKind,
+        name: &'a str,
+    ) -> BoxFuture<'a, DbResult<String>> {
+        Box::pin(crate::metadata::object_ddl(self, scope, kind, name))
+    }
+    fn table_columns<'a>(
+        &'a mut self,
+        scope: &'a navidog_model::object::Scope,
+        table: &'a str,
+    ) -> BoxFuture<'a, DbResult<Vec<navidog_db::ColumnInfo>>> {
+        Box::pin(crate::metadata::table_columns(self, scope, table))
+    }
+    fn table_children<'a>(
+        &'a mut self,
+        scope: &'a navidog_model::object::Scope,
+        table: &'a str,
+    ) -> BoxFuture<'a, DbResult<navidog_db::TableChildren>> {
+        Box::pin(crate::metadata::table_children(self, scope, table))
+    }
+    fn foreign_keys<'a>(
+        &'a mut self,
+        scope: &'a navidog_model::object::Scope,
+        table: &'a str,
+    ) -> BoxFuture<'a, DbResult<Vec<navidog_db::ForeignKey>>> {
+        Box::pin(crate::metadata::foreign_keys(self, scope, table))
+    }
+    fn outline<'a>(
+        &'a mut self,
+        scope: &'a navidog_model::object::Scope,
+        system: bool,
+    ) -> BoxFuture<'a, DbResult<navidog_db::outline::Outline>> {
+        Box::pin(crate::metadata::outline(self, scope, system))
+    }
 }
 
 async fn query(conn: &mut Conn, sql: &str) -> DbResult<Vec<ResultSet>> {

@@ -1,0 +1,18 @@
+[package]
+name = "navidog-sqlite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SQLite driver and SQL dialect for navidog."
+
+[dependencies]
+navidog-model.workspace = true
+navidog-sql = { path = "../navidog-sql" }
+navidog-db = { path = "../navidog-db" }
+rust-i18n.workspace = true
+tokio.workspace = true
+futures.workspace = true
+tracing.workspace = true
+rusqlite = { version = "0.40", features = ["bundled", "column_decltype", "column_metadata"] }

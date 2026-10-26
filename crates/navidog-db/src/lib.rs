@@ -1,5 +1,5 @@
-//! Drivers: the traits, the tokio runtime, the built-in drivers (MySQL/MariaDB, PostgreSQL,
-//! SQLite) and the SSH tunnel.
+//! Drivers: the traits, the tokio runtime and the SSH tunnel. Protocol implementations live in
+//! `navidog-mysql`, `navidog-postgres` and `navidog-sqlite`.
 
 rust_i18n::i18n!("locales", fallback = "en");
 // Track locale edits in Cargo as well as the translation proc-macro.
@@ -8,16 +8,13 @@ const _: &str = include_str!("../locales/database.yml");
 pub mod commit;
 pub use navidog_sql::dialect;
 pub mod driver;
-mod execution;
+pub mod execution;
 pub mod log;
-mod metadata;
-pub mod mysql;
+pub mod metadata;
 pub mod outline;
 pub mod params;
-pub mod postgres;
 pub mod runtime;
 pub mod sql;
-pub mod sqlite;
 pub mod ssh;
 
 use std::sync::Arc;

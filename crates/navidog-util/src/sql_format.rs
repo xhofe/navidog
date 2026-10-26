@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use navidog_sql::Dialect;
+use navidog_sql::Lex;
 use navidog_sql::span;
 
 /// One lexical token, enough to check that formatting kept the SQL the same.
@@ -20,18 +20,40 @@ pub enum Token {
 /// escapes; every other dialect - and Generic mode, when no connection is open - uses
 /// PostgreSQL's rules: no `#` comments, `E'…'` strings and protected dollar bodies, which is
 /// what the generic scan did before there was a shared lexer.
-fn lexer(mysql: bool) -> Dialect {
+fn lexer(mysql: bool) -> Lex {
+    // Generic mode follows PostgreSQL lexical rules: no `#` comments, `E'…'` strings,
+    // dollar quotes. MySQL adds `#` comments, backslash strings and `DELIMITER`.
     if mysql {
-        Dialect::MySql
+        Lex {
+            backtick_idents: true,
+            hash_comments: true,
+            dollar_quotes: false,
+            bracket_idents: false,
+            backslash_strings: true,
+            escape_string_prefix: false,
+            double_quote_strings: true,
+            nested_block_comments: false,
+            delimiter_command: true,
+        }
     } else {
-        Dialect::Postgres
+        Lex {
+            backtick_idents: true,
+            hash_comments: false,
+            dollar_quotes: true,
+            bracket_idents: false,
+            backslash_strings: false,
+            escape_string_prefix: true,
+            double_quote_strings: false,
+            nested_block_comments: true,
+            delimiter_command: false,
+        }
     }
 }
 
 /// Spans of `sql` that are strings, quoted identifiers, dollar bodies or comments:
 /// (range, is_comment).
-fn protected_spans(sql: &str, dialect: Dialect) -> Vec<(Range<usize>, bool)> {
-    span::spans(sql, dialect.lex())
+fn protected_spans(sql: &str, lex: Lex) -> Vec<(Range<usize>, bool)> {
+    span::spans(sql, lex)
         .into_iter()
         .filter(|s| s.kind.is_protected() || s.kind.is_comment())
         .map(|s| (s.range, s.kind.is_comment()))
@@ -114,7 +136,7 @@ pub fn beautify(sql: &str, o: &BeautifyOptions) -> String {
     protected.push_str(&sql[last..]);
     // sqlformat knows `--` and `/* */`; MySQL `#` comments become `--` and back
     let hashes: Vec<Range<usize>> = if o.mysql {
-        protected_spans(&protected, Dialect::MySql)
+        protected_spans(&protected, lexer(true))
             .into_iter()
             .filter(|(r, c)| *c && protected[r.clone()].starts_with('#'))
             .map(|(r, _)| r)

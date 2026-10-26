@@ -46,7 +46,7 @@ impl DesignEntry {
     }
     pub fn sql(
         &self,
-        dialect: Dialect,
+        dialect: &dyn Dialect,
         scope: &Scope,
         table: &str,
         standalone: bool,
@@ -136,7 +136,7 @@ impl DesignEntry {
                     sql.push_str(&format!(" WHERE {}", self.expression));
                 }
                 if !self.comment.is_empty() {
-                    if dialect != Dialect::MySql {
+                    if dialect.id() != "mysql" {
                         return Err(DbError::msg(
                             "Index comments require a separate comment definition on this database.",
                         ));
@@ -156,7 +156,7 @@ impl DesignEntry {
         })
     }
 }
-pub fn split_field_list(s: &str, d: Dialect) -> DbResult<Vec<String>> {
+pub fn split_field_list(s: &str, d: &dyn Dialect) -> DbResult<Vec<String>> {
     let mut out = Vec::new();
     let mut start = 0;
     for end in parse::positions(s, b',', d)? {
@@ -180,7 +180,7 @@ fn take<'a>(s: &'a str, word: &str) -> Option<&'a str> {
     }
 }
 /// The parenthesized group at the start of `s`: its inner text and the rest.
-fn group(s: &str, d: Dialect) -> Option<(String, &str)> {
+fn group<'a>(s: &'a str, d: &dyn Dialect) -> Option<(String, &'a str)> {
     let s = s.trim_start();
     if !s.starts_with('(') {
         return None;
@@ -209,7 +209,7 @@ fn qualified(s: &str) -> Option<(String, String, &str)> {
     }
 }
 /// Returns None unless all syntax can be represented by the form.
-pub fn parse_entry(s: &str, d: Dialect) -> Option<DesignEntry> {
+pub fn parse_entry(s: &str, d: &dyn Dialect) -> Option<DesignEntry> {
     let mut rest = s.trim().trim_end_matches(';').trim();
     let mut e = DesignEntry::new(EntryKind::Advanced);
     if let Some(r) = take(rest, "CONSTRAINT") {
@@ -328,28 +328,36 @@ mod tests {
             "UNIQUE (name)",
             "PRIMARY KEY (id)",
         ] {
-            let e = parse_entry(sql, Dialect::Sqlite).unwrap();
+            let e = parse_entry(sql, &navidog_sqlite::SqliteDialect).unwrap();
             let result = e
-                .sql(Dialect::Sqlite, &scope, "t", sql.starts_with("CREATE"))
+                .sql(
+                    &navidog_sqlite::SqliteDialect,
+                    &scope,
+                    "t",
+                    sql.starts_with("CREATE"),
+                )
                 .unwrap();
-            assert!(parse_entry(&result, Dialect::Sqlite).is_some(), "{result}");
+            assert!(
+                parse_entry(&result, &navidog_sqlite::SqliteDialect).is_some(),
+                "{result}"
+            );
         }
         let fk = parse_entry(
             "CONSTRAINT fk FOREIGN KEY (a) REFERENCES public.parent (id)",
-            Dialect::Sqlite,
+            &navidog_sqlite::SqliteDialect,
         )
         .unwrap();
         assert_eq!(fk.reference_schema, "public");
         assert_eq!(fk.reference_table, "parent");
         let fk = parse_entry(
             "CONSTRAINT fk FOREIGN KEY (a) REFERENCES \"literal.dot\" (id)",
-            Dialect::Sqlite,
+            &navidog_sqlite::SqliteDialect,
         )
         .unwrap();
         assert!(fk.reference_schema.is_empty());
         assert_eq!(fk.reference_table, "literal.dot");
         assert_eq!(
-            split_field_list("lower(name), \"a,b\", id", Dialect::Sqlite)
+            split_field_list("lower(name), \"a,b\", id", &navidog_sqlite::SqliteDialect)
                 .unwrap()
                 .len(),
             3
@@ -357,7 +365,7 @@ mod tests {
         assert!(
             parse_entry(
                 "CONSTRAINT fk FOREIGN KEY (id) REFERENCES p(id) DEFERRABLE INITIALLY DEFERRED",
-                Dialect::Sqlite,
+                &navidog_sqlite::SqliteDialect,
             )
             .is_none()
         );

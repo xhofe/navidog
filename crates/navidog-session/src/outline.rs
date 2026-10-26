@@ -1,12 +1,12 @@
 //! Cached code completion info (30-query-editor.md §4): JSON on disk and one
-//! in-memory entry per scope. Fetching lives in `navidog-db::outline`.
+//! in-memory entry per scope. Each database session fetches its own outline.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gpui_kit::{App, AppContext as _, Context, Entity, Global};
 use navidog_app_state::settings::Settings;
-pub use navidog_db::outline::{Outline, OutlineTable, fetch};
+pub use navidog_db::outline::{Outline, OutlineTable};
 use navidog_model::json_store::JsonStore;
 use navidog_model::object::Scope;
 use navidog_model::queries::encode_segment;
@@ -94,7 +94,7 @@ impl OutlineCache {
         let job = Sessions::global(cx).read(cx).run_rel(
             &scope.connection,
             Some(&scope.database),
-            move |rel| Box::pin(async move { fetch(rel, &target, system).await }),
+            move |rel| Box::pin(async move { rel.outline(&target, system).await }),
         );
         let Some(job) = job else { return };
         if !self.cache.contains(scope) {

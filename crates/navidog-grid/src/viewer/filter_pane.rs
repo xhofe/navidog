@@ -3,8 +3,8 @@
 use super::*;
 
 impl TableViewer {
-    pub(super) fn dialect(&self) -> Dialect {
-        self.dialect.unwrap_or(Dialect::Sqlite)
+    pub(super) fn dialect(&self) -> Option<&dyn Dialect> {
+        self.dialect.as_deref()
     }
 
     pub(super) fn field_names(&self, cx: &App) -> Vec<String> {
@@ -64,7 +64,9 @@ impl TableViewer {
     }
 
     pub(super) fn write_filter_sql(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let dialect = self.dialect();
+        let Some(dialect) = self.dialect() else {
+            return;
+        };
         let where_text = filter::where_sql(&self.current_filter(cx), dialect);
         let order_text = filter::order_sql(&self.view.sorts, dialect);
         self.view
@@ -87,7 +89,9 @@ impl TableViewer {
         if on == self.view.builder {
             return;
         }
-        let dialect = self.dialect();
+        let Some(dialect) = self.dialect() else {
+            return;
+        };
         if on {
             let where_text = self.view.filter.read(cx).value().to_string();
             let order_text = self.view.order.read(cx).value().to_string();
@@ -121,7 +125,9 @@ impl TableViewer {
         cx: &mut Context<Self>,
     ) {
         self.view.show_filter = true;
-        let dialect = self.dialect();
+        let Some(dialect) = self.dialect() else {
+            return;
+        };
         let rule = Rule {
             field: column.to_string(),
             op,
@@ -479,7 +485,10 @@ impl TableViewer {
     }
 
     pub(super) fn op_menu(&self, index: usize) -> NativeMenu {
-        filter::Op::choices(self.dialect())
+        let Some(dialect) = self.dialect() else {
+            return NativeMenu::new();
+        };
+        filter::Op::choices(dialect)
             .into_iter()
             .fold(NativeMenu::new(), |menu, op| {
                 menu.menu(

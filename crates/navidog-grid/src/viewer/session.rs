@@ -13,6 +13,9 @@ use crate::commit::{close_session, error_message};
 use crate::grid::GridTarget;
 use crate::model::Cell;
 
+type ColumnLoad =
+    Result<navidog_db::DbResult<(Arc<dyn Dialect>, Vec<ColumnInfo>)>, tokio::task::JoinError>;
+
 impl TableViewer {
     pub(crate) fn connect(&mut self, cx: &mut Context<Self>) {
         let sessions = Sessions::global(cx).read(cx);
@@ -85,7 +88,7 @@ impl TableViewer {
     pub(crate) fn apply_connected(
         &mut self,
         generation: u64,
-        columns: Result<navidog_db::DbResult<(Dialect, Vec<ColumnInfo>)>, tokio::task::JoinError>,
+        columns: ColumnLoad,
         shared: SharedSession,
         cancel: Option<CancelHandle>,
         cx: &mut Context<Self>,
@@ -97,7 +100,7 @@ impl TableViewer {
         self.session_generation = generation;
         match columns {
             Ok(Ok((dialect, columns))) => {
-                self.dialect = Some(dialect);
+                self.dialect = Some(dialect.clone());
                 self.columns = columns;
                 self.view.grid.update(cx, |g, cx| {
                     g.set_target(
@@ -239,7 +242,7 @@ impl TableViewer {
 
     /// Loads the current page; with `count`, also queries the total row count (when the filter changes).
     pub(crate) fn reload(&mut self, count: bool, cx: &mut Context<Self>) {
-        let (Some(session), Some(d)) = (self.session.clone(), self.dialect) else {
+        let (Some(session), Some(d)) = (self.session.clone(), self.dialect.clone()) else {
             return;
         };
         let generation = self.session_generation;

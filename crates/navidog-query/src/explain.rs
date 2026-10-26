@@ -43,13 +43,13 @@ fn first_text(sets: &[ResultSet]) -> String {
 /// Fetches a plan the way each dialect offers it (31 §5); only the first query may fail.
 pub(crate) async fn fetch_plan(
     rel: &mut dyn Relational,
-    dialect: Dialect,
+    dialect: &dyn Dialect,
     mariadb: bool,
     sql: &str,
 ) -> DbResult<Plan> {
     let mut p = Plan::default();
-    match dialect {
-        Dialect::MySql => {
+    match dialect.id() {
+        "mysql" => {
             let grid = rel.execute(&format!("EXPLAIN {sql}")).await?;
             p.grid = grid.into_iter().find(|s| !s.columns.is_empty());
             p.json = rel
@@ -70,7 +70,7 @@ pub(crate) async fn fetch_plan(
             };
             p.tree = p.json.as_deref().and_then(plan::parse_mysql);
         }
-        Dialect::Postgres => {
+        "postgres" => {
             let json = rel.execute(&format!("EXPLAIN (FORMAT JSON) {sql}")).await?;
             p.json = Some(first_text(&json));
             p.text = rel
@@ -81,7 +81,7 @@ pub(crate) async fn fetch_plan(
             p.tree = p.json.as_deref().and_then(plan::parse_postgres);
             p.grid = p.tree.as_ref().map(postgres_grid);
         }
-        Dialect::Sqlite => {
+        "sqlite" => {
             let rows = rel.execute(&format!("EXPLAIN QUERY PLAN {sql}")).await?;
             let set = rows
                 .into_iter()
@@ -109,6 +109,7 @@ pub(crate) async fn fetch_plan(
             p.tree = Some(plan::parse_sqlite(&items));
             p.grid = Some(set);
         }
+        _ => {}
     }
     Ok(p)
 }
@@ -410,9 +411,9 @@ impl QueryEditor {
 mod tests {
     use std::sync::Arc;
 
-    use navidog_db::mysql::MySqlDriver;
-    use navidog_db::postgres::PostgresDriver;
     use navidog_db::{ConnectParams, Driver, connect, runtime};
+    use navidog_mysql::MySqlDriver;
+    use navidog_postgres::PostgresDriver;
 
     use super::*;
 
@@ -439,9 +440,14 @@ mod tests {
                 };
                 let driver: Arc<dyn Driver> = Arc::new(driver);
                 let mut s = connect(driver, params).await.unwrap();
-                let p = fetch_plan(s.relational().unwrap(), Dialect::MySql, mariadb, sql)
-                    .await
-                    .unwrap();
+                let p = fetch_plan(
+                    s.relational().unwrap(),
+                    &navidog_mysql::MysqlDialect,
+                    mariadb,
+                    sql,
+                )
+                .await
+                .unwrap();
                 assert!(
                     p.grid.is_some() && p.json.is_some() && p.text.is_some(),
                     "{p:?}"
@@ -469,7 +475,7 @@ mod tests {
                 .unwrap();
             let p = fetch_plan(
                 s.relational().unwrap(),
-                Dialect::Postgres,
+                &navidog_postgres::PostgresDialect,
                 false,
                 "SELECT * FROM actor a JOIN film f ON f.film_id = a.actor_id WHERE a.actor_id < 5",
             )

@@ -28,7 +28,6 @@ use gpui_kit::{
 use navidog_app_state::settings::{ResultsPosition, Settings, ShowAfterRun};
 use navidog_app_state::store::ConnectionStore;
 use navidog_app_state::workspace::{Selection, Workspace};
-use navidog_db::dialect::Dialect;
 use navidog_model::object::{ObjectRef, Scope};
 use navidog_session::sessions::{Sessions, SessionsEvent};
 use navidog_ui::assets::lucide;
@@ -467,7 +466,7 @@ impl Render for QueryEditor {
                 Settings::update(cx, |s| s.show_after_run = ShowAfterRun::Summary)
             })
             .on_action(cx.listener(|this, _: &ToggleProfile, _, cx| {
-                if matches!(this.dialect(cx), Some(Dialect::MySql)) {
+                if this.dialect(cx).is_some_and(|d| d.id() == "mysql") {
                     Settings::update(cx, |s| s.show_profile = !s.show_profile);
                 }
             }))

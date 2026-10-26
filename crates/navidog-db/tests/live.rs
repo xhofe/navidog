@@ -6,11 +6,10 @@ use std::sync::Arc;
 
 use navidog_db::dialect::Dialect;
 use navidog_db::params::{SshParams, SslParams};
-use navidog_db::{
-    ConnectParams, Driver, connect, mysql::MySqlDriver, postgres::PostgresDriver, runtime,
-    test_connection,
-};
+use navidog_db::{ConnectParams, Driver, connect, runtime, test_connection};
 use navidog_model::connection::SslMode;
+use navidog_mysql::MySqlDriver;
+use navidog_postgres::PostgresDriver;
 
 fn live() -> bool {
     std::env::var_os("NAVIDOG_LIVE").is_some()
@@ -168,7 +167,7 @@ fn mysql_and_postgres_metadata() {
         let schemas = rel.list_schemas().await.unwrap();
         let user: Vec<_> = schemas
             .iter()
-            .filter(|s| !Dialect::Postgres.is_system_schema(s))
+            .filter(|s| !&navidog_postgres::PostgresDialect.is_system_schema(s))
             .collect();
         assert_eq!(user, ["inventory", "public"]);
         assert!(
@@ -402,18 +401,18 @@ fn query_editor_driver_features() {
                       CREATE PROCEDURE navidog_p() BEGIN SELECT 1; SELECT 2; END$$\n\
                       DELIMITER ;\nCALL navidog_p();\nDROP PROCEDURE navidog_p";
         let mut sets = Vec::new();
-        for stmt in split_script(script, Dialect::MySql) {
+        for stmt in split_script(script, navidog_mysql::MysqlDialect.lex()) {
             sets.extend(rel.execute(&stmt.text).await.unwrap());
         }
         assert!(sets.iter().filter(|s| !s.columns.is_empty()).count() >= 2);
 
-        let outline = navidog_db::outline::fetch(
-            &mut *rel,
-            &navidog_model::object::Scope::new("c", "sakila", None),
-            false,
-        )
-        .await
-        .unwrap();
+        let outline = rel
+            .outline(
+                &navidog_model::object::Scope::new("c", "sakila", None),
+                false,
+            )
+            .await
+            .unwrap();
         assert!(
             outline
                 .table("actor")
@@ -461,13 +460,13 @@ fn query_editor_driver_features() {
             .await
             .unwrap();
         assert_eq!(sets.last().unwrap().notices, ["NOTICE: hello 1"]);
-        let outline = navidog_db::outline::fetch(
-            &mut *rel,
-            &navidog_model::object::Scope::new("c", "pagila", Some("public".into())),
-            true,
-        )
-        .await
-        .unwrap();
+        let outline = rel
+            .outline(
+                &navidog_model::object::Scope::new("c", "pagila", Some("public".into())),
+                true,
+            )
+            .await
+            .unwrap();
         let actor = outline.table("actor").unwrap();
         assert!(
             actor
@@ -699,7 +698,7 @@ fn a_separate_write_leaves_the_metadata_session_recoverable() {
                 ))
                 .await
                 .unwrap();
-            kill_backend(writer.as_mut(), dialect, id).await;
+            kill_backend(writer.as_mut(), &dialect, id).await;
             writer.close().await.unwrap();
             let sets = metadata
                 .relational()
@@ -753,21 +752,25 @@ fn network_drivers() -> Vec<(Arc<dyn Driver>, ConnectParams)> {
     ]
 }
 
-async fn kill_backend(observer: &mut dyn navidog_db::Session, dialect: Dialect, id: u64) {
-    let sql = match dialect {
-        Dialect::MySql => format!("KILL {id}"),
-        Dialect::Postgres => format!("SELECT pg_terminate_backend({id})"),
+async fn kill_backend(observer: &mut dyn navidog_db::Session, dialect: &Arc<dyn Dialect>, id: u64) {
+    let sql = match dialect.id() {
+        "mysql" => format!("KILL {id}"),
+        "postgres" => format!("SELECT pg_terminate_backend({id})"),
         _ => unreachable!(),
     };
     observer.relational().unwrap().execute(&sql).await.unwrap();
 }
 
-async fn wait_for_backend_sleep(observer: &mut dyn navidog_db::Session, dialect: Dialect, id: u64) {
-    let sql = match dialect {
-        Dialect::MySql => format!(
+async fn wait_for_backend_sleep(
+    observer: &mut dyn navidog_db::Session,
+    dialect: &Arc<dyn Dialect>,
+    id: u64,
+) {
+    let sql = match dialect.id() {
+        "mysql" => format!(
             "SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE ID={id} AND STATE='User sleep'"
         ),
-        Dialect::Postgres => {
+        "postgres" => {
             format!("SELECT COUNT(*) FROM pg_stat_activity WHERE pid={id} AND wait_event='PgSleep'")
         }
         _ => unreachable!(),
@@ -816,9 +819,11 @@ fn uncertain_writes_are_never_replayed() {
                     .await
                     .unwrap();
                 let id = session.session_id().unwrap();
-                let script = match dialect {
-                    Dialect::MySql => format!("INSERT INTO {quoted} VALUES (1); SELECT SLEEP(30)"),
-                    Dialect::Postgres => format!(
+                let script = match dialect.id() {
+                    "mysql" => {
+                        format!("INSERT INTO {quoted} VALUES (1); SELECT SLEEP(30)")
+                    }
+                    "postgres" => format!(
                         "BEGIN; INSERT INTO {quoted} VALUES (1); COMMIT; SELECT pg_sleep(30)"
                     ),
                     _ => unreachable!(),
@@ -832,8 +837,8 @@ fn uncertain_writes_are_never_replayed() {
                     };
                     (session, result)
                 });
-                wait_for_backend_sleep(observer.as_mut(), dialect, id).await;
-                kill_backend(observer.as_mut(), dialect, id).await;
+                wait_for_backend_sleep(observer.as_mut(), &dialect, id).await;
+                kill_backend(observer.as_mut(), &dialect, id).await;
                 let finished =
                     tokio::time::timeout(std::time::Duration::from_secs(5), &mut job).await;
                 let promptly = finished.is_ok();
@@ -888,7 +893,7 @@ fn transaction_loss_cannot_reconnect_through_metadata_or_ping() {
                 .await
                 .unwrap();
             let id = session.session_id().unwrap();
-            kill_backend(observer.as_mut(), dialect, id).await;
+            kill_backend(observer.as_mut(), &dialect, id).await;
             let read = session
                 .relational()
                 .unwrap()
@@ -926,7 +931,7 @@ fn captured_cancel_handle_follows_safe_reconnect() {
             let dialect = session.relational().unwrap().dialect();
             let old_id = session.session_id().unwrap();
             let cancel = session.cancel_handle().unwrap();
-            kill_backend(observer.as_mut(), dialect, old_id).await;
+            kill_backend(observer.as_mut(), &dialect, old_id).await;
             session
                 .relational()
                 .unwrap()
@@ -935,16 +940,16 @@ fn captured_cancel_handle_follows_safe_reconnect() {
                 .unwrap();
             let id = session.session_id().unwrap();
             assert_ne!(id, old_id);
-            let sql = match dialect {
-                Dialect::MySql => "SELECT SLEEP(30)",
-                Dialect::Postgres => "SELECT pg_sleep(30)",
+            let sql = match dialect.id() {
+                "mysql" => "SELECT SLEEP(30)",
+                "postgres" => "SELECT pg_sleep(30)",
                 _ => unreachable!(),
             };
             let mut job = runtime::spawn(async move {
                 let result = session.relational().unwrap().execute(sql).await;
                 (session, result)
             });
-            wait_for_backend_sleep(observer.as_mut(), dialect, id).await;
+            wait_for_backend_sleep(observer.as_mut(), &dialect, id).await;
             let cancel_clock = std::time::Instant::now();
             let cancellation =
                 tokio::time::timeout(std::time::Duration::from_secs(5), cancel()).await;
@@ -954,7 +959,7 @@ fn captured_cancel_handle_follows_safe_reconnect() {
             let (mut session, result) = match finished {
                 Ok(joined) => joined.unwrap(),
                 Err(_) => {
-                    kill_backend(observer.as_mut(), dialect, id).await;
+                    kill_backend(observer.as_mut(), &dialect, id).await;
                     job.await.unwrap()
                 }
             };
@@ -971,19 +976,19 @@ fn captured_cancel_handle_follows_safe_reconnect() {
                 promptly,
                 "the old cancellation handle did not reach the new backend"
             );
-            match (dialect, result) {
-                (Dialect::MySql, Ok(sets)) => {
+            match (dialect.id(), result) {
+                ("mysql", Ok(sets)) => {
                     assert_eq!(
                         sets[0].rows,
                         [vec![Some("1".into())]],
                         "SLEEP must be interrupted"
                     );
                 }
-                (Dialect::MySql, Err(error)) => {
+                ("mysql", Err(error)) => {
                     assert_eq!(error.code.as_deref(), Some("1317"), "{error}");
                     assert!(!error.disconnected);
                 }
-                (Dialect::Postgres, Err(error)) => {
+                ("postgres", Err(error)) => {
                     assert_eq!(error.code.as_deref(), Some("57014"), "{error}");
                     assert!(!error.disconnected);
                 }

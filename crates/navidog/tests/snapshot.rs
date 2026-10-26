@@ -1137,7 +1137,7 @@ mod macos {
     fn execute_sample_sql(path: &std::path::Path, sql: &str) -> Vec<Vec<Option<String>>> {
         navidog_db::runtime::runtime().block_on(async {
             let mut session = navidog_db::connect(
-                Arc::new(navidog_db::sqlite::SqliteDriver::default()),
+                Arc::new(navidog_sqlite::SqliteDriver::default()),
                 navidog_db::ConnectParams {
                     file: Some(path.into()),
                     ..Default::default()
@@ -1177,7 +1177,7 @@ mod macos {
         // Names longer than the panes are truncated with an ellipsis, never wrapped
         logs.push_str("CREATE TABLE film_rental_statistics_by_store_and_category_monthly(id INTEGER PRIMARY KEY);");
         navidog_db::runtime::runtime().block_on(async {
-            let mut s = navidog_db::connect(Arc::new(navidog_db::sqlite::SqliteDriver::default()), params).await.unwrap();
+            let mut s = navidog_db::connect(Arc::new(navidog_sqlite::SqliteDriver::default()), params).await.unwrap();
             s.relational()
                 .unwrap()
                 .execute(&format!(

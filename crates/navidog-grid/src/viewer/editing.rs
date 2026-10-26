@@ -5,7 +5,6 @@ use std::sync::Arc;
 use gpui_kit::{App, Context, Window};
 use navidog_app_state::settings::Settings;
 use navidog_db::ResultSet;
-use navidog_db::dialect::Dialect;
 use navidog_session::sessions::run_on;
 use navidog_ui::assets::lucide;
 use rust_i18n::t;
@@ -116,8 +115,8 @@ impl TableViewer {
         self.apply_changes(false, window, cx);
     }
 
-    pub(crate) fn commit_statements(&self, cx: &App) -> Commit {
-        let d = self.dialect.unwrap_or(Dialect::MySql);
+    pub(crate) fn commit_statements(&self, cx: &App) -> Option<Commit> {
+        let d = self.dialect.clone()?;
         let m = self.view.grid.read(cx).model(cx);
         let statements = d.render_changes(
             &self.object.scope,
@@ -125,7 +124,7 @@ impl TableViewer {
             &m.change_set(),
             m.has_primary_key(),
         );
-        Commit::new(d, statements)
+        Some(Commit::new(d, statements))
     }
 
     /// Commits the grid changes; with `end_transaction`, also commits the open transaction. On failure
@@ -147,7 +146,9 @@ impl TableViewer {
         // The cell being typed in belongs to this commit; once the grid locks it could not be written
         self.view.grid.update(cx, |g, cx| g.commit_edit(window, cx));
         self.flush_form(cx);
-        let commit = self.commit_statements(cx);
+        let Some(commit) = self.commit_statements(cx) else {
+            return;
+        };
         if commit.statements.is_empty() && !end_transaction {
             // Nothing to send. A hide still has to reproject; an empty new row stays as it is,
             // unless the page is being left.

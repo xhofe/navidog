@@ -6,7 +6,6 @@ use gpui_kit::component::dock::PanelId;
 use gpui_kit::component::input::{Editor, EditorState};
 use gpui_kit::component::native_menu::NativeMenu;
 use gpui_kit::{App, Context, Focusable, Window, div};
-use navidog_db::dialect::Dialect;
 use navidog_ui::{tabs, tokens};
 use rust_i18n::t;
 
@@ -66,7 +65,9 @@ impl TableViewer {
 
     /// "Query Table": `SELECT * FROM` this table, in a new query, then run.
     pub(crate) fn query_table(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let dialect = self.dialect.unwrap_or(Dialect::Sqlite);
+        let Some(dialect) = self.dialect.as_deref() else {
+            return;
+        };
         let sql = format!(
             "SELECT * FROM {}",
             dialect.qualified(&self.object.scope, &self.object.name)
@@ -108,7 +109,9 @@ impl TableViewer {
     }
 
     pub(crate) fn begin_transaction(&mut self, cx: &mut Context<Self>) {
-        let Some(d) = self.dialect else { return };
+        let Some(d) = self.dialect.clone() else {
+            return;
+        };
         self.run_simple(
             d.begin_transaction(),
             |this, cx| this.set_in_transaction(true, cx),
@@ -263,7 +266,10 @@ impl TableViewer {
     }
 
     pub(crate) fn show_sql(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let pending = self.commit_statements(cx).statements.join(";\n");
+        let pending = self
+            .commit_statements(cx)
+            .map(|c| c.statements.join(";\n"))
+            .unwrap_or_default();
         let text = if pending.is_empty() {
             self.view.status.to_string()
         } else {
@@ -298,7 +304,7 @@ impl TableViewer {
     }
 
     pub(crate) fn toggle_rowid(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dialect != Some(Dialect::Sqlite) {
+        if !self.dialect.as_ref().is_some_and(|d| d.exposes_rowid()) {
             return;
         }
         let on = !self.view.grid.read(cx).show_rowid;

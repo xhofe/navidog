@@ -36,7 +36,7 @@ pub(crate) struct Candidate {
 }
 
 pub(crate) struct Sources<'a> {
-    pub dialect: Dialect,
+    pub dialect: &'a dyn Dialect,
     /// Database (PostgreSQL: schema) the outline belongs to
     pub current: Option<&'a str>,
     pub outline: Option<&'a Outline>,
@@ -59,7 +59,7 @@ fn unquote(s: &str) -> String {
     t.to_string()
 }
 
-pub(crate) fn typed_name(dialect: Dialect, name: &str) -> String {
+pub(crate) fn typed_name(dialect: &dyn Dialect, name: &str) -> String {
     dialect.typed_name(name)
 }
 
@@ -72,7 +72,7 @@ static ALIAS: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Table names and aliases in the statement around `offset`, alias (or table) → table.
-fn aliases(statement: &str, dialect: Dialect) -> HashMap<String, String> {
+fn aliases(statement: &str, dialect: &dyn Dialect) -> HashMap<String, String> {
     let mut out = HashMap::new();
     for caps in ALIAS.captures_iter(statement) {
         let full = caps[1].to_string();
@@ -170,12 +170,12 @@ pub(crate) fn complete(text: &str, offset: usize, src: &Sources) -> (Range<usize
             detail: t!("query.snippets").to_string(),
             insert: code.clone(),
         }));
-        out.extend(src.dialect.functions().map(|f| Candidate {
+        out.extend(src.dialect.functions().into_iter().map(|f| Candidate {
             label: f.to_string(),
             detail: t!("query.kind_builtin").to_string(),
             insert: f.to_string(),
         }));
-        out.extend(src.dialect.keywords().map(|k| Candidate {
+        out.extend(src.dialect.keywords().into_iter().map(|k| Candidate {
             label: k.to_string(),
             detail: t!("query.kind_keyword").to_string(),
             insert: k.to_string(),
@@ -266,7 +266,10 @@ impl CompletionProvider for Provider {
             return Task::ready(Ok(CompletionResponse::Array(Vec::new())));
         };
         let e = editor.read(cx);
-        let dialect = e.dialect(cx).unwrap_or(Dialect::MySql);
+        let Some(dialect) = e.dialect(cx) else {
+            return Task::ready(Ok(CompletionResponse::Array(Vec::new())));
+        };
+        let dialect = dialect.as_ref();
         let scope = e.target.scope();
         let driver = e
             .target
@@ -433,7 +436,7 @@ mod tests {
 
     fn run(
         text: &str,
-        dialect: Dialect,
+        dialect: &dyn Dialect,
         others: &dyn Fn(&str) -> Option<Arc<Outline>>,
     ) -> Vec<String> {
         let o = outline();
@@ -461,19 +464,35 @@ mod tests {
     fn dot_after_database_lists_tables_and_after_alias_lists_columns() {
         let none = |_: &str| None;
         assert_eq!(
-            run("SELECT * FROM sakila.|", Dialect::MySql, &none),
+            run(
+                "SELECT * FROM sakila.|",
+                &navidog_mysql::MysqlDialect,
+                &none
+            ),
             ["actor", "actor_info"]
         );
         assert_eq!(
-            run("SELECT a.| FROM actor a WHERE 1", Dialect::MySql, &none),
+            run(
+                "SELECT a.| FROM actor a WHERE 1",
+                &navidog_mysql::MysqlDialect,
+                &none
+            ),
             ["actor_id", "first_name"]
         );
         assert_eq!(
-            run("SELECT x.f| FROM actor AS x", Dialect::MySql, &none),
+            run(
+                "SELECT x.f| FROM actor AS x",
+                &navidog_mysql::MysqlDialect,
+                &none
+            ),
             ["first_name"]
         );
         assert_eq!(
-            run("SELECT actor.| FROM actor", Dialect::MySql, &none),
+            run(
+                "SELECT actor.| FROM actor",
+                &navidog_mysql::MysqlDialect,
+                &none
+            ),
             ["actor_id", "first_name"]
         );
         let world = |name: &str| {
@@ -488,7 +507,11 @@ mod tests {
             })
         };
         assert_eq!(
-            run("SELECT * FROM world.|", Dialect::MySql, &world),
+            run(
+                "SELECT * FROM world.|",
+                &navidog_mysql::MysqlDialect,
+                &world
+            ),
             ["city"]
         );
     }
@@ -496,17 +519,32 @@ mod tests {
     #[test]
     fn prefix_matches_come_before_contains_and_snippets_show_up() {
         let none = |_: &str| None;
-        let got = run("SELECT * FROM act|", Dialect::MySql, &none);
+        let got = run("SELECT * FROM act|", &navidog_mysql::MysqlDialect, &none);
         assert_eq!(&got[..2], ["actor", "actor_info"]);
-        assert!(run("SELECT * FROM t WHERE first|", Dialect::MySql, &none).is_empty());
         assert!(
-            run("SELECT first| FROM actor", Dialect::MySql, &none)
-                .contains(&"first_name".to_string())
+            run(
+                "SELECT * FROM t WHERE first|",
+                &navidog_mysql::MysqlDialect,
+                &none
+            )
+            .is_empty()
         );
-        assert!(run("my|", Dialect::Sqlite, &none).contains(&"my snippet".to_string()));
-        assert!(run("sel|", Dialect::Postgres, &none).contains(&"SELECT".to_string()));
+        assert!(
+            run(
+                "SELECT first| FROM actor",
+                &navidog_mysql::MysqlDialect,
+                &none
+            )
+            .contains(&"first_name".to_string())
+        );
+        assert!(
+            run("my|", &navidog_sqlite::SqliteDialect, &none).contains(&"my snippet".to_string())
+        );
+        assert!(
+            run("sel|", &navidog_postgres::PostgresDialect, &none).contains(&"SELECT".to_string())
+        );
         // `info` is inside `actor_info`, after the prefix matches
-        let got = run("info|", Dialect::MySql, &none);
+        let got = run("info|", &navidog_mysql::MysqlDialect, &none);
         assert!(got.iter().position(|l| l == "actor_info").is_some());
     }
 
@@ -541,7 +579,7 @@ mod tests {
                 &text,
                 offset,
                 &Sources {
-                    dialect: Dialect::Sqlite,
+                    dialect: &navidog_sqlite::SqliteDialect,
                     current: None,
                     outline: Some(&outline),
                     others: &none,

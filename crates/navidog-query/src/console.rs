@@ -1,6 +1,7 @@
 //! Console (31-query-results.md §7, F-QRY-014): a mysql / psql style prompt on its own session.
 //! Enter runs the input once it ends with the statement terminator; ↑ and ↓ walk the history.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use gpui_kit::component::ActiveTheme as _;
@@ -67,26 +68,17 @@ pub(crate) fn complete(input: &str, delimiter: &str) -> bool {
 
 /// The prompt of the first line, or of continuation lines.
 pub(crate) fn prompt(
-    dialect: Dialect,
+    dialect: &dyn Dialect,
     database: &str,
     superuser: bool,
     continuation: bool,
 ) -> String {
-    match (dialect, continuation) {
-        (Dialect::MySql, false) => "mysql>".into(),
-        (Dialect::MySql, true) => "    ->".into(),
-        (Dialect::Sqlite, false) => "sqlite>".into(),
-        (Dialect::Sqlite, true) => "   ...>".into(),
-        (Dialect::Postgres, cont) => {
-            let mark = if superuser { '#' } else { '>' };
-            format!("{database}{}{mark}", if cont { '-' } else { '=' })
-        }
-    }
+    dialect.console_prompt(database, superuser, continuation)
 }
 
 /// Output for one statement in the client's style.
 pub(crate) fn format_result(
-    dialect: Dialect,
+    dialect: &dyn Dialect,
     result: &navidog_db::DbResult<Vec<ResultSet>>,
     secs: f64,
 ) -> String {
@@ -105,7 +97,7 @@ pub(crate) fn format_result(
                     .iter()
                     .map(|c| type_kind(&c.type_name) == TypeKind::Number)
                     .collect();
-                if dialect == Dialect::Postgres {
+                if dialect.console_psql_grid() {
                     out.push_str(&fmt::psql_table(&names, &set.rows, &numeric));
                     out.push_str(&fmt::psql_rows_footer(set.rows.len()));
                 } else {
@@ -125,11 +117,7 @@ pub(crate) fn format_result(
         Err(e) if e.is_session_lost() => {
             out.push_str(&format!("ERROR: {}\n", crate::errors::error_message(e)));
         }
-        Err(e) => match (dialect, &e.code) {
-            (Dialect::Postgres, _) => out.push_str(&format!("ERROR:  {}\n", e.message)),
-            (_, Some(code)) => out.push_str(&format!("ERROR {code}: {}\n", e.message)),
-            (_, None) => out.push_str(&format!("ERROR: {}\n", e.message)),
-        },
+        Err(e) => out.push_str(&dialect.format_console_error(e.code.as_deref(), &e.message)),
     }
     out.push('\n');
     out
@@ -147,7 +135,7 @@ pub struct Console {
     history_ix: Option<usize>,
     session: Option<SharedSession>,
     cancel: Option<CancelHandle>,
-    dialect: Option<Dialect>,
+    dialect: Option<Arc<dyn Dialect>>,
     superuser: bool,
     delimiter: String,
     running: bool,
@@ -297,7 +285,7 @@ impl Console {
         let Some(job) = sessions.new_session(&self.connection, self.database.as_deref()) else {
             return;
         };
-        let (dialect, database) = (self.dialect, self.database.clone());
+        let (dialect, database) = (self.dialect.clone(), self.database.clone());
         self.task = Some(cx.spawn(async move |this, cx| {
             let session = match job.await {
                 Ok(Ok(s)) => s,
@@ -317,13 +305,17 @@ impl Console {
             // MySQL picks the database with USE; PostgreSQL asks whether the user is a superuser
             let setup = run_on(shared.clone(), move |rel| {
                 Box::pin(async move {
-                    match (dialect, database) {
-                        (Some(Dialect::MySql), Some(db)) => {
-                            rel.execute(&format!("USE {}", Dialect::MySql.quote_ident(&db)))
-                                .await?;
+                    match dialect.as_deref().map(|d| d.context_selection()) {
+                        Some(navidog_db::dialect::ContextSelection::Database) => {
+                            if let Some(db) = database
+                                && let Some(sql) =
+                                    dialect.as_ref().and_then(|d| d.prepare_database_sql(&db))
+                            {
+                                rel.execute(&sql).await?;
+                            }
                             Ok(false)
                         }
-                        (Some(Dialect::Postgres), _) => {
+                        Some(navidog_db::dialect::ContextSelection::Schema) => {
                             let sets = rel
                                 .execute(
                                     "SELECT rolsuper FROM pg_roles WHERE rolname = current_user",
@@ -370,12 +362,10 @@ impl Console {
     }
 
     fn prompt(&self, continuation: bool) -> String {
-        prompt(
-            self.dialect.unwrap_or(Dialect::MySql),
-            &self.database_name(),
-            self.superuser,
-            continuation,
-        )
+        let Some(dialect) = self.dialect.as_deref() else {
+            return String::new();
+        };
+        prompt(dialect, &self.database_name(), self.superuser, continuation)
     }
 
     fn append(&mut self, text: String, cx: &mut Context<Self>) {
@@ -412,8 +402,10 @@ impl Console {
             self.close_tab(cx);
             return true;
         }
-        let dialect = self.dialect.unwrap_or(Dialect::MySql);
-        if dialect == Dialect::MySql
+        let Some(dialect) = self.dialect.as_deref() else {
+            return true;
+        };
+        if dialect.id() == "mysql"
             && let Some(rest) = navidog_util::sql_text::strip_keyword(trimmed, "DELIMITER")
         {
             let next = rest.trim();
@@ -462,7 +454,10 @@ impl Console {
             let secs = started.elapsed().as_secs_f64();
             let _ = this.update(cx, |this, cx| {
                 this.running = false;
-                let text = format_result(this.dialect.unwrap_or(Dialect::MySql), &result, secs);
+                let Some(dialect) = this.dialect.as_deref() else {
+                    return;
+                };
+                let text = format_result(dialect, &result, secs);
                 this.append(text, cx);
             });
         }));
@@ -608,11 +603,26 @@ mod tests {
 
     #[test]
     fn prompts_follow_the_clients() {
-        assert_eq!(prompt(Dialect::MySql, "", false, false), "mysql>");
-        assert_eq!(prompt(Dialect::MySql, "", false, true), "    ->");
-        assert_eq!(prompt(Dialect::Postgres, "pagila", true, false), "pagila=#");
-        assert_eq!(prompt(Dialect::Postgres, "pagila", false, true), "pagila->");
-        assert_eq!(prompt(Dialect::Sqlite, "", false, true), "   ...>");
+        assert_eq!(
+            prompt(&navidog_mysql::MysqlDialect, "", false, false),
+            "mysql>"
+        );
+        assert_eq!(
+            prompt(&navidog_mysql::MysqlDialect, "", false, true),
+            "    ->"
+        );
+        assert_eq!(
+            prompt(&navidog_postgres::PostgresDialect, "pagila", true, false),
+            "pagila=#"
+        );
+        assert_eq!(
+            prompt(&navidog_postgres::PostgresDialect, "pagila", false, true),
+            "pagila->"
+        );
+        assert_eq!(
+            prompt(&navidog_sqlite::SqliteDialect, "", false, true),
+            "   ...>"
+        );
         assert!(complete("SELECT 1;  ", ";"));
         assert!(!complete("SELECT 1", ";"));
         assert!(complete("END$$", "$$"));
@@ -636,19 +646,19 @@ mod tests {
             rows: vec![vec![Some("1".into()), None]],
             ..ResultSet::default()
         };
-        let my = format_result(Dialect::MySql, &Ok(vec![set.clone()]), 0.0);
+        let my = format_result(&navidog_mysql::MysqlDialect, &Ok(vec![set.clone()]), 0.0);
         assert!(
             my.contains("| id | n    |") && my.contains("|  1 | NULL |"),
             "{my}"
         );
         assert!(my.contains("1 row in set (0.00 sec)"));
-        let pg = format_result(Dialect::Postgres, &Ok(vec![set]), 0.0);
+        let pg = format_result(&navidog_postgres::PostgresDialect, &Ok(vec![set]), 0.0);
         assert!(
             pg.contains("(1 row)") && pg.starts_with(" id |  n\n"),
             "{pg}"
         );
         let ok = format_result(
-            Dialect::Sqlite,
+            &navidog_sqlite::SqliteDialect,
             &Ok(vec![ResultSet {
                 affected_rows: Some(2),
                 ..ResultSet::default()
@@ -657,13 +667,13 @@ mod tests {
         );
         assert!(ok.starts_with("Query OK, 2 rows affected (0.01 sec)"));
         let err = format_result(
-            Dialect::MySql,
+            &navidog_mysql::MysqlDialect,
             &Err(DbError::coded(1146, "Table 'x' doesn't exist")),
             0.0,
         );
         assert!(err.starts_with("ERROR 1146: Table 'x' doesn't exist"));
         let pg_err = format_result(
-            Dialect::Postgres,
+            &navidog_postgres::PostgresDialect,
             &Err(DbError::coded("42P01", "relation \"nope\" does not exist")),
             0.0,
         );

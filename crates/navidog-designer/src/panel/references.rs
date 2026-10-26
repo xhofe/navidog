@@ -62,9 +62,10 @@ impl TableDesigner {
         let scope = self.entry_inputs[REFERENCE_SCHEMA].read(cx).value();
         scope.is_empty()
             || scope
-                == match self.dialect {
-                    Dialect::Postgres => self.scope.schema.as_deref().unwrap_or("public"),
-                    _ => &self.scope.database,
+                == if self.dialect.has_schemas() {
+                    self.scope.schema.as_deref().unwrap_or("public")
+                } else {
+                    &self.scope.database
                 }
     }
 
@@ -87,10 +88,12 @@ impl TableDesigner {
             .value()
             .to_string();
         if !selected_scope.is_empty() {
-            match self.dialect {
-                Dialect::MySql => scope.database = selected_scope,
-                Dialect::Postgres => scope.schema = Some(selected_scope),
-                Dialect::Sqlite => {}
+            match self.dialect.context_selection() {
+                navidog_db::dialect::ContextSelection::Database => scope.database = selected_scope,
+                navidog_db::dialect::ContextSelection::Schema => {
+                    scope.schema = Some(selected_scope)
+                }
+                navidog_db::dialect::ContextSelection::File => {}
             }
         }
         let Some(job) = Sessions::global(cx).read(cx).run_rel(
@@ -98,10 +101,12 @@ impl TableDesigner {
             Some(&self.scope.database),
             move |r| {
                 Box::pin(async move {
-                    let scopes = match r.dialect() {
-                        Dialect::MySql => r.list_databases().await?,
-                        Dialect::Postgres => r.list_schemas().await?,
-                        Dialect::Sqlite => Vec::new(),
+                    let scopes = match r.dialect().context_selection() {
+                        navidog_db::dialect::ContextSelection::Schema => r.list_schemas().await?,
+                        navidog_db::dialect::ContextSelection::Database => {
+                            r.list_databases().await?
+                        }
+                        navidog_db::dialect::ContextSelection::File => Vec::new(),
                     };
                     let tables: Vec<_> = r
                         .list_objects(&scope, ObjectKind::Table)

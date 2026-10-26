@@ -8,7 +8,7 @@ use std::time::Duration;
 use navidog_db::Column;
 use navidog_db::ColumnOrigin;
 use navidog_db::ResultSet;
-use navidog_db::dialect::{ChangeSet, Dialect, RowKey, RowUpdate, Written};
+use navidog_db::dialect::{ChangeSet, RowKey, RowUpdate, Written};
 use rust_i18n::t;
 
 use super::editing::{rename_changes, single_table};
@@ -75,7 +75,7 @@ fn session_loss_guidance_reaches_query_messages_summary_and_console() {
     for text in [
         message_block("SELECT 1", &result, Duration::ZERO),
         summary_message(&result),
-        crate::console::format_result(Dialect::Postgres, &result, 0.0),
+        crate::console::format_result(&navidog_postgres::PostgresDialect, &result, 0.0),
     ] {
         assert!(text.contains(detail));
         assert!(text.contains("Reopen the connection") || text.contains("重新打开连接"));
@@ -121,7 +121,7 @@ fn pinned_hover_lists_when_and_where() {
         search_path: None,
         context_id: None,
         context_known: true,
-        dialect: Some(Dialect::MySql),
+        dialect: Some(std::sync::Arc::new(navidog_mysql::MysqlDialect)),
     };
     let lines = info.lines("SELECT 1");
     assert!(lines.iter().any(|(_, v)| v == "local"));

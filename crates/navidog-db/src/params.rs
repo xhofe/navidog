@@ -75,7 +75,7 @@ impl ConnectParams {
         let g = &conn.general;
         let a = &conn.advanced;
         let default_port = info.default_port.unwrap_or(3306);
-        let ssl = (conn.ssl.enabled && conn.supports_network()).then(|| SslParams {
+        let ssl = (conn.ssl.enabled && info.supports_network).then(|| SslParams {
             mode: conn.ssl.mode,
             client_key: conn
                 .ssl
@@ -101,7 +101,7 @@ impl ConnectParams {
                 .flatten(),
         });
         let s = &conn.ssh;
-        let ssh = (s.enabled && conn.supports_network()).then(|| SshParams {
+        let ssh = (s.enabled && info.supports_network).then(|| SshParams {
             host: s.host.clone(),
             port: s.port,
             user: s.user.clone(),
@@ -167,9 +167,32 @@ impl ConnectParams {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
-    use crate::driver::Driver as _;
     use navidog_model::connection::SshAuth;
+
+    // The driver crates depend on this crate, so a unit test cannot call their `Driver` impl:
+    // that `DriverInfo` is a different type from the one compiled with `cfg(test)`.
+    fn driver_info(port: Option<u16>, dialect: Arc<dyn navidog_sql::Dialect>) -> crate::DriverInfo {
+        crate::DriverInfo {
+            id: String::new(),
+            name: String::new(),
+            family: crate::Family::Relational,
+            default_port: port,
+            icon: "",
+            dialect,
+            file_based: false,
+            multi_host: false,
+            supports_network: true,
+            supports_ssl: true,
+            chooses_ssl_mode: false,
+            protocol_timeouts: false,
+            connection_params: false,
+            supports_ssh: true,
+            per_database_sessions: false,
+        }
+    }
 
     #[test]
     fn maps_connection_and_drops_unused_secrets() {
@@ -185,7 +208,7 @@ mod tests {
                 ssh_password: Some("ignored".into()),
                 ssh_passphrase: Some("pp".into()),
             },
-            crate::postgres::PostgresDriver::default().info(),
+            &driver_info(Some(5432), Arc::new(navidog_postgres::PostgresDialect)),
         );
         assert_eq!((p.port, p.database.as_deref()), (5432, Some("postgres")));
         let ssh = p.ssh.unwrap();
@@ -198,7 +221,7 @@ mod tests {
         let p = ConnectParams::from_connection(
             &lite,
             Secrets::default(),
-            crate::sqlite::SqliteDriver::default().info(),
+            &driver_info(None, Arc::new(navidog_sqlite::SqliteDialect)),
         );
         assert!(p.ssh.is_none() && p.file.is_none());
     }

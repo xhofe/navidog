@@ -8,13 +8,16 @@ use rusqlite::types::ValueRef;
 use rusqlite::{OpenFlags, params};
 use tokio::sync::watch;
 
-use crate::dialect::Dialect;
-use crate::driver::{
+use navidog_db::driver::{
     CancelHandle, Column, ColumnOrigin, DbError, DbResult, Driver, DriverInfo, Family, Relational,
     ResultSet, Session,
 };
-use crate::log::{Tag, logged};
-use crate::params::ConnectParams;
+use navidog_db::log::{Tag, logged};
+use navidog_db::params::ConnectParams;
+
+use navidog_sql::Dialect as _;
+
+use super::SqliteDialect;
 
 pub struct SqliteDriver {
     info: DriverInfo,
@@ -29,8 +32,14 @@ impl Default for SqliteDriver {
                 family: Family::Relational,
                 default_port: navidog_model::connection::driver_defaults("sqlite").port,
                 icon: "icons/db/sqlite.svg",
-                dialect: Dialect::Sqlite,
+                dialect: Arc::new(SqliteDialect),
+                file_based: true,
+                multi_host: false,
+                supports_network: false,
                 supports_ssl: false,
+                chooses_ssl_mode: false,
+                protocol_timeouts: false,
+                connection_params: false,
                 supports_ssh: false,
                 per_database_sessions: false,
             },
@@ -189,8 +198,8 @@ impl Session for SqliteSession {
 }
 
 impl Relational for SqliteSession {
-    fn dialect(&self) -> Dialect {
-        Dialect::Sqlite
+    fn dialect(&self) -> std::sync::Arc<dyn navidog_sql::Dialect> {
+        std::sync::Arc::new(SqliteDialect)
     }
 
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
@@ -208,12 +217,62 @@ impl Relational for SqliteSession {
         }
         .boxed()
     }
+
+    fn list_databases(&mut self) -> BoxFuture<'_, DbResult<Vec<String>>> {
+        Box::pin(crate::metadata::list_databases(self))
+    }
+    fn list_schemas(&mut self) -> BoxFuture<'_, DbResult<Vec<String>>> {
+        Box::pin(crate::metadata::list_schemas(self))
+    }
+    fn list_objects<'a>(
+        &'a mut self,
+        scope: &'a navidog_model::object::Scope,
+        kind: navidog_model::object::ObjectKind,
+    ) -> BoxFuture<'a, DbResult<Vec<navidog_db::ObjectInfo>>> {
+        Box::pin(crate::metadata::list_objects(self, scope, kind))
+    }
+    fn object_ddl<'a>(
+        &'a mut self,
+        scope: &'a navidog_model::object::Scope,
+        kind: navidog_model::object::ObjectKind,
+        name: &'a str,
+    ) -> BoxFuture<'a, DbResult<String>> {
+        Box::pin(crate::metadata::object_ddl(self, scope, kind, name))
+    }
+    fn table_columns<'a>(
+        &'a mut self,
+        scope: &'a navidog_model::object::Scope,
+        table: &'a str,
+    ) -> BoxFuture<'a, DbResult<Vec<navidog_db::ColumnInfo>>> {
+        Box::pin(crate::metadata::table_columns(self, scope, table))
+    }
+    fn table_children<'a>(
+        &'a mut self,
+        scope: &'a navidog_model::object::Scope,
+        table: &'a str,
+    ) -> BoxFuture<'a, DbResult<navidog_db::TableChildren>> {
+        Box::pin(crate::metadata::table_children(self, scope, table))
+    }
+    fn foreign_keys<'a>(
+        &'a mut self,
+        scope: &'a navidog_model::object::Scope,
+        table: &'a str,
+    ) -> BoxFuture<'a, DbResult<Vec<navidog_db::ForeignKey>>> {
+        Box::pin(crate::metadata::foreign_keys(self, scope, table))
+    }
+    fn outline<'a>(
+        &'a mut self,
+        scope: &'a navidog_model::object::Scope,
+        system: bool,
+    ) -> BoxFuture<'a, DbResult<navidog_db::outline::Outline>> {
+        Box::pin(crate::metadata::outline(self, scope, system))
+    }
 }
 
 /// Runs a multi-statement script one statement at a time; each returns one result set.
 fn execute_all(conn: &mut rusqlite::Connection, sql: &str) -> DbResult<Vec<ResultSet>> {
     let mut sets = Vec::new();
-    for piece in crate::sql::split_statements(sql, Dialect::Sqlite) {
+    for piece in navidog_db::sql::split_statements(sql, SqliteDialect.lex()) {
         let mut stmt = conn.prepare(&piece).map_err(err)?;
         let origins = stmt.columns_with_metadata();
         let columns: Vec<Column> = stmt
@@ -268,7 +327,7 @@ mod tests {
 
     #[test]
     fn close_drains_dropped_execute_and_skips_work_queued_behind_the_connection_lock() {
-        crate::runtime::runtime().block_on(async {
+        navidog_db::runtime::runtime().block_on(async {
             let connection = rusqlite::Connection::open_in_memory().unwrap();
             connection
                 .execute_batch("CREATE TABLE audit (n INTEGER)")

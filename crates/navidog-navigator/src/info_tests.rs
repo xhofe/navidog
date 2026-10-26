@@ -12,10 +12,11 @@ use gpui_kit::{
 use navidog_app_state::snippets::Snippets;
 use navidog_app_state::store::ConnectionStore;
 use navidog_app_state::workspace::{QueryContext, Workspace};
-use navidog_db::{ConnectParams, Secrets, connect, runtime, sqlite::SqliteDriver};
+use navidog_db::{ConnectParams, Secrets, connect, runtime};
 use navidog_model::connection::Connection;
 use navidog_model::crypto::Key;
 use navidog_session::sessions::Sessions;
+use navidog_sqlite::SqliteDriver;
 
 use crate::info::{InfoPanel, Page};
 

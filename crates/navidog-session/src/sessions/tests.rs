@@ -92,8 +92,14 @@ impl CountingDriver {
                 family: Family::Relational,
                 default_port: None,
                 icon: "icons/db/mysql.svg",
-                dialect: navidog_db::dialect::Dialect::MySql,
+                dialect: Arc::new(navidog_mysql::MysqlDialect),
+                file_based: false,
+                multi_host: false,
+                supports_network: true,
                 supports_ssl: false,
+                chooses_ssl_mode: false,
+                protocol_timeouts: false,
+                connection_params: false,
                 supports_ssh: false,
                 per_database_sessions: false,
             },
@@ -168,8 +174,8 @@ impl Session for CountingSession {
 }
 
 impl Relational for CountingSession {
-    fn dialect(&self) -> Dialect {
-        Dialect::Sqlite
+    fn dialect(&self) -> Arc<dyn Dialect> {
+        Arc::new(navidog_sqlite::SqliteDialect)
     }
 
     fn execute<'a>(&'a mut self, _: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
@@ -406,7 +412,7 @@ fn reopening_waits_for_retired_cleanup_and_preserves_its_known_result() {
                 Live {
                     driver,
                     params,
-                    dialect: Some(Dialect::Sqlite),
+                    dialect: Some(Arc::new(navidog_sqlite::SqliteDialect)),
                     primary,
                     primary_db: None,
                     per_db: Default::default(),
@@ -433,19 +439,19 @@ fn reopening_waits_for_retired_cleanup_and_preserves_its_known_result() {
 fn network_drivers() -> Vec<(Arc<dyn Driver>, ConnectParams)> {
     [
         (
-            Arc::new(navidog_db::mysql::MySqlDriver::mysql()) as Arc<dyn Driver>,
+            Arc::new(navidog_mysql::MySqlDriver::mysql()) as Arc<dyn Driver>,
             13306,
             "root",
             "sakila",
         ),
         (
-            Arc::new(navidog_db::mysql::MySqlDriver::mariadb()),
+            Arc::new(navidog_mysql::MySqlDriver::mariadb()),
             13307,
             "root",
             "sakila",
         ),
         (
-            Arc::new(navidog_db::postgres::PostgresDriver::default()),
+            Arc::new(navidog_postgres::PostgresDriver::default()),
             15432,
             "postgres",
             "pagila",
@@ -511,9 +517,9 @@ fn completed_operation_does_not_pin_or_replay_on_metadata_recovery() {
                 Some(old_id)
             );
 
-            let kill = match dialect {
-                Dialect::MySql => format!("KILL {old_id}"),
-                Dialect::Postgres => format!("SELECT pg_terminate_backend({old_id})"),
+            let kill = match dialect.id() {
+                "mysql" => format!("KILL {old_id}"),
+                "postgres" => format!("SELECT pg_terminate_backend({old_id})"),
                 _ => unreachable!(),
             };
             observer.relational().unwrap().execute(&kill).await.unwrap();

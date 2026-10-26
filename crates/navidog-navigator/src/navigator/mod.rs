@@ -2,6 +2,7 @@
 //! group > connection > database > (schema) > object category > object.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use gpui_kit::base::{Tree, TreeEntry, TreeEvent, TreeItem, TreeState};
 use gpui_kit::component::button::ButtonVariants as _;
@@ -254,7 +255,7 @@ impl Node {
     }
 
     /// Ancestors from the root down to this node (exclusive), expanded to reveal a selection.
-    fn ancestors(&self, dialect: Option<Dialect>) -> Vec<Node> {
+    fn ancestors(&self, dialect: Option<Arc<dyn Dialect>>) -> Vec<Node> {
         let scope_chain = |s: &Scope| {
             let mut v = vec![
                 Node::Connection(s.connection.clone()),
@@ -1072,7 +1073,7 @@ mod tests {
             name: "t".into(),
         });
         let ids: Vec<_> = obj
-            .ancestors(Some(Dialect::MySql))
+            .ancestors(Some(Arc::new(navidog_mysql::MysqlDialect)))
             .iter()
             .map(|n| n.id().to_string())
             .collect();
@@ -1081,7 +1082,11 @@ mod tests {
             Scope::new("c", "db", Some("public".into())),
             ObjectKind::Table,
         );
-        assert_eq!(pg.ancestors(Some(Dialect::Postgres)).len(), 3);
+        assert_eq!(
+            pg.ancestors(Some(Arc::new(navidog_postgres::PostgresDialect)))
+                .len(),
+            3
+        );
     }
 
     #[test]

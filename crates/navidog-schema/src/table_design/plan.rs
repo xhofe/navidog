@@ -2,7 +2,7 @@ use super::parse::{ident, positions};
 use super::*;
 
 pub fn plan(
-    d: Dialect,
+    d: &dyn Dialect,
     scope: &Scope,
     before: Option<&TableSnapshot>,
     after: &TableDesign,
@@ -12,7 +12,7 @@ pub fn plan(
 
 /// Like [`plan`], but SQLite rebuilds avoid backup names already in `occupied`.
 pub fn plan_with(
-    d: Dialect,
+    d: &dyn Dialect,
     scope: &Scope,
     before: Option<&TableSnapshot>,
     after: &TableDesign,
@@ -22,7 +22,7 @@ pub fn plan_with(
 }
 
 pub(super) fn plan_on(
-    d: Dialect,
+    d: &dyn Dialect,
     scope: &Scope,
     before: Option<&TableSnapshot>,
     after: &TableDesign,
@@ -31,10 +31,10 @@ pub(super) fn plan_on(
 ) -> DbResult<Vec<String>> {
     let mut after = after.clone();
     let mut before = before.cloned();
-    if d == Dialect::Postgres {
-        after.migrate_comments(scope)?;
+    if d.separate_comments() {
+        after.migrate_comments(scope, d)?;
         if let Some(old) = &mut before {
-            old.design.migrate_comments(scope)?;
+            old.design.migrate_comments(scope, d)?;
         }
     }
     let after = &after;
@@ -43,15 +43,13 @@ pub(super) fn plan_on(
     let Some(before) = before else {
         let mut out = vec![after.create_sql(d, scope, &after.name)?];
         out.extend(after.indexes.clone());
-        if d == Dialect::Postgres {
-            out.extend(comments::statements(scope, None, after));
+        if d.separate_comments() {
+            out.extend(comments::statements(scope, None, after, d));
         }
-        if d == Dialect::Postgres && !after.owner.is_empty() {
-            out.push(format!(
-                "ALTER TABLE {} OWNER TO {}",
-                d.qualified(scope, &after.name),
-                d.quote_ident(&after.owner)
-            ));
+        if let Some(sql) = d.table_owner_sql(&d.qualified(scope, &after.name), &after.owner)
+            && !after.owner.is_empty()
+        {
+            out.push(sql);
         }
         return Ok(out);
     };
@@ -72,7 +70,7 @@ pub(super) fn plan_on(
     {
         return Err(DbError::msg("Unknown original column identity."));
     }
-    if d == Dialect::Sqlite {
+    if d.rebuilds_tables() {
         if old.columns == after.columns
             && old.constraints == after.constraints
             && old.options == after.options
@@ -98,7 +96,7 @@ pub(super) fn plan_on(
             );
             return Ok(statements);
         }
-        return sqlite(scope, before, after, occupied, day);
+        return sqlite(d, scope, before, after, occupied, day);
     }
     let table = d.qualified(scope, &old.name);
     let mut out = Vec::new();
@@ -109,17 +107,11 @@ pub(super) fn plan_on(
         .filter(|c| !after.constraints.contains(c))
     {
         let (kind, name) = constraint_name(constraint)?;
-        let drop = match (d, kind.as_str()) {
-            (Dialect::MySql, "PRIMARY") => "DROP PRIMARY KEY".into(),
-            (Dialect::MySql, "FOREIGN") => format!("DROP FOREIGN KEY {}", d.quote_ident(&name)),
-            (Dialect::MySql, "INDEX") => format!("DROP INDEX {}", d.quote_ident(&name)),
-            (Dialect::MySql, _) => {
-                return Err(DbError::msg(
-                    "Removing this constraint requires dialect-specific SQL; it has been preserved.",
-                ));
-            }
-            _ => format!("DROP CONSTRAINT {}", d.quote_ident(&name)),
-        };
+        let drop = d.drop_constraint_clause(&kind, &name).ok_or_else(|| {
+            DbError::msg(
+                "Removing this constraint requires dialect-specific SQL; it has been preserved.",
+            )
+        })?;
         out.push(format!("ALTER TABLE {table} {drop}"));
     }
     for c in old.columns.iter().filter(|c| {
@@ -138,7 +130,7 @@ pub(super) fn plan_on(
             .original
             .as_ref()
             .and_then(|name| old.columns.iter().find(|c| &c.name == name));
-        let position = if d == Dialect::MySql {
+        let position = if d.supports_column_position() {
             if ix == 0 {
                 " FIRST".into()
             } else {
@@ -157,11 +149,11 @@ pub(super) fn plan_on(
                 let moved = old.columns.iter().position(|v| v.name == previous.name) != Some(ix);
                 if c.name == previous.name
                     && c.definition == previous.definition
-                    && (!moved || d != Dialect::MySql)
+                    && (!moved || !d.supports_column_position())
                 {
                     continue;
                 }
-                if d == Dialect::MySql {
+                if d.rewrites_columns() {
                     out.push(format!(
                         "ALTER TABLE {table} CHANGE COLUMN {} {} {}{position}",
                         d.quote_ident(&previous.name),
@@ -201,8 +193,8 @@ pub(super) fn plan_on(
                                 continue;
                             }
                         }
-                        let (ty, null, default) = pg_column(&c.definition)?;
-                        let (old_ty, old_null, old_default) = pg_column(&previous.definition)?;
+                        let (ty, null, default) = pg_column(&c.definition, d)?;
+                        let (old_ty, old_null, old_default) = pg_column(&previous.definition, d)?;
                         let target = format!(
                             "ALTER TABLE {table} ALTER COLUMN {}",
                             d.quote_ident(&c.name)
@@ -243,7 +235,7 @@ pub(super) fn plan_on(
         &old.options,
         &after.options,
     )?);
-    if d == Dialect::Postgres && old.unlogged != after.unlogged {
+    if d.supports_unlogged() && old.unlogged != after.unlogged {
         out.push(format!(
             "ALTER TABLE {table} SET {}",
             if after.unlogged { "UNLOGGED" } else { "LOGGED" }
@@ -251,7 +243,7 @@ pub(super) fn plan_on(
     }
     for s in old.indexes.iter().filter(|s| !after.indexes.contains(s)) {
         let name = index_name(s)?;
-        if d == Dialect::MySql {
+        if d.drop_index_alters_table() {
             out.push(format!(
                 "ALTER TABLE {table} DROP INDEX {}",
                 d.quote_ident(&name)
@@ -260,7 +252,7 @@ pub(super) fn plan_on(
         }
         out.push(format!(
             "DROP INDEX {}{}",
-            if d == Dialect::Postgres {
+            if d.has_schemas() {
                 format!(
                     "{}.",
                     d.quote_ident(scope.schema.as_deref().unwrap_or("public"))
@@ -278,17 +270,16 @@ pub(super) fn plan_on(
             .filter(|s| !old.indexes.contains(s))
             .cloned(),
     );
-    if d == Dialect::Postgres {
-        out.extend(comments::statements(scope, Some(old), after));
+    if d.separate_comments() {
+        out.extend(comments::statements(scope, Some(old), after, d));
     }
-    if d == Dialect::Postgres && old.owner != after.owner {
+    if old.owner != after.owner
+        && let Some(sql) = d.table_owner_sql(&table, &after.owner)
+    {
         if after.owner.is_empty() {
             return Err(DbError::msg("An existing PostgreSQL table needs an owner."));
         }
-        out.push(format!(
-            "ALTER TABLE {table} OWNER TO {}",
-            d.quote_ident(&after.owner)
-        ));
+        out.push(sql);
     }
     Ok(out)
 }
@@ -368,7 +359,7 @@ pub(super) fn backup_name(table: &str, day: &str, taken: &[String]) -> DbResult<
         "Too many leftover SQLite backup tables for this date.",
     ))
 }
-fn pg_column(definition: &str) -> DbResult<(String, bool, Option<String>)> {
+fn pg_column(definition: &str, d: &dyn Dialect) -> DbResult<(String, bool, Option<String>)> {
     let upper = definition.to_uppercase();
     for unsupported in [
         " GENERATED ",
@@ -386,7 +377,7 @@ fn pg_column(definition: &str) -> DbResult<(String, bool, Option<String>)> {
         }
     }
     // Split only at top-level whitespace so types and default strings may contain keywords.
-    let spaces = positions(definition, b' ', Dialect::Postgres)?;
+    let spaces = positions(definition, b' ', d)?;
     let marker = spaces.into_iter().find(|i| {
         let tail = definition[*i..].trim_start().to_uppercase();
         tail.starts_with("NOT NULL") || tail.starts_with("DEFAULT ") || tail == "NULL"
@@ -413,13 +404,13 @@ fn pg_column(definition: &str) -> DbResult<(String, bool, Option<String>)> {
     Ok((ty, not_null, default))
 }
 fn sqlite(
+    d: &dyn Dialect,
     scope: &Scope,
     before: &TableSnapshot,
     after: &TableDesign,
     occupied: &[String],
     day: &str,
 ) -> DbResult<Vec<String>> {
-    let d = Dialect::Sqlite;
     let old = &before.design;
     if table_option(&old.options, "without_rowid", d)?
         != table_option(&after.options, "without_rowid", d)?

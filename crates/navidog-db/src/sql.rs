@@ -5,9 +5,7 @@
 
 use std::ops::Range;
 
-use navidog_sql::span::{self, SpanKind};
-
-use crate::dialect::Dialect;
+use navidog_sql::span::{self, Lex, SpanKind};
 
 /// One statement of a script and where it sits in the original text.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,20 +62,17 @@ fn search_path_statement(sql: &str) -> bool {
 }
 
 /// The statements' text only; see [`split_script`].
-pub fn split_statements(sql: &str, dialect: Dialect) -> Vec<String> {
-    split_script(sql, dialect)
-        .into_iter()
-        .map(|s| s.text)
-        .collect()
+pub fn split_statements(sql: &str, lex: Lex) -> Vec<String> {
+    split_script(sql, lex).into_iter().map(|s| s.text).collect()
 }
 
 /// Splits a script into statements. Empty and comment-only statements are dropped, and so are
 /// MySQL `DELIMITER` lines: they configure the scanner and never go to the server.
-pub fn split_script(sql: &str, dialect: Dialect) -> Vec<Statement> {
+pub fn split_script(sql: &str, lex: Lex) -> Vec<Statement> {
     let mut out = Vec::new();
     let mut start = 0;
     let mut code = false;
-    for span in span::spans(sql, dialect.lex()) {
+    for span in span::spans(sql, lex) {
         match span.kind {
             SpanKind::DelimiterLine => {
                 if !code {
@@ -113,9 +108,10 @@ fn push(out: &mut Vec<Statement>, sql: &str, range: Range<usize>, has_code: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+    use navidog_sql::Dialect as _;
 
-    fn texts(sql: &str, d: Dialect) -> Vec<String> {
-        split_statements(sql, d)
+    fn texts(sql: &str, d: &dyn navidog_sql::Dialect) -> Vec<String> {
+        split_statements(sql, d.lex())
     }
 
     #[test]
@@ -124,7 +120,7 @@ mod tests {
                    CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE a SET x = 1; SELECT 2; END;\n\
                    BEGIN; COMMIT;  ;  -- trailing";
         assert_eq!(
-            texts(sql, Dialect::MySql),
+            texts(sql, &navidog_mysql::MysqlDialect),
             [
                 "SELECT 'a;b', \"c;d\", `e;f`",
                 "-- x;y\nSELECT 2 /* ; */",
@@ -136,7 +132,7 @@ mod tests {
         assert_eq!(
             texts(
                 "CREATE FUNCTION f() RETURNS int AS $$ SELECT 1; $$ LANGUAGE sql; SELECT 2",
-                Dialect::Postgres
+                &navidog_postgres::PostgresDialect
             ),
             [
                 "CREATE FUNCTION f() RETURNS int AS $$ SELECT 1; $$ LANGUAGE sql",
@@ -148,20 +144,23 @@ mod tests {
     #[test]
     fn handles_escapes_end_if_and_dollar_tags() {
         assert_eq!(
-            texts(r"SELECT 'it\'s;', 'x''y;'; SELECT 1", Dialect::MySql),
+            texts(
+                r"SELECT 'it\'s;', 'x''y;'; SELECT 1",
+                &navidog_mysql::MysqlDialect
+            ),
             [r"SELECT 'it\'s;', 'x''y;'", "SELECT 1"]
         );
         // Standard PostgreSQL strings take a backslash literally; E-strings escape with it
         assert_eq!(
             texts(
                 r"SELECT 'C:\'; SELECT E'a\';b'; SELECT 3",
-                Dialect::Postgres
+                &navidog_postgres::PostgresDialect
             ),
             [r"SELECT 'C:\'", r"SELECT E'a\';b'", "SELECT 3"]
         );
         let proc = "CREATE PROCEDURE p() BEGIN IF 1 THEN SELECT 1; END IF; END; SELECT 3";
         assert_eq!(
-            texts(proc, Dialect::MySql),
+            texts(proc, &navidog_mysql::MysqlDialect),
             [
                 "CREATE PROCEDURE p() BEGIN IF 1 THEN SELECT 1; END IF; END",
                 "SELECT 3"
@@ -170,23 +169,32 @@ mod tests {
         assert_eq!(
             texts(
                 "DO $body$ BEGIN PERFORM 1; END $body$; SELECT $1",
-                Dialect::Postgres
+                &navidog_postgres::PostgresDialect
             ),
             ["DO $body$ BEGIN PERFORM 1; END $body$", "SELECT $1"]
         );
         assert_eq!(
-            texts("SELECT foo$tag$ FROM t; DELETE FROM u", Dialect::Postgres),
+            texts(
+                "SELECT foo$tag$ FROM t; DELETE FROM u",
+                &navidog_postgres::PostgresDialect
+            ),
             ["SELECT foo$tag$ FROM t", "DELETE FROM u"]
         );
-        assert!(texts("  -- only comment\n", Dialect::Sqlite).is_empty());
+        assert!(texts("  -- only comment\n", &navidog_sqlite::SqliteDialect).is_empty());
         // `#` is a comment in MySQL only; PostgreSQL uses it as an operator
-        assert_eq!(texts("SELECT 1 # ;\n", Dialect::MySql), ["SELECT 1 # ;"]);
-        assert_eq!(texts("SELECT 1 # 2; SELECT 3", Dialect::Postgres).len(), 2);
+        assert_eq!(
+            texts("SELECT 1 # ;\n", &navidog_mysql::MysqlDialect),
+            ["SELECT 1 # ;"]
+        );
+        assert_eq!(
+            texts("SELECT 1 # 2; SELECT 3", &navidog_postgres::PostgresDialect).len(),
+            2
+        );
         // A multi-byte character right after END
         assert_eq!(
             texts(
                 "CREATE PROCEDURE p() BEGIN SELECT 1; END 名; SELECT 2",
-                Dialect::MySql
+                &navidog_mysql::MysqlDialect
             ),
             ["CREATE PROCEDURE p() BEGIN SELECT 1; END 名", "SELECT 2"]
         );
@@ -199,21 +207,28 @@ mod tests {
                    DELIMITER ;\n\
                    CALL p();";
         assert_eq!(
-            texts(sql, Dialect::MySql),
+            texts(sql, &navidog_mysql::MysqlDialect),
             [
                 "CREATE PROCEDURE p()\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND",
                 "CALL p()"
             ]
         );
         // Not a DELIMITER line in the middle of a statement, nor in other dialects
-        assert_eq!(texts("SELECT delimiter FROM t;", Dialect::MySql).len(), 1);
         assert_eq!(
-            texts("DELIMITER //\nSELECT 1//", Dialect::Postgres).len(),
+            texts("SELECT delimiter FROM t;", &navidog_mysql::MysqlDialect).len(),
+            1
+        );
+        assert_eq!(
+            texts(
+                "DELIMITER //\nSELECT 1//",
+                &navidog_postgres::PostgresDialect
+            )
+            .len(),
             1
         );
         // Non-ASCII text under a custom delimiter must not panic while scanning
         assert_eq!(
-            texts("DELIMITER //\nSELECT 你好//", Dialect::MySql),
+            texts("DELIMITER //\nSELECT 你好//", &navidog_mysql::MysqlDialect),
             ["SELECT 你好"]
         );
     }
@@ -238,7 +253,7 @@ mod tests {
     #[test]
     fn ranges_point_at_the_trimmed_statement() {
         let sql = "  SELECT 1;\n\n-- NAME:two\nSELECT 2 ;";
-        let stmts = split_script(sql, Dialect::Sqlite);
+        let stmts = split_script(sql, navidog_sqlite::SqliteDialect.lex());
         assert_eq!(stmts.len(), 2);
         for s in &stmts {
             assert_eq!(&sql[s.range.clone()], s.text);

@@ -177,7 +177,7 @@ pub struct TableSession {
     pub(crate) session: Option<SharedSession>,
     pub(crate) session_generation: u64,
     pub(crate) cancel: Option<CancelHandle>,
-    pub(crate) dialect: Option<Dialect>,
+    pub(crate) dialect: Option<Arc<dyn Dialect>>,
     pub(crate) columns: Vec<ColumnInfo>,
     pub(crate) foreign_keys: Vec<navidog_db::ForeignKey>,
     /// The user answered the close prompt; the tab may close now (pending edits are committed or dropped)
@@ -349,7 +349,10 @@ impl BasePanel for TableViewer {
         }
         // Only reached when something closed the tab without asking first (the dock refusing
         // via `closable` is the normal path): ask now, with the tab already gone.
-        let commit = self.commit_statements(cx);
+        let Some(commit) = self.commit_statements(cx) else {
+            close_session(session);
+            return;
+        };
         let in_tx = self.in_transaction;
         let (ok_session, cancel_session) = (session.clone(), session);
         let name = self.object.name.clone();
@@ -615,7 +618,7 @@ impl TableViewer {
                             } else {
                                 let text = sort
                                     .as_ref()
-                                    .zip(this.dialect)
+                                    .zip(this.dialect.clone())
                                     .map(|((col, asc), d)| {
                                         format!(
                                             "{} {}",

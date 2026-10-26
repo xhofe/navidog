@@ -86,7 +86,7 @@ impl ResultGrid {
         if self
             .target
             .as_ref()
-            .is_some_and(|t| t.dialect == Dialect::Sqlite)
+            .is_some_and(|t| t.dialect.id() == "sqlite")
         {
             menu = menu.menu_with_check(
                 t!("grid.rowid").to_string(),
@@ -104,7 +104,7 @@ impl ResultGrid {
     pub(super) fn copy_text(&self, format: &str, cx: &App) -> String {
         let m = self.model(cx);
         let delegate = self.table.read(cx).delegate();
-        let raw = delegate.raw.then_some(delegate.dialect);
+        let raw = delegate.raw.then(|| delegate.dialect.clone()).flatten();
         match (format, &self.target) {
             ("insert", Some(t)) => t.dialect.insert_statements(
                 &t.scope,

@@ -18,6 +18,18 @@ fn isolate_home(name: &str) -> (std::sync::MutexGuard<'static, ()>, std::path::P
     (guard, home)
 }
 
+/// The designer reads the dialect from the saved connection. Tests that use a
+/// stand-in id have to store that connection; there is no SQLite fallback.
+fn remember(cx: &mut gpui_kit::App, id: &str, driver: &str) {
+    use navidog_app_state::store::ConnectionStore;
+    use navidog_model::connection::Connection;
+    ConnectionStore::global(cx).update(cx, |store, cx| {
+        let mut conn = Connection::new(driver);
+        conn.id = id.into();
+        store.upsert(conn, &[], cx).unwrap();
+    });
+}
+
 struct Host(Entity<TableDesigner>);
 impl Render for Host {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -35,6 +47,7 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
         navidog_ui::tabs::init(cx);
         navidog_session::init(cx);
         crate::init(cx);
+        remember(cx, "test", "sqlite");
     });
     let (handle, panel) = cx.update(|cx| {
         let mut panel = None;
@@ -283,7 +296,7 @@ fn saves_only_after_preview_and_keeps_failed_draft(cx: &mut TestAppContext) {
     let sql = |query: &str| {
         navidog_db::runtime::runtime().block_on(async {
             let mut s = navidog_db::connect(
-                Arc::new(navidog_db::sqlite::SqliteDriver::default()),
+                Arc::new(navidog_sqlite::SqliteDriver::default()),
                 ConnectParams {
                     file: Some(file.clone()),
                     create_new: true,
@@ -459,7 +472,7 @@ fn cascades_real_reference_metadata_and_preserves_drafts(cx: &mut TestAppContext
             .as_nanos()
     ));
     navidog_db::runtime::runtime().block_on(async {
-        let mut session = navidog_db::connect(Arc::new(navidog_db::sqlite::SqliteDriver::default()), ConnectParams { file: Some(file.clone()), create_new: true, ..Default::default() }).await.unwrap();
+        let mut session = navidog_db::connect(Arc::new(navidog_sqlite::SqliteDriver::default()), ConnectParams { file: Some(file.clone()), create_new: true, ..Default::default() }).await.unwrap();
         session.relational().unwrap().execute("CREATE TABLE parent (a INTEGER, b INTEGER, PRIMARY KEY(a,b)); CREATE TABLE other (other_id INTEGER PRIMARY KEY)").await.unwrap();
         session.close().await.unwrap();
     });
@@ -874,6 +887,7 @@ fn reload_rebuilds_entry_forms_and_clears_validation(cx: &mut TestAppContext) {
         navidog_ui::tabs::init(cx);
         navidog_session::init(cx);
         crate::init(cx);
+        remember(cx, "test", "sqlite");
     });
     let (handle, panel) = cx.update(|cx| {
         let mut panel = None;
@@ -969,6 +983,7 @@ fn reload_while_previewing_replaces_stale_sql(cx: &mut TestAppContext) {
         navidog_ui::tabs::init(cx);
         navidog_session::init(cx);
         crate::init(cx);
+        remember(cx, "test", "sqlite");
     });
     let (handle, panel) = cx.update(|cx| {
         let mut panel = None;

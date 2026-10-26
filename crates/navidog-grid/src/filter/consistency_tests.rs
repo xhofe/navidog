@@ -12,8 +12,12 @@ use navidog_util::sql_text::find_params;
 /// Every special character a consumer might mistake for syntax, inside one string literal.
 const QUOTED: &str = "'x;y -- # /* $$ [$p] , AND (z)'";
 
-fn dialects() -> [Dialect; 3] {
-    [Dialect::MySql, Dialect::Postgres, Dialect::Sqlite]
+fn dialects() -> [&'static dyn Dialect; 3] {
+    [
+        &navidog_mysql::MysqlDialect,
+        &navidog_postgres::PostgresDialect,
+        &navidog_sqlite::SqliteDialect,
+    ]
 }
 
 #[test]
@@ -21,9 +25,10 @@ fn a_semicolon_inside_a_string_does_not_split_a_statement() {
     for dialect in dialects() {
         let sql = format!("SELECT {QUOTED}; SELECT 2");
         assert_eq!(
-            split_statements(&sql, dialect),
+            split_statements(&sql, dialect.lex()),
             [format!("SELECT {QUOTED}"), "SELECT 2".to_string()],
-            "{dialect:?}"
+            "{}",
+            dialect.id()
         );
     }
 }
@@ -35,7 +40,8 @@ fn a_comma_inside_a_string_does_not_split_a_field_list() {
         assert_eq!(
             split_field_list(&list, dialect).unwrap(),
             [QUOTED.trim(), "second"],
-            "{dialect:?}"
+            "{}",
+            dialect.id()
         );
     }
 }
@@ -44,13 +50,15 @@ fn a_comma_inside_a_string_does_not_split_a_field_list() {
 fn a_parameter_inside_a_string_is_not_a_parameter() {
     for dialect in dialects() {
         assert!(
-            find_params(&format!("SELECT {QUOTED}"), dialect).is_empty(),
-            "{dialect:?}"
+            find_params(&format!("SELECT {QUOTED}"), dialect.lex()).is_empty(),
+            "{}",
+            dialect.id()
         );
         assert_eq!(
-            find_params("SELECT '[$a]', [$b]", dialect).len(),
+            find_params("SELECT '[$a]', [$b]", dialect.lex()).len(),
             1,
-            "{dialect:?}"
+            "{}",
+            dialect.id()
         );
     }
 }
@@ -59,7 +67,7 @@ fn a_parameter_inside_a_string_is_not_a_parameter() {
 fn a_join_inside_a_string_does_not_split_a_filter() {
     for dialect in dialects() {
         let filter = parse_where(&format!("name = {QUOTED} AND id = 1"), dialect).unwrap();
-        assert_eq!(filter.rules.len(), 2, "{dialect:?}");
+        assert_eq!(filter.rules.len(), 2, "{}", dialect.id());
         assert_eq!(filter.rules[0].value, "x;y -- # /* $$ [$p] , AND (z)");
     }
 }
@@ -67,7 +75,7 @@ fn a_join_inside_a_string_does_not_split_a_filter() {
 #[test]
 fn the_format_menu_keeps_a_string_whole() {
     for dialect in dialects() {
-        let mysql = dialect == Dialect::MySql;
+        let mysql = dialect.id() == "mysql";
         // The editor's format menu only knows the MySQL flag; PostgreSQL and SQLite share the
         // generic rules, which also protect dollar bodies.
         let found = tokens(&format!("SELECT {QUOTED}"), mysql);
@@ -80,7 +88,8 @@ fn the_format_menu_keeps_a_string_whole() {
             .collect::<Vec<_>>();
         assert!(
             quoted.iter().any(|text| text.contains("AND")),
-            "{dialect:?}: {found:?}"
+            "{}: {found:?}",
+            dialect.id()
         );
     }
 }
@@ -89,6 +98,11 @@ fn the_format_menu_keeps_a_string_whole() {
 fn a_definition_parser_sees_the_same_string() {
     for dialect in dialects() {
         let p = column_properties(&format!("TEXT COMMENT {QUOTED}"), dialect);
-        assert_eq!(p.comment, "x;y -- # /* $$ [$p] , AND (z)", "{dialect:?}");
+        assert_eq!(
+            p.comment,
+            "x;y -- # /* $$ [$p] , AND (z)",
+            "{}",
+            dialect.id()
+        );
     }
 }

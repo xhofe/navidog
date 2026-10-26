@@ -1,5 +1,7 @@
 //! Foreign key data selection (F-DATA-012): pick a value of the referenced column.
 
+use std::sync::Arc;
+
 use super::*;
 
 impl TableViewer {
@@ -26,7 +28,7 @@ impl TableViewer {
         else {
             return;
         };
-        let (Some(session), Some(dialect)) = (self.session.clone(), self.dialect) else {
+        let (Some(session), Some(dialect)) = (self.session.clone(), self.dialect.clone()) else {
             return;
         };
         let generation = self.session_generation;
@@ -57,7 +59,7 @@ impl TableViewer {
 /// when the dialog opened.
 struct FkPicker {
     key: navidog_db::ForeignKey,
-    dialect: Dialect,
+    dialect: Arc<dyn Dialect>,
     session: SharedSession,
     generation: u64,
     viewer: WeakEntity<TableViewer>,
@@ -71,7 +73,7 @@ struct FkPicker {
 impl FkPicker {
     fn new(
         key: navidog_db::ForeignKey,
-        dialect: Dialect,
+        dialect: Arc<dyn Dialect>,
         (session, generation): (SharedSession, u64),
         viewer: WeakEntity<TableViewer>,
         cell: (usize, usize),
@@ -97,7 +99,7 @@ impl FkPicker {
     fn reload(&mut self, cx: &mut Context<Self>) {
         let search = self.search.read(cx).value().to_string();
         let sql = navidog_db::referenced_values_sql(
-            self.dialect,
+            self.dialect.as_ref(),
             &self.key,
             &search,
             (!self.all).then_some(1000),

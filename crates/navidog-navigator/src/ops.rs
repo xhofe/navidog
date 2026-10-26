@@ -3,6 +3,7 @@
 //! edited in place in the navigator (`NavigatorPanel::start_rename_object`).
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, InteractiveElement, Window};
@@ -33,7 +34,7 @@ pub(crate) fn selected_objects(cx: &App) -> Vec<ObjectRef> {
         .collect()
 }
 
-fn dialect(obj: &ObjectRef, cx: &App) -> Option<Dialect> {
+fn dialect(obj: &ObjectRef, cx: &App) -> Option<Arc<dyn Dialect>> {
     Sessions::global(cx).read(cx).dialect(&obj.scope.connection)
 }
 
@@ -161,10 +162,12 @@ fn empty(truncate: bool, window: &mut Window, cx: &mut App) {
         .filter_map(|o| {
             let d = dialect(&o, cx)?;
             let target = d.qualified(&o.scope, &o.name);
-            match (truncate, d) {
-                (true, Dialect::Sqlite) => None,
-                (true, _) => Some((o, format!("TRUNCATE TABLE {target}"))),
-                (false, _) => Some((o, format!("DELETE FROM {target}"))),
+            if truncate && d.exposes_rowid() {
+                None
+            } else if truncate {
+                Some((o, format!("TRUNCATE TABLE {target}")))
+            } else {
+                Some((o, format!("DELETE FROM {target}")))
             }
         })
         .collect();
@@ -233,7 +236,7 @@ pub(crate) fn run(
                             move |r| {
                                 Box::pin(async move {
                                     if let Some(dialect) = dialect {
-                                        prepare_database(r, dialect, &database).await?;
+                                        prepare_database(r, dialect.as_ref(), &database).await?;
                                     }
                                     r.execute(&sql).await.map(|_| ())
                                 })
@@ -369,10 +372,11 @@ fn duplicate(with_data: bool, window: &mut Window, cx: &mut App) {
         Some(&o.scope.database),
         move |r| {
             Box::pin(async move {
-                prepare_database(r, d, &src.scope.database).await?;
-                let ddl = match d {
-                    Dialect::Sqlite => Some(r.object_ddl(&src.scope, src.kind, &src.name).await?),
-                    _ => None,
+                prepare_database(r, d.as_ref(), &src.scope.database).await?;
+                let ddl = if d.exposes_rowid() {
+                    Some(r.object_ddl(&src.scope, src.kind, &src.name).await?)
+                } else {
+                    None
                 };
                 let stmts = d
                     .duplicate_table(&src.scope, &src.name, &target, with_data, ddl.as_deref())

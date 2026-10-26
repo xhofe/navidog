@@ -77,7 +77,7 @@ pub enum Family {
     KeyValue,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DriverInfo {
     /// Registry key, also the `driver` field in connections.json
     pub id: String,
@@ -85,8 +85,19 @@ pub struct DriverInfo {
     pub family: Family,
     pub default_port: Option<u16>,
     pub icon: &'static str,
-    pub dialect: Dialect,
+    pub dialect: Arc<dyn Dialect>,
+    /// File database (SQLite): the connection is a path, not a host.
+    pub file_based: bool,
+    /// The general page can list several hosts (PostgreSQL).
+    pub multi_host: bool,
+    pub supports_network: bool,
     pub supports_ssl: bool,
+    /// The SSL page offers a mode list (PostgreSQL libpq). MySQL only has the on/off switch.
+    pub chooses_ssl_mode: bool,
+    /// Connect, read and write timeouts, compression and a socket path (MySQL protocol).
+    pub protocol_timeouts: bool,
+    /// A free-form connection-parameter string (libpq).
+    pub connection_params: bool,
     pub supports_ssh: bool,
     /// A session can access only one database (PostgreSQL); browsing another database needs
     /// a separate session
@@ -195,7 +206,7 @@ pub struct ForeignKey {
 #[macro_export]
 macro_rules! recovering_ping {
     ($self:ident, $probe:expr) => {
-        fn ping(&mut $self) -> BoxFuture<'_, DbResult<()>> {
+        fn ping(&mut $self) -> futures::future::BoxFuture<'_, $crate::DbResult<()>> {
             async move {
                 let first = $probe.await;
                 let result = match first {
@@ -209,7 +220,7 @@ macro_rules! recovering_ping {
                 result.map_err(|e| {
                     if $self.lost(&e) {
                         $self.cancellation.clear();
-                        interrupted(e, false)
+                        $crate::execution::interrupted(e, false)
                     } else {
                         e
                     }
@@ -223,13 +234,16 @@ macro_rules! recovering_ping {
 #[macro_export]
 macro_rules! recovering_execute {
     () => {
-        fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
+        fn execute<'a>(
+            &'a mut self,
+            sql: &'a str,
+        ) -> futures::future::BoxFuture<'a, $crate::DbResult<Vec<$crate::ResultSet>>> {
             async move {
                 self.recovery.observe(sql);
                 let result = self.attempt(sql).await.map_err(|e| {
                     if self.lost(&e) {
                         self.cancellation.clear();
-                        interrupted(e, true)
+                        $crate::execution::interrupted(e, true)
                     } else {
                         e
                     }
@@ -242,7 +256,10 @@ macro_rules! recovering_execute {
             .boxed()
         }
 
-        fn execute_read<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
+        fn execute_read<'a>(
+            &'a mut self,
+            sql: &'a str,
+        ) -> futures::future::BoxFuture<'a, $crate::DbResult<Vec<$crate::ResultSet>>> {
             async move {
                 let result = match self.attempt(sql).await {
                     Err(e) if self.lost(&e) && self.recovery.can_reconnect() => {
@@ -254,7 +271,7 @@ macro_rules! recovering_execute {
                 result.map_err(|e| {
                     if self.lost(&e) {
                         self.cancellation.clear();
-                        interrupted(e, false)
+                        $crate::execution::interrupted(e, false)
                     } else {
                         e
                     }
@@ -266,7 +283,7 @@ macro_rules! recovering_execute {
 }
 
 pub trait Relational: Send {
-    fn dialect(&self) -> Dialect;
+    fn dialect(&self) -> Arc<dyn Dialect>;
     /// Execute once on the current physical session. Transport failures never replay the SQL.
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>>;
     /// Application-owned, side-effect-free metadata/probe SQL that does not require session
@@ -284,55 +301,66 @@ pub trait Relational: Send {
         self.execute(sql)
     }
 
-    // Metadata: default implementations generate SQL per dialect and run it via `execute`
-    // (metadata.rs)
-
+    // Catalog queries. The SQL lives in each database crate; these defaults only keep test
+    // doubles compiling. A real session overrides them.
     fn list_databases(&mut self) -> BoxFuture<'_, DbResult<Vec<String>>> {
-        Box::pin(crate::metadata::list_databases(self))
+        Box::pin(async { Err(DbError::msg("This session does not list catalogs.")) })
     }
-    /// Schemas in the database this session is connected to; dialects without a schema level
+    /// Schemas in the database this session is connected to. Dialects without a schema level
     /// return an empty list.
     fn list_schemas(&mut self) -> BoxFuture<'_, DbResult<Vec<String>>> {
-        Box::pin(crate::metadata::list_schemas(self))
+        Box::pin(async { Ok(Vec::new()) })
     }
     fn object_kinds(&self) -> &'static [ObjectKind] {
         self.dialect().object_kinds()
     }
     fn list_objects<'a>(
         &'a mut self,
-        scope: &'a Scope,
-        kind: ObjectKind,
+        _scope: &'a Scope,
+        _kind: ObjectKind,
     ) -> BoxFuture<'a, DbResult<Vec<ObjectInfo>>> {
-        Box::pin(crate::metadata::list_objects(self, scope, kind))
+        Box::pin(async { Err(DbError::msg("This session does not list objects.")) })
     }
     fn object_ddl<'a>(
         &'a mut self,
-        scope: &'a Scope,
-        kind: ObjectKind,
-        name: &'a str,
+        _scope: &'a Scope,
+        _kind: ObjectKind,
+        _name: &'a str,
     ) -> BoxFuture<'a, DbResult<String>> {
-        Box::pin(crate::metadata::object_ddl(self, scope, kind, name))
+        Box::pin(async {
+            Err(DbError::msg(
+                "This session does not read object definitions.",
+            ))
+        })
     }
     fn table_columns<'a>(
         &'a mut self,
-        scope: &'a Scope,
-        table: &'a str,
+        _scope: &'a Scope,
+        _table: &'a str,
     ) -> BoxFuture<'a, DbResult<Vec<ColumnInfo>>> {
-        Box::pin(crate::metadata::table_columns(self, scope, table))
+        Box::pin(async { Err(DbError::msg("This session does not read columns.")) })
     }
     fn table_children<'a>(
         &'a mut self,
-        scope: &'a Scope,
-        table: &'a str,
+        _scope: &'a Scope,
+        _table: &'a str,
     ) -> BoxFuture<'a, DbResult<TableChildren>> {
-        Box::pin(crate::metadata::table_children(self, scope, table))
+        Box::pin(async { Err(DbError::msg("This session does not read table children.")) })
     }
     fn foreign_keys<'a>(
         &'a mut self,
-        scope: &'a Scope,
-        table: &'a str,
+        _scope: &'a Scope,
+        _table: &'a str,
     ) -> BoxFuture<'a, DbResult<Vec<ForeignKey>>> {
-        Box::pin(crate::metadata::foreign_keys(self, scope, table))
+        Box::pin(async { Err(DbError::msg("This session does not read foreign keys.")) })
+    }
+    /// Tables, views, functions and columns used to complete SQL. `system` includes hidden catalogs.
+    fn outline<'a>(
+        &'a mut self,
+        _scope: &'a Scope,
+        _system: bool,
+    ) -> BoxFuture<'a, DbResult<crate::outline::Outline>> {
+        Box::pin(async { Err(DbError::msg("This session has no completion outline.")) })
     }
 }
 

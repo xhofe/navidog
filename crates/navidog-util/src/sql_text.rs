@@ -4,7 +4,7 @@
 
 use std::ops::Range;
 
-use navidog_sql::Dialect;
+use navidog_sql::Lex;
 use navidog_sql::span::{self, SpanKind};
 
 /// Skips whitespace and `--`, `#` and `/* */` comments at the start of `sql`.
@@ -60,8 +60,8 @@ pub struct Param {
 }
 
 /// `[$name]` markers outside strings, quoted identifiers and comments.
-pub fn find_params(sql: &str, dialect: Dialect) -> Vec<Param> {
-    span::spans(sql, dialect.lex())
+pub fn find_params(sql: &str, lex: Lex) -> Vec<Param> {
+    span::spans(sql, lex)
         .into_iter()
         .filter(|s| s.kind == SpanKind::Param)
         .map(|s| Param {
@@ -72,9 +72,9 @@ pub fn find_params(sql: &str, dialect: Dialect) -> Vec<Param> {
 }
 
 /// Distinct parameter names in order of first appearance.
-pub fn param_names(sql: &str, dialect: Dialect) -> Vec<String> {
+pub fn param_names(sql: &str, lex: Lex) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
-    for p in find_params(sql, dialect) {
+    for p in find_params(sql, lex) {
         if !names.contains(&p.name) {
             names.push(p.name);
         }
@@ -83,14 +83,10 @@ pub fn param_names(sql: &str, dialect: Dialect) -> Vec<String> {
 }
 
 /// Replaces every `[$name]` with `value(name)`.
-pub fn substitute_params(
-    sql: &str,
-    dialect: Dialect,
-    mut value: impl FnMut(&str) -> String,
-) -> String {
+pub fn substitute_params(sql: &str, lex: Lex, mut value: impl FnMut(&str) -> String) -> String {
     let mut out = String::with_capacity(sql.len());
     let mut last = 0;
-    for p in find_params(sql, dialect) {
+    for p in find_params(sql, lex) {
         out.push_str(&sql[last..p.range.start]);
         out.push_str(&value(&p.name));
         last = p.range.end;
@@ -142,6 +138,34 @@ pub fn remove_placeholders(code: &str) -> String {
 mod tests {
     use super::*;
 
+    fn mysql_lex() -> Lex {
+        Lex {
+            backtick_idents: true,
+            hash_comments: true,
+            dollar_quotes: false,
+            bracket_idents: false,
+            backslash_strings: true,
+            escape_string_prefix: false,
+            double_quote_strings: true,
+            nested_block_comments: false,
+            delimiter_command: true,
+        }
+    }
+
+    fn postgres_lex() -> Lex {
+        Lex {
+            backtick_idents: true,
+            hash_comments: false,
+            dollar_quotes: true,
+            bracket_idents: false,
+            backslash_strings: false,
+            escape_string_prefix: true,
+            double_quote_strings: false,
+            nested_block_comments: true,
+            delimiter_command: false,
+        }
+    }
+
     #[test]
     fn keywords_after_comments() {
         assert_eq!(first_keyword("-- x\n /* y */ select 1"), "select");
@@ -160,29 +184,29 @@ mod tests {
     fn parameters_inside_dollar_quotes_are_not_rewritten() {
         let sql = "SELECT $$ [$x] $$, [$y]";
         assert_eq!(
-            find_params(sql, Dialect::Postgres)
+            find_params(sql, postgres_lex())
                 .iter()
                 .map(|p| p.name.as_str())
                 .collect::<Vec<_>>(),
             ["y"]
         );
         assert_eq!(
-            substitute_params(sql, Dialect::Postgres, |name| format!("'{name}'")),
+            substitute_params(sql, postgres_lex(), |name| format!("'{name}'")),
             "SELECT $$ [$x] $$, 'y'"
         );
-        assert!(find_params("SELECT $tag$ [$x] $tag$, $1", Dialect::Postgres).is_empty());
+        assert!(find_params("SELECT $tag$ [$x] $tag$, $1", postgres_lex()).is_empty());
     }
 
     #[test]
     fn a_dollar_tag_inside_an_identifier_is_not_a_quote() {
         let sql = "SELECT foo$tag$ FROM t WHERE id = [$id] AND note = $tag$text$tag$";
-        let params: Vec<_> = find_params(sql, Dialect::Postgres)
+        let params: Vec<_> = find_params(sql, postgres_lex())
             .into_iter()
             .map(|p| p.name)
             .collect();
         assert_eq!(params, ["id"]);
         assert_eq!(
-            substitute_params(sql, Dialect::Postgres, |name| format!("'{name}'")),
+            substitute_params(sql, postgres_lex(), |name| format!("'{name}'")),
             "SELECT foo$tag$ FROM t WHERE id = 'id' AND note = $tag$text$tag$"
         );
     }
@@ -204,13 +228,13 @@ mod tests {
     #[test]
     fn params_skip_strings_and_comments() {
         let sql = "SELECT '[$no]' FROM t -- [$no]\nWHERE a = [$id] AND b = [$name] OR c = [$id] /* [$no] */";
-        assert_eq!(param_names(sql, Dialect::MySql), ["id", "name"]);
-        let out = substitute_params(sql, Dialect::MySql, |n| {
+        assert_eq!(param_names(sql, mysql_lex()), ["id", "name"]);
+        let out = substitute_params(sql, mysql_lex(), |n| {
             if n == "id" { "1".into() } else { "'x'".into() }
         });
         assert!(out.contains("a = 1 AND b = 'x' OR c = 1"), "{out}");
         assert!(out.contains("'[$no]'"));
-        assert!(find_params("[$] [$a\nb]", Dialect::MySql).is_empty());
+        assert!(find_params("[$] [$a\nb]", mysql_lex()).is_empty());
     }
 
     #[test]

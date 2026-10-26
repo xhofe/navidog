@@ -56,9 +56,9 @@ fn literal(sql: &str) -> DbResult<String> {
     }
     Err(DbError::msg("Invalid legacy comment string."))
 }
-fn decode(sql: &str) -> DbResult<(bool, Vec<String>, String)> {
+fn decode(sql: &str, d: &dyn Dialect) -> DbResult<(bool, Vec<String>, String)> {
     let sql = sql.trim().trim_end_matches(';').trim_end();
-    parse::fragment(sql, Dialect::Postgres)?;
+    parse::fragment(sql, d)?;
     let rest = word(word(sql, "COMMENT")?, "ON")?;
     let column = rest
         .split_whitespace()
@@ -91,7 +91,7 @@ fn is_comment(sql: &str) -> bool {
 }
 impl TableDesign {
     /// Converts old COMMENT statements to comment data without changing the input on failure.
-    pub fn migrate_comments(&mut self, scope: &Scope) -> DbResult<()> {
+    pub fn migrate_comments(&mut self, scope: &Scope, d: &dyn Dialect) -> DbResult<()> {
         let mut next = self.clone();
         let mut seen = HashSet::new();
         let mut indexes = Vec::new();
@@ -100,7 +100,7 @@ impl TableDesign {
                 indexes.push(sql.clone());
                 continue;
             }
-            let (column, mut names, value) = decode(sql)?;
+            let (column, mut names, value) = decode(sql, d)?;
             let field = if column {
                 Some(
                     names
@@ -171,8 +171,8 @@ pub(super) fn statements(
     scope: &Scope,
     before: Option<&TableDesign>,
     after: &TableDesign,
+    d: &dyn Dialect,
 ) -> Vec<String> {
-    let d = Dialect::Postgres;
     let table = d.qualified(scope, &after.name);
     let mut out = Vec::new();
     if before.map(|b| b.comment.as_str()).unwrap_or("") != after.comment {
@@ -224,7 +224,13 @@ mod tests {
         next.columns[0].name = "new.name".into();
         next.columns[0].comment = "中文 O'Brien \\ path; -- text\nnext".into();
         next.comment.clear();
-        let sql = plan(Dialect::Postgres, &scope(), Some(&old), &next).unwrap();
+        let sql = plan(
+            &navidog_postgres::PostgresDialect,
+            &scope(),
+            Some(&old),
+            &next,
+        )
+        .unwrap();
         assert!(sql[0].contains("RENAME COLUMN"));
         assert_eq!(
             sql[1],
@@ -234,9 +240,14 @@ mod tests {
         let mut unchanged = old.design.clone();
         unchanged.columns[0].name = "renamed".into();
         assert_eq!(
-            plan(Dialect::Postgres, &scope(), Some(&old), &unchanged)
-                .unwrap()
-                .len(),
+            plan(
+                &navidog_postgres::PostgresDialect,
+                &scope(),
+                Some(&old),
+                &unchanged
+            )
+            .unwrap()
+            .len(),
             1
         );
         let mut deleted = old.design.clone();
@@ -244,7 +255,13 @@ mod tests {
         deleted
             .columns
             .push(DesignColumn::new(9, "replacement", "INTEGER"));
-        let sql = plan(Dialect::Postgres, &scope(), Some(&old), &deleted).unwrap();
+        let sql = plan(
+            &navidog_postgres::PostgresDialect,
+            &scope(),
+            Some(&old),
+            &deleted,
+        )
+        .unwrap();
         assert!(!sql.iter().any(|s| s.starts_with("COMMENT ON COLUMN")));
     }
     #[test]
@@ -253,14 +270,18 @@ mod tests {
         old.comment.clear();
         old.columns[0].comment.clear();
         old.indexes=vec!["COMMENT ON TABLE \"schema.with.dot\".\"table\"\"name\" IS '旧表'".into(),"COMMENT ON COLUMN \"schema.with.dot\".\"table\"\"name\".\"id\" IS E'O''Brien \\\\ path'".into()];
-        old.migrate_comments(&scope()).unwrap();
+        old.migrate_comments(&scope(), &navidog_postgres::PostgresDialect)
+            .unwrap();
         assert!(old.indexes.is_empty());
         assert_eq!(old.comment, "旧表");
         assert_eq!(old.columns[0].comment, "O'Brien \\ path");
         let mut bad = baseline().design;
         bad.indexes.push("COMMENT ON TABLE elsewhere IS 'x'".into());
         let original = bad.clone();
-        assert!(bad.migrate_comments(&scope()).is_err());
+        assert!(
+            bad.migrate_comments(&scope(), &navidog_postgres::PostgresDialect)
+                .is_err()
+        );
         assert_eq!(bad, original);
         let mut duplicate = TableDesign::new();
         duplicate.name = "t".into();
@@ -270,7 +291,10 @@ mod tests {
         ];
         assert!(
             duplicate
-                .migrate_comments(&Scope::new("test", "db", None))
+                .migrate_comments(
+                    &Scope::new("test", "db", None),
+                    &navidog_postgres::PostgresDialect
+                )
                 .is_err()
         );
     }
@@ -278,11 +302,11 @@ mod tests {
     fn new_table_comments_precede_owner_transfer_and_reject_nul() {
         let mut design = baseline().design;
         design.owner = "new_owner".into();
-        let sql = plan(Dialect::Postgres, &scope(), None, &design).unwrap();
+        let sql = plan(&navidog_postgres::PostgresDialect, &scope(), None, &design).unwrap();
         assert!(sql[1].starts_with("COMMENT ON TABLE"));
         assert!(sql[2].starts_with("COMMENT ON COLUMN"));
         assert!(sql.last().unwrap().contains("OWNER TO"));
         design.comment = "bad\0comment".into();
-        assert!(plan(Dialect::Postgres, &scope(), None, &design).is_err());
+        assert!(plan(&navidog_postgres::PostgresDialect, &scope(), None, &design).is_err());
     }
 }

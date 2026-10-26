@@ -6,8 +6,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use gpui_kit::TestAppContext;
-use navidog_db::sqlite::SqliteDriver;
 use navidog_db::{ConnectParams, connect, runtime};
+use navidog_sqlite::SqliteDriver;
 
 /// Runs the app and the tokio driver until `done`, or fails after ten seconds.
 /// The 20 ms sleep lets driver threads make progress; `run_until_parked` alone

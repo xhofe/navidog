@@ -1,4 +1,5 @@
 use std::ops::RangeInclusive;
+use std::sync::Arc;
 
 use gpui_kit::SharedString;
 use navidog_db::dialect::Dialect;
@@ -29,13 +30,28 @@ impl GridModel {
     /// Text the cell shows and the editor starts from. In raw data mode a string value is a SQL
     /// literal (`'PENELOPE'`), including quotes. A value already typed as an expression is left as
     /// typed. NULL and an unfilled cell are empty; the grid paints NULL itself.
-    pub fn raw_text(&self, r: usize, c: usize, raw_mode: bool, dialect: Dialect) -> String {
+    pub fn raw_text(&self, r: usize, c: usize, raw_mode: bool, dialect: &dyn Dialect) -> String {
         self.shown_text(r, c, raw_mode, dialect).to_string()
+    }
+
+    /// Editor text when the grid is not bound to a connection. Raw mode cannot quote without a
+    /// dialect, so the stored characters are used as typed.
+    pub fn unbound_text(&self, r: usize, c: usize) -> String {
+        self.value(r, c)
+            .and_then(|cell| cell.as_ref())
+            .map(|text| text.to_string())
+            .unwrap_or_default()
     }
 
     /// `raw_text` for painting: shares the cell's string unless raw data mode quotes it, so a
     /// frame does not copy every visible value.
-    pub fn shown_text(&self, r: usize, c: usize, raw_mode: bool, dialect: Dialect) -> SharedString {
+    pub fn shown_text(
+        &self,
+        r: usize,
+        c: usize,
+        raw_mode: bool,
+        dialect: &dyn Dialect,
+    ) -> SharedString {
         let Some(Some(s)) = self.value(r, c) else {
             return SharedString::default();
         };
@@ -148,7 +164,7 @@ impl GridModel {
     /// quoted literals), so pasting them back in raw data mode, where text is SQL, writes the same values.
     /// Cells containing a tab, a newline or a quote use quoted TSV (RFC 4180 with a tab delimiter),
     /// so a copy/paste round trip keeps one value in one cell.
-    pub fn selected_tsv(&self, header: bool, data: bool, raw: Option<Dialect>) -> String {
+    pub fn selected_tsv(&self, header: bool, data: bool, raw: Option<Arc<dyn Dialect>>) -> String {
         let mut lines = Vec::new();
         if header {
             lines.push(
@@ -164,8 +180,8 @@ impl GridModel {
             for r in rows.filter(|&r| r < self.row_count()) {
                 let cells: Vec<String> = cols
                     .clone()
-                    .map(|c| match raw {
-                        Some(dialect) => tsv_field(&self.shown_text(r, c, true, dialect)),
+                    .map(|c| match raw.clone() {
+                        Some(dialect) => tsv_field(&self.shown_text(r, c, true, dialect.as_ref())),
                         None => tsv_field(
                             self.value(r, c)
                                 .cloned()
