@@ -3,7 +3,8 @@
 //! Both channels read `latest.json` from [`RELEASE_MIRROR`]. The file's
 //! `releases` list is every published release; the top-level fields stay this
 //! release's own version and assets. The stable channel skips pre-releases and
-//! the rolling `nightly` tag. Nightly is compared by publish time. A download
+//! the rolling `nightly` tag. Nightly is compared by `built_at`, the same clock
+//! baked into the binary. A download
 //! is installed only when its SHA-256 matches the manifest. A missing file or
 //! an empty checksum is not installed.
 
@@ -165,6 +166,9 @@ struct UpdateRelease {
     draft: bool,
     #[serde(default, deserialize_with = "empty_if_null")]
     published_at: String,
+    /// Build clock baked into a nightly. Empty for every other release.
+    #[serde(default, deserialize_with = "empty_if_null")]
+    built_at: String,
     #[serde(default, deserialize_with = "empty_if_null")]
     body: String,
     #[serde(default)]
@@ -270,7 +274,13 @@ fn missing_latest(status: Option<u16>, detail: &str) -> Result<Availability, Str
 ///
 /// Entries are ordered by `published_at`, newest first. Drafts do not count as
 /// published. Without `include_prerelease`, pre-releases and `nightly` are skipped.
-fn pick_release(releases: &[UpdateRelease], include_prerelease: bool) -> Listed<'_> {
+/// `built_at` is this binary's build clock; a nightly is newer only when its own
+/// `built_at` is strictly later.
+fn pick_release<'a>(
+    releases: &'a [UpdateRelease],
+    include_prerelease: bool,
+    built_at: &str,
+) -> Listed<'a> {
     let mut order: Vec<usize> = (0..releases.len()).collect();
     order.sort_by(|&a, &b| releases[b].published_at.cmp(&releases[a].published_at));
     let mut published = false;
@@ -283,7 +293,7 @@ fn pick_release(releases: &[UpdateRelease], include_prerelease: bool) -> Listed<
         }
         published = true;
         if release.tag == NIGHTLY_TAG {
-            if nightly_is_newer(&release.published_at, BUILD_TIMESTAMP) {
+            if nightly_is_newer(&release.built_at, built_at) {
                 return Listed::Chosen(release);
             }
             continue;
@@ -306,8 +316,8 @@ fn pick_release(releases: &[UpdateRelease], include_prerelease: bool) -> Listed<
 
 fn offered_version(release: &UpdateRelease) -> String {
     if release.tag == NIGHTLY_TAG {
-        let published = release.published_at.get(..10).unwrap_or(NIGHTLY_TAG);
-        return format!("{NIGHTLY_TAG} {published}");
+        let built = release.built_at.get(..10).unwrap_or(NIGHTLY_TAG);
+        return format!("{NIGHTLY_TAG} {built}");
     }
     let raw = if release.version.is_empty() {
         release.tag.as_str()
@@ -326,7 +336,7 @@ pub fn fetch_latest_release(include_prerelease: bool) -> Result<Availability, St
     };
     let manifest: Manifest = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     let releases = listed_releases(manifest);
-    let release = match pick_release(&releases, include_prerelease) {
+    let release = match pick_release(&releases, include_prerelease, BUILD_TIMESTAMP) {
         Listed::Unpublished => return Ok(Availability::Unpublished),
         Listed::Current => return Ok(Availability::Current),
         Listed::Chosen(release) => release,
@@ -364,6 +374,7 @@ fn listed_releases(manifest: Manifest) -> Vec<UpdateRelease> {
         prerelease: false,
         draft: false,
         published_at: String::new(),
+        built_at: String::new(),
         body: manifest.body,
         assets: manifest.assets,
     }]
@@ -663,6 +674,7 @@ fn open_dialog(info: UpdateInfo, window: &mut Window, cx: &mut App) {
         info,
         progress: None,
         installing: false,
+        phase: None,
         cancel: Arc::new(AtomicBool::new(false)),
     });
     let version = view.read(cx).info.version.clone();
@@ -681,6 +693,8 @@ struct UpdateDialog {
     progress: Option<(u64, u64)>,
     /// The file is on disk and install has started. Cancel no longer applies.
     installing: bool,
+    /// The install step currently running. `None` until the installer reports one.
+    phase: Option<InstallPhase>,
     cancel: Arc<AtomicBool>,
 }
 
@@ -710,6 +724,9 @@ async fn watch_download(
         {
             shown = Some((done, total));
             let _ = view.update_in(cx, |dialog, _, cx| {
+                if dialog.installing {
+                    return;
+                }
                 dialog.progress = Some((done, total));
                 cx.notify();
             });
@@ -745,6 +762,61 @@ fn download_progress_bar(done: u64, total: u64) -> impl IntoElement {
     v_flex().w_full().gap_2().child(bar).child(caption)
 }
 
+fn install_progress(phase: Option<InstallPhase>) -> impl IntoElement {
+    let caption = match phase {
+        Some(InstallPhase::Mounting) => t!("update.mounting"),
+        Some(InstallPhase::Copying) => t!("update.copying"),
+        Some(InstallPhase::Verifying) => t!("update.verifying"),
+        Some(InstallPhase::Replacing) => t!("update.replacing"),
+        Some(InstallPhase::Opening) => t!("update.opening"),
+        None => t!("update.installing"),
+    };
+    v_flex()
+        .w_full()
+        .gap_2()
+        .child(Progress::new("update-progress").w_full().loading(true))
+        .child(caption.to_string())
+}
+
+/// Applies install steps to the dialog. The bar stays indeterminate.
+async fn watch_install(
+    view: gpui_kit::WeakEntity<UpdateDialog>,
+    rx: std::sync::mpsc::Receiver<InstallPhase>,
+    cx: &mut gpui_kit::AsyncWindowContext,
+) {
+    let mut shown = None;
+    loop {
+        let mut latest = None;
+        let mut closed = false;
+        loop {
+            match rx.try_recv() {
+                Ok(phase) => latest = Some(phase),
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    closed = true;
+                    break;
+                }
+            }
+        }
+        if let Some(phase) = latest
+            && shown != Some(phase)
+        {
+            shown = Some(phase);
+            let _ = view.update_in(cx, |dialog, _, cx| {
+                dialog.installing = true;
+                dialog.phase = Some(phase);
+                cx.notify();
+            });
+        }
+        if closed {
+            break;
+        }
+        cx.background_executor()
+            .timer(Duration::from_millis(100))
+            .await;
+    }
+}
+
 impl UpdateDialog {
     fn download(&mut self, window: &mut Window, cx: &mut gpui_kit::Context<Self>) {
         if self.progress.is_some() {
@@ -757,6 +829,7 @@ impl UpdateDialog {
         };
         self.cancel.store(false, Ordering::Relaxed);
         self.installing = false;
+        self.phase = None;
         // Show the bar on the click itself. The first byte waits on DNS and
         // TLS, and a still-enabled button looks like the click did nothing.
         self.progress = Some((0, asset.size));
@@ -784,26 +857,36 @@ impl UpdateDialog {
                         cleanup_download(&path);
                         Err(InstallError::Cancelled)
                     } else {
+                        let (phase_tx, phase_rx) = std::sync::mpsc::channel();
+                        let view = this.clone();
+                        let watch_phase =
+                            cx.spawn(async move |cx| watch_install(view, phase_rx, cx).await);
                         let _ = this.update_in(cx, |dialog, _, cx| {
                             dialog.installing = true;
+                            dialog.phase = None;
                             cx.notify();
                         });
-                        cx.background_spawn(async move {
-                            match install(&path) {
-                                Ok(delivery) => {
-                                    #[cfg(target_os = "macos")]
-                                    if matches!(delivery, Delivery::Replaced) {
-                                        cleanup_download(&path);
+                        let installed = cx
+                            .background_spawn(async move {
+                                match install(&path, &|phase| {
+                                    let _ = phase_tx.send(phase);
+                                }) {
+                                    Ok(delivery) => {
+                                        #[cfg(target_os = "macos")]
+                                        if matches!(delivery, Delivery::Replaced) {
+                                            cleanup_download(&path);
+                                        }
+                                        Ok(delivery)
                                     }
-                                    Ok(delivery)
+                                    Err(detail) => {
+                                        cleanup_download(&path);
+                                        Err(InstallError::Other(detail))
+                                    }
                                 }
-                                Err(detail) => {
-                                    cleanup_download(&path);
-                                    Err(InstallError::Other(detail))
-                                }
-                            }
-                        })
-                        .await
+                            })
+                            .await;
+                        watch_phase.await;
+                        installed
                     }
                 }
             };
@@ -811,6 +894,7 @@ impl UpdateDialog {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.progress = None;
                 this.installing = false;
+                this.phase = None;
                 match result {
                     #[cfg(target_os = "macos")]
                     Ok(Delivery::Replaced) => {
@@ -847,6 +931,7 @@ impl Render for UpdateDialog {
         let weak = cx.entity().downgrade();
         let progress = self.progress;
         let installing = self.installing;
+        let phase = self.phase;
         let cancel = Arc::clone(&self.cancel);
         v_flex()
             .gap_2()
@@ -854,22 +939,22 @@ impl Render for UpdateDialog {
             .min_w_0()
             .child(t!("update.current", version = self.info.current.clone()).to_string())
             .when(!notes.is_empty(), |col| col.child(notes))
-            .when(progress.is_none() && !has_asset, |col| {
+            .when(progress.is_none() && !has_asset && !installing, |col| {
                 col.child(t!("update.no_asset").to_string())
             })
-            .when_some(progress, |col, (done, total)| {
-                col.child(download_progress_bar(done, total))
-                    .when(!installing, |col| {
-                        col.child(
-                            h_flex().justify_end().w_full().child(
-                                Button::new("update-cancel")
-                                    .label(t!("dialog.cancel").to_string())
-                                    .on_click(move |_, _, _| {
-                                        cancel.store(true, Ordering::Relaxed);
-                                    }),
-                            ),
-                        )
-                    })
+            .when(installing, |col| col.child(install_progress(phase)))
+            .when(!installing, |col| {
+                col.when_some(progress, |col, (done, total)| {
+                    col.child(download_progress_bar(done, total)).child(
+                        h_flex().justify_end().w_full().child(
+                            Button::new("update-cancel")
+                                .label(t!("dialog.cancel").to_string())
+                                .on_click(move |_, _, _| {
+                                    cancel.store(true, Ordering::Relaxed);
+                                }),
+                        ),
+                    )
+                })
             })
             .when(progress.is_none(), |col| {
                 col.child(
@@ -992,11 +1077,15 @@ mod tests {
 
     #[test]
     fn one_list_serves_both_channels() {
-        assert!(matches!(pick_release(&[], false), Listed::Unpublished));
+        const BUILT: &str = "2026-10-16T00:00:00Z";
+        assert!(matches!(
+            pick_release(&[], false, BUILT),
+            Listed::Unpublished
+        ));
         let list: Vec<UpdateRelease> = serde_json::from_str(
             r#"[
                 {"tag":"v8.0.0","version":"8.0.0","draft":true,"published_at":null,"body":null},
-                {"tag":"nightly","version":"nightly","prerelease":true,"published_at":"2099-01-02T00:00:00Z","body":"nightly notes"},
+                {"tag":"nightly","version":"nightly","prerelease":true,"published_at":"2099-01-02T00:00:00Z","built_at":"2099-01-02T00:00:00Z","body":"nightly notes"},
                 {"tag":"v9.0.0","version":"9.0.0","published_at":"2099-01-01T00:00:00Z","body":"nine"},
                 {"tag":"v9.1.0-rc.1","version":"9.1.0-rc.1","prerelease":true,"published_at":"2098-01-01T00:00:00Z","body":"rc"},
                 {"tag":"v0.0.0","version":"0.0.0","published_at":"2020-01-01T00:00:00Z","body":"old"}
@@ -1005,27 +1094,42 @@ mod tests {
         .unwrap();
         assert!(list[0].body.is_empty());
         assert!(list[0].published_at.is_empty());
+        assert!(list[0].built_at.is_empty());
         assert!(matches!(
-            pick_release(&list[..1], false),
+            pick_release(&list[..1], false, BUILT),
             Listed::Unpublished
         ));
-        match pick_release(&list, false) {
+        match pick_release(&list, false, BUILT) {
             Listed::Chosen(release) => assert_eq!(release.tag, "v9.0.0"),
             other => panic!("stable channel should offer v9.0.0, got {other:?}"),
         }
-        match pick_release(&list, true) {
+        match pick_release(&list, true, BUILT) {
             Listed::Chosen(release) => assert_eq!(release.tag, "nightly"),
             other => panic!("pre-release channel should offer nightly, got {other:?}"),
         }
+        let same_nightly: Vec<UpdateRelease> = serde_json::from_str(&format!(
+            r#"[{{"tag":"nightly","version":"nightly","prerelease":true,"published_at":"2099-01-02T00:00:00Z","built_at":"{BUILT}"}}]"#
+        ))
+        .unwrap();
+        assert!(
+            matches!(pick_release(&same_nightly, true, BUILT), Listed::Current),
+            "the nightly that built this binary is not a new version"
+        );
         let older: Vec<UpdateRelease> =
             serde_json::from_str(r#"[{"tag":"v0.0.0","version":"0.0.0"}]"#).unwrap();
-        assert!(matches!(pick_release(&older, false), Listed::Current));
+        assert!(matches!(
+            pick_release(&older, false, BUILT),
+            Listed::Current
+        ));
         let rc: Vec<UpdateRelease> = serde_json::from_str(
             r#"[{"tag":"v9.1.0-rc.1","version":"9.1.0-rc.1","prerelease":true,"published_at":"2099-01-01T00:00:00Z"}]"#,
         )
         .unwrap();
-        assert!(matches!(pick_release(&rc, false), Listed::Unpublished));
-        match pick_release(&rc, true) {
+        assert!(matches!(
+            pick_release(&rc, false, BUILT),
+            Listed::Unpublished
+        ));
+        match pick_release(&rc, true, BUILT) {
             Listed::Chosen(release) => assert_eq!(release.tag, "v9.1.0-rc.1"),
             other => panic!("pre-release channel should offer the rc, got {other:?}"),
         }
@@ -1045,7 +1149,10 @@ mod tests {
         let releases = listed_releases(manifest);
         assert_eq!(releases.len(), 1);
         assert_eq!(releases[0].tag, "v9.0.0");
-        assert!(matches!(pick_release(&releases, false), Listed::Chosen(_)));
+        assert!(matches!(
+            pick_release(&releases, false, "1970-01-01T00:00:00Z"),
+            Listed::Chosen(_)
+        ));
     }
 
     #[test]

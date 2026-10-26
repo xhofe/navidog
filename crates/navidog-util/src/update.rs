@@ -2,10 +2,6 @@
 
 use semver::Version;
 
-/// A nightly published at `published_at` is newer than this build when it is more than this
-/// much later. The grace skips the upload that is still finishing for the build that is running.
-const NIGHTLY_GRACE: chrono::TimeDelta = chrono::TimeDelta::minutes(15);
-
 /// `Some(version)` when `raw` is a semver strictly newer than `current`.
 pub fn newer_version(raw: &str, current: &str) -> Option<String> {
     let latest = Version::parse(raw.trim().trim_start_matches('v')).ok()?;
@@ -13,16 +9,16 @@ pub fn newer_version(raw: &str, current: &str) -> Option<String> {
     (latest > current).then(|| latest.to_string())
 }
 
-/// A nightly published at `published_at` is newer than this build when it is more than 15 minutes
-/// later.
-pub fn nightly_is_newer(published_at: &str, built_at: &str) -> bool {
-    let (Ok(published), Ok(built)) = (
-        chrono::DateTime::parse_from_rfc3339(published_at.trim()),
+/// A nightly is newer when its `built_at` is strictly later than this build.
+/// The same timestamp is the build that is running. A missing or unparseable time is not newer.
+pub fn nightly_is_newer(release_built_at: &str, built_at: &str) -> bool {
+    let (Ok(release), Ok(built)) = (
+        chrono::DateTime::parse_from_rfc3339(release_built_at.trim()),
         chrono::DateTime::parse_from_rfc3339(built_at.trim()),
     ) else {
         return false;
     };
-    published - built > NIGHTLY_GRACE
+    release > built
 }
 
 /// `(os, arch, kind)` of a file the publish workflow uploads.
@@ -88,15 +84,20 @@ mod tests {
     }
 
     #[test]
-    fn nightly_is_newer_after_the_grace_window() {
+    fn nightly_is_newer_only_when_the_build_time_is_later() {
         assert!(!nightly_is_newer(
-            "2026-10-16T00:10:00Z",
+            "2026-10-16T00:00:00Z",
             "2026-10-16T00:00:00Z"
         ));
         assert!(nightly_is_newer(
-            "2026-10-16T00:20:00Z",
+            "2026-10-16T00:00:01Z",
             "2026-10-16T00:00:00Z"
         ));
+        assert!(!nightly_is_newer(
+            "2026-10-15T23:59:59Z",
+            "2026-10-16T00:00:00Z"
+        ));
+        assert!(!nightly_is_newer("", "2026-10-16T00:00:00Z"));
         assert!(!nightly_is_newer("not-a-date", "2026-10-16T00:00:00Z"));
     }
 

@@ -520,8 +520,8 @@ jobs:
           set -euo pipefail
           tag=nightly
           # Deleting the release leaves the tag behind; drop both, including any
-          # draft left by a canceled run. Recreating (instead of clobbering
-          # assets) refreshes published_at, which is what clients compare.
+          # draft left by a canceled run. Recreating replaces every asset.
+          # Clients compare nightly `built_at` in latest.json, not published_at.
           ids=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
             -q ".[] | select(.tag_name == \"${tag}\") | .id" 2>/dev/null || true)
           for id in $ids; do
@@ -569,13 +569,26 @@ jobs:
           # Keep the release being published in the index even while its tag is a
           # draft. Other drafts stay out.
           gh api "repos/${REPO}/releases?per_page=30" > releases.json
-          jq -c --arg current "$TAG" --arg fallback "$BUILD_RFC3339" '
+          mkdir -p index-work
+          # Same clock as NAVIDOG_BUILD_TIMESTAMP. A tag publish copies the
+          # nightly value so this tag's build time does not replace it.
+          if [ "$TAG" = "nightly" ]; then
+            NIGHTLY_BUILT="$BUILD_RFC3339"
+          else
+            NIGHTLY_BUILT=""
+            if gh release download nightly --pattern latest.json --clobber --dir index-work >/dev/null 2>&1; then
+              NIGHTLY_BUILT="$(jq -r '[.releases[]? | select(.tag == "nightly") | .built_at] | first // ""' index-work/latest.json)"
+              rm -f index-work/latest.json
+            fi
+          fi
+          jq -c --arg current "$TAG" --arg fallback "$BUILD_RFC3339" --arg nightly_built "$NIGHTLY_BUILT" '
             [ .[] | select(.draft != true or .tag_name == $current)
               | {
                   tag: .tag_name,
                   version: (if .tag_name == "nightly" then "nightly" else (.tag_name | ltrimstr("v")) end),
                   prerelease: (if .tag_name == "nightly" then true else (.prerelease // false) end),
                   published_at: (if (.published_at // "") == "" and .tag_name == $current then $fallback else (.published_at // "") end),
+                  built_at: (if .tag_name == "nightly" then $nightly_built else "" end),
                   body: (.body // "")
                 }
             ]
@@ -583,7 +596,6 @@ jobs:
             | reverse
             | .[]
           ' releases.json > entries.jsonl
-          mkdir -p index-work
           : > entries-with-assets.jsonl
           while IFS= read -r entry; do
             tag=$(jq -r '.tag' <<<"$entry")

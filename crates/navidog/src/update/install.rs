@@ -12,6 +12,16 @@ pub enum Delivery {
     HandedToOs,
 }
 
+/// What the installer is doing after the file is on disk. The dialog names the step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum InstallPhase {
+    Mounting,
+    Copying,
+    Verifying,
+    Replacing,
+    Opening,
+}
+
 pub(super) fn cleanup_download(path: &Path) {
     let _ = std::fs::remove_file(path);
     if let Some(dir) = path.parent()
@@ -34,23 +44,26 @@ pub fn bundle_from_exe(path: &Path) -> Option<std::path::PathBuf> {
     }
 }
 
-pub fn install(path: &Path) -> Result<Delivery, String> {
+pub fn install(path: &Path, on_phase: &dyn Fn(InstallPhase)) -> Result<Delivery, String> {
     #[cfg(target_os = "macos")]
     {
-        install_macos(path)
+        install_macos(path, on_phase)
     }
     #[cfg(target_os = "windows")]
     {
-        install_windows(path)
+        install_windows(path, on_phase)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        install_other(path)
+        install_other(path, on_phase)
     }
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn install_macos(dmg: &Path) -> Result<Delivery, String> {
+pub(super) fn install_macos(
+    dmg: &Path,
+    on_phase: &dyn Fn(InstallPhase),
+) -> Result<Delivery, String> {
     if let Ok(exe) = std::env::current_exe()
         && let Some(app) = bundle_from_exe(&exe)
         && app
@@ -60,10 +73,11 @@ pub(super) fn install_macos(dmg: &Path) -> Result<Delivery, String> {
         let _ = app.parent().map(|dir| {
             let _ = std::fs::remove_file(dir.join(".navidog-update-probe"));
         });
-        if replace_bundle(&app, dmg).is_ok() {
+        if replace_bundle(&app, dmg, on_phase).is_ok() {
             return Ok(Delivery::Replaced);
         }
     }
+    on_phase(InstallPhase::Opening);
     std::process::Command::new("open")
         .arg(dmg)
         .spawn()
@@ -98,10 +112,15 @@ pub(super) fn verify_bundle(app: &Path) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn replace_bundle(app: &Path, dmg: &Path) -> Result<(), String> {
+pub(super) fn replace_bundle(
+    app: &Path,
+    dmg: &Path,
+    on_phase: &dyn Fn(InstallPhase),
+) -> Result<(), String> {
     let mount = std::env::temp_dir().join(format!("navidog-dmg-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&mount);
     std::fs::create_dir_all(&mount).map_err(|e| e.to_string())?;
+    on_phase(InstallPhase::Mounting);
     let attached = std::process::Command::new("hdiutil")
         .args(["attach", "-nobrowse", "-readonly", "-mountpoint"])
         .arg(&mount)
@@ -125,6 +144,7 @@ pub(super) fn replace_bundle(app: &Path, dmg: &Path) -> Result<(), String> {
     };
     let staged = std::env::temp_dir().join(format!("navidog-new-{}.app", std::process::id()));
     let _ = std::fs::remove_dir_all(&staged);
+    on_phase(InstallPhase::Copying);
     let copied = std::process::Command::new("ditto")
         .arg(&src)
         .arg(&staged)
@@ -133,17 +153,16 @@ pub(super) fn replace_bundle(app: &Path, dmg: &Path) -> Result<(), String> {
         .args(["detach"])
         .arg(&mount)
         .status();
-    match copied {
-        Ok(status) if status.success() && verify_bundle(&staged) => {}
-        Ok(status) if status.success() => {
-            let _ = std::fs::remove_dir_all(&staged);
-            return Err("the downloaded app is not signed correctly".into());
-        }
-        _ => {
-            let _ = std::fs::remove_dir_all(&staged);
-            return Err("could not copy the new app into place".into());
-        }
+    if !copied.is_ok_and(|status| status.success()) {
+        let _ = std::fs::remove_dir_all(&staged);
+        return Err("could not copy the new app into place".into());
     }
+    on_phase(InstallPhase::Verifying);
+    if !verify_bundle(&staged) {
+        let _ = std::fs::remove_dir_all(&staged);
+        return Err("the downloaded app is not signed correctly".into());
+    }
+    on_phase(InstallPhase::Replacing);
     let aside = std::env::temp_dir().join(format!("navidog-old-{}.app", std::process::id()));
     let _ = std::fs::remove_dir_all(&aside);
     swap_app(app, &staged, &aside)
@@ -208,7 +227,11 @@ pub fn relaunch() {
 }
 
 #[cfg(target_os = "windows")]
-pub(super) fn install_windows(path: &Path) -> Result<Delivery, String> {
+pub(super) fn install_windows(
+    path: &Path,
+    on_phase: &dyn Fn(InstallPhase),
+) -> Result<Delivery, String> {
+    on_phase(InstallPhase::Opening);
     // Never build a `cmd /C` string: `cmd.exe` has its own quoting rules, and
     // a space or quote in the temp path would change the command. The MSI is
     // passed as one argument to `msiexec`, and a bare executable is spawned
@@ -236,7 +259,11 @@ pub(super) fn install_windows(path: &Path) -> Result<Delivery, String> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(super) fn install_other(path: &Path) -> Result<Delivery, String> {
+pub(super) fn install_other(
+    path: &Path,
+    on_phase: &dyn Fn(InstallPhase),
+) -> Result<Delivery, String> {
+    on_phase(InstallPhase::Opening);
     let open = if path
         .file_name()
         .and_then(|name| name.to_str())
