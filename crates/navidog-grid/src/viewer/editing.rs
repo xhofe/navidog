@@ -109,6 +109,8 @@ impl TableViewer {
                 hidden,
                 reload: true,
             },
+            // The close prompt still closes once the commit finishes; it wins over the reload.
+            AfterCommit::Close => AfterCommit::Close,
             _ => AfterCommit::Reload,
         };
         self.apply_changes(false, window, cx);
