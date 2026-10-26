@@ -29,6 +29,31 @@
 - **一致性与清理**：`JsonStore` 统一持久化策略、`DriverInfo` 收拢 icon/dialect/default port、`driver_name`/`kind_label`/拖拽预览/对话框 footer 去重、删除空 plugin crate/未用 registry/弃用 API。
 - **测试/CI**：共享 headless `wait` helper；`xtask manifest` 生成 `latest.json`；`deny.toml`/`AGENTS.md`/`00-overview.md` 版本同步。
 
+## PR review follow-ups (2026-10-26)
+
+- **TSV**：保留引号字段末尾的 `\r`；`""` 可粘贴为一个空单元格；CRLF 才消费行尾 CR。
+- **历史日志**：先订阅再取初始快照；收到 `Lagged` 后重新拉取当前 ring，不再永久停止更新。
+- **navigator 状态栏**：行数缓存绑定 selection，selection 变化后回退实时计算。
+- **SQL 参数**：`foo$tag$` 这类标识符中的 `$tag$` 不再被当成 dollar quote。
+- **事务**：自身开启的事务在 `COMMIT` 失败后执行 `ROLLBACK`；用户事务不主动回滚。
+- **SSH**：已有任何 known_hosts key 时拒绝不匹配的新 key，只有真正新主机才 TOFU。
+- **SQLite 诊断**：`navidog.database_missing` 保留文件路径。
+- **连接表单**：多节点/禁用 SSH 时不再校验隐藏端口。
+- **i18n 脚本**：每个 key 必须同时有 `en` 和 `zh-CN`；`t!` 扫描支持空格/换行。
+- **Windows 更新**：`.msi` 直接交给 `msiexec /i`，`.exe` 直接启动，不再拼 `cmd /C start`。
+- **写入耐久性**：Unix 原子替换后 sync 父目录。
+- **失败写入测试**：helper 先探测权限是否真的阻断写入，root/CAP_DAC/non-Unix 下跳过，避免假失败。
+
+已确认无需再改：
+
+- `navidog-test-support` 的 `TestAppContext` 导入已启用 `test-support` feature。
+- `replace_bundle` 已有独立的 macOS `cfg`。
+
+按维护者决定保留：
+
+- **不做旧版 saved query 文件名/目录的数据兼容**，继续使用当前编码。
+- **保留 ad-hoc 签名更新的自动安装**：未设置 `NAVIDOG_TEAM_ID` 时仍只校验签名完整性，接受第三方镜像可替换的风险，换取免费包自动更新。
+
 ## 暂缓
 
 A-01/A-02/A-03 等剩余分层工作仍在进行已在审查文档中记录原因。它们涉及公开行为、live 事务回归或跨 crate 迁移，不适合与本次修复混在一起。
@@ -37,5 +62,5 @@ A-01/A-02/A-03 等剩余分层工作仍在进行已在审查文档中记录原�
 
 - 配置/密钥文件现在由 `tempfile` 原子替换，Unix 下临时文件权限为 0600；旧配置文件首次保存后权限会收紧。
 - SSH 首次连接会写入 `known_hosts`；已有连接如果服务器密钥变化会被拒绝，需要在表单关闭校验或更新 `known_hosts`。
-- 更新包只有在 `codesign --verify` 通过后才会替换；设置 `NAVIDOG_TEAM_ID` 可额外校验 Team ID，未设置时只校验签名完整性。
+- 更新包只有在 `codesign --verify` 通过后才会替换；设置 `NAVIDOG_TEAM_ID` 可额外校验 Team ID，未设置时只校验签名完整性；ad-hoc 签名仍可自动安装，这是明确接受的风险。
 - TSV 复制会对含制表符/换行/引号的值加引号；粘贴同时接受带引号和不带引号的文本。
