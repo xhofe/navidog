@@ -123,7 +123,7 @@ CodeRabbit 提了 7 条可操作评论，逐条对照代码核实后全部成立
 - `grid/viewer`：会话/分页/事务/提交状态抽成 `TableSession`（`TableViewer` 实现 `Deref`/`DerefMut`，字段访问保持不变），渲染状态放 `TableView`；四个 `*_after_commit` 字段合成 `enum AfterCommit`（`None` / `Close` / `Hidden { hidden, reload }` / `Reload` / `AddRow`），加载/提交路径按枚举消费，行为不变。
 - `query/results`：运行/提交/刷新状态抽成 `ResultSession`（`ResultView` 显式写 `result.session.*`），网格继续用现成的 `ResultGrid`。
 - `grid/model`：`storage.rs`（行/单元格存储与选择）、`edit.rs`（编辑覆盖层/草稿/提交接受）、`projection.rs`（列布局/排序/隐藏，原 `layout.rs` 改名）。
-- 方法体与测试断言未改；`cargo test`、`clippy -D warnings`、`fmt --check` 全过。
+- 方法体未改；只有两处检查旧 `hidden_after_commit` 字段的测试断言改成匹配 `enum AfterCommit`。`cargo test`、`clippy -D warnings`、`fmt --check` 全过。
 
 ## 遗留
 

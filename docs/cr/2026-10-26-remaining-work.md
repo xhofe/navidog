@@ -298,7 +298,7 @@ pub fn spans(sql: &str, dialect: Dialect) -> Vec<Span>;
 - `TableViewer` 的会话/分页/事务/提交状态抽成 `TableSession`，`TableViewer` 通过 `Deref` 保持 `viewer.page` 这类字段访问；渲染状态放 `TableView`。四个 `*_after_commit` 字段合成 `enum AfterCommit`（`None` / `Close` / `Hidden { hidden, reload }` / `Reload` / `AddRow`），加载与提交的消费路径按枚举分支；设置状态时要求空闲，组合行为与拆分前一致。
 - `ResultView` 的运行/提交/刷新状态抽成 `ResultSession`（访问写作 `result.session.status`），渲染半边仍是 `ResultView`，网格是现成的 `ResultGrid`。
 - `GridModel` 拆成 `storage.rs`、`edit.rs`、`projection.rs`（原 `layout.rs` 改名），`tsv.rs` 不变；`find_cell`/`find_column_name`/`cell_matches` 留在 `mod.rs`。
-- 拆分仍是纯搬家：方法体、断言没有改；`cargo test`（含 headless UI 测试）、`clippy`、`fmt` 全过。
+- 拆分仍是纯搬家：方法体没有改；只有两处检查旧 `hidden_after_commit` 字段的测试断言改成匹配 `enum AfterCommit`（行为断言等价）。`cargo test`（含 headless UI 测试）、`clippy`、`fmt` 全过。
 - 每项都跑了 `cargo test -p <crate>`、`clippy`、`fmt`；没有新增行为，没有改断言。
 
 ## 8. A-10：`Connection` 的 `profiles + active`
