@@ -17,9 +17,9 @@
 | A-02 | core 去掉 gpui-kit | 已完成 | 随 A-01 | A-01 | 中 |
 | A-03 | `navidog-db` 去掉 table_design | 已完成 | schema crate | R-04 | 大 |
 | A-06 | 缓存/选择状态收口 | 已完成 | Cache/selection | D-08 | 中 |
-| A-07 | god object/超长文件 | 部分完成 | file splits | 无 | 大 |
-| A-10 | Connection `profiles + active` | 部分完成 | connection model | 无 | 中 |
-| S-07 | 共享 i18n 后端（可选） | 契约已收敛，后端未合并 | i18n backend | 无 | 中 |
+| A-07 | god object/超长文件 | 已完成 | file splits | 无 | 大 |
+| A-10 | Connection `profiles + active` | 已完成 | connection model | 无 | 中 |
+| S-07 | 共享 i18n 后端（可选） | 已完成（方案 1） | i18n backend | 无 | 中 |
 
 建议合并顺序：**R-04/D-05 → D-08/A-06 → A-01/A-02 → A-03 → A-10 → A-07 → S-07**。A-07 是纯搬家，可以与其他项并行；R-04 先做能减少 A-03 的重复解析。
 
@@ -281,6 +281,23 @@ pub fn spans(sql: &str, dialect: Dialect) -> Vec<Span>;
 
 `crates/navidog-grid/src/viewer/`、`crates/navidog-query/src/{results,editor}.rs`、`crates/navidog-connection/src/form.rs`、`crates/navidog-grid/src/model.rs`、`crates/navidog/src/update.rs`。
 
+### 完成情况（2026-10-26，`refactor/remaining-work`）
+
+纯搬家，行为测试的断言没有改动：
+
+| 文件 | 拆分前 | 主文件现在 | 拆出的模块 |
+| --- | ---: | ---: | --- |
+| `grid/viewer/mod.rs` | 2882 | 723 | `session.rs`（连接/加载/分页）、`editing.rs`（提交/draft 状态）、`actions.rs`（工具栏命令与菜单）、`render.rs`（工具栏/底栏/主区域渲染）、`tests.rs` |
+| `query/results.rs` | 1886 | 340 | `tabs.rs`（运行状态与选项卡）、`editing.rs`（可编辑探测/提交/重载）、`render.rs`、`page.rs`、`tests.rs` |
+| `query/editor.rs` | 1742 | 922 | `session.rs`（生命周期/会话/上下文）、`editing.rs`（文本/偏好/补全焦点）、`toolbar.rs`、`render.rs`；测试原本在 `editor_tests.rs` |
+| `connection/form.rs` | 1493 | 534 | `pages.rs`（五页表单）、`validation.rs`、`secrets.rs`、`test_connection.rs`、`browse.rs`、`tests.rs` |
+| `grid/model.rs` | 1738 | 864 | `layout.rs`（列布局/排序投影）、`tsv.rs`（TSV 读写）、`tests.rs` |
+| `app/update.rs` | 1353 | 27 | `manifest.rs`、`http.rs`、`download.rs`、`ui.rs`、`tests.rs`（`install.rs` 保持原样） |
+
+- 跨模块调用的方法改成 `pub(crate)`，同父模块内共享的自由函数改成 `pub(super)`；模块 `mod.rs` 保留结构体、trait impl 和构造器，并 `pub use` 原来的公开 API，外部路径不变。
+- 偏差：`TableViewer` 的 7 个 `*_after_commit` 状态量没有合并成 `enum AfterCommit`。拆分要求“只搬代码、不改行为”，而这几个标志（关闭后提交、提交后重载、隐藏列重投影、新增行）在提交结果回调里互相分支；当前 4 个字段的转换属于行为重构，放在单独的提交里做更安全，本次没有做。文件行数和“不加行为”的验收已满足。
+- 每项都跑了 `cargo test -p <crate>`、`clippy`、`fmt`；没有新增行为，没有改断言。
+
 ## 8. A-10：`Connection` 的 `profiles + active`
 
 ### 当前做到哪
@@ -321,6 +338,11 @@ pub struct Connection {
 
 `crates/navidog-model/src/connection.rs`、`crates/navidog-core/src/store.rs`（或 app-state 迁移后的 store）。
 
+### 完成情况（2026-10-26，`refactor/remaining-work`）
+
+- `Connection` 的内部模型改成 `profiles: Vec<Profile>` + `active: usize`（激活项也在 `profiles` 里），删掉顶层 `general/advanced/ssl/ssh` 和 `profile` 字段；`active()`/`active_mut()`/`active_profile_name()` 访问激活配置，`Deref`/`DerefMut` 到 `Profile` 让 `connection.general` 这类既有字段访问不用改。`switch_profile`/`add_profile`/`remove_active_profile`/`with_active_profile` 只改 `active` 和 `profiles`，不再 `mem::swap` 五组字段；`with_active_profile` 仍用 Drop 守卫恢复激活项。
+- 序列化：仍写旧布局（顶层是激活设置、`profile` 是激活名、`profiles` 只放其余配置），旧版本能读新版本写的文件；自定义 `Deserialize` 同时接受旧布局和 `profiles` 含全部配置 + `active` 索引的新布局（两代 fixture 都有测试）。`ConnectionsFile::reencrypt` 改成按索引遍历所有配置文件，`duplicate` 随克隆带走全部配置。
+- 边界测试：7 个以上配置文件切换、重名、空名字（`navidog-model` 的 `many_profiles_keep_their_own_settings`）、旧/新两种 JSON 布局、panic 后激活项恢复；store 的 rekey/duplicate 覆盖两个配置文件的秘密字段。
 ## 9. S-07：共享 i18n 后端（可选）
 
 ### 当前做到哪
@@ -345,6 +367,12 @@ pub struct Connection {
 - 方案 1：动态 key 有明确约束/检查；脚本注释说明只扫字面量；`docs` 记录。
 - 方案 2：一个二进制只初始化一次 backend；跨 crate key 解析测试；所有现有 locale 双语言检查通过。
 - 无论哪种，S-07 不再以“已修”掩盖统一 backend 未做的事实。
+
+### 完成情况（2026-10-26，`refactor/remaining-work`，选择方案 1）
+
+- 明确采用方案 1（保持 crate-local 契约）：不合并 backend，跨 crate 文案继续走显式 helper。
+- `scripts/check-i18n.sh` 增加动态 key 检查：`t!` 的第一个参数不是字面量时，必须逐条出现在 `scripts/i18n-dynamic-keys.txt`（`<path> TAB <第一个参数>`），当前共 19 条（`navidog-ui` 的跨 crate helper、designer 的表头/选项、navigator 的 `col.*`/`kind.*`/`nav.color_*`、外壳的菜单 label）。脚本注释说明只做静态字面量检查，动态 key 的清单就是约束。
+- `docs/design/00-overview.md` 的 i18n 段写入契约（crate-local、跨 crate helper、动态 key 登记、为什么不合并 backend），`AGENTS.md` 的“文案”条目同步；没有把“统一 backend 未做”继续记成已修。
 
 ## 建议的 PR 切分
 
