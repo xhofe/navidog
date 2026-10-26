@@ -500,7 +500,15 @@ impl TableViewer {
                             .checked(self.limit.is_some())
                             .on_click(cx.listener(|this, checked: &bool, window, cx| {
                                 this.limit = checked
-                                    .then(|| this.limit_input.read(cx).value().trim().parse().ok())
+                                    .then(|| {
+                                        this.limit_input
+                                            .read(cx)
+                                            .value()
+                                            .trim()
+                                            .parse()
+                                            .ok()
+                                            .filter(|n| *n > 0)
+                                    })
                                     .flatten()
                                     .or(checked
                                         .then_some(Settings::global(cx).records_per_page.max(1)));

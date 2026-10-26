@@ -141,7 +141,7 @@ impl NavigatorPanel {
                         .menu(t!("nav.new_profile").to_string(), Box::new(NewProfile))
                         .menu_with_disabled(
                             t!("nav.delete_profile").to_string(),
-                            c.profiles.is_empty(),
+                            c.profiles.len() <= 1,
                             Box::new(DeleteProfile),
                         )
                 });

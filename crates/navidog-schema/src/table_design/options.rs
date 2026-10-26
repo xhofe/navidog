@@ -170,7 +170,7 @@ fn mysql_span(s: &str, key: &str) -> DbResult<Option<(usize, usize, String)>> {
     Ok(found)
 }
 fn pg_clause(s: &str, key: &str) -> DbResult<Option<(usize, usize, String)>> {
-    let ts = tokens(s, Dialect::MySql)?;
+    let ts = tokens(s, Dialect::Postgres)?;
     let mut found = None;
     for (i, t) in ts.iter().enumerate() {
         if text(s, t).eq_ignore_ascii_case(key) {
@@ -232,7 +232,7 @@ pub fn table_option(s: &str, key: &str, d: Dialect) -> DbResult<String> {
             _ => Err(DbError::msg("Unsupported PostgreSQL option.")),
         },
         Dialect::Sqlite => {
-            let ts = tokens(s, Dialect::MySql)?;
+            let ts = tokens(s, d)?;
             let normalized = ts
                 .iter()
                 .map(|t| text(s, t).to_ascii_uppercase())
@@ -566,6 +566,21 @@ pub(super) fn option_alters(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sqlite_options_are_scanned_with_sqlite_rules() {
+        // `#` starts a comment in MySQL but is an operator in SQLite: the list is unknown, so
+        // the option form has to refuse it instead of quietly reading only "STRICT".
+        assert!(table_option("STRICT # note", "strict", Dialect::Sqlite).is_err());
+        assert_eq!(
+            table_option("STRICT", "strict", Dialect::Sqlite).unwrap(),
+            "true"
+        );
+        assert_eq!(
+            table_option("WITHOUT ROWID", "without_rowid", Dialect::Sqlite).unwrap(),
+            "true"
+        );
+    }
+
     #[test]
     fn mysql_edits_preserve_unknown_options_and_do_not_replay_unchanged_values() {
         let d = Dialect::MySql;

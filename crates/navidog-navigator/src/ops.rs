@@ -283,7 +283,10 @@ fn connections_unchanged(generations: &[(String, u64)], cx: &App) -> bool {
 }
 
 fn refresh<'a>(objects: impl Iterator<Item = &'a ObjectRef>, cx: &mut App) {
+    // One reload per object category: several objects of the same list share one query.
+    let mut seen = HashSet::new();
     let requirements: Vec<_> = objects
+        .filter(|o| seen.insert((o.scope.clone(), o.kind)))
         .map(|o| Requirement::Objects {
             scope: o.scope.clone(),
             kind: o.kind,

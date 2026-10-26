@@ -92,6 +92,22 @@
 
 截图：本次没有改外观（拆分为纯搬家、缓存/连接模型的行为与界面无关），按遗留清单的 A-07 验收“截图测试只在外观受影响时补跑”未补跑；如需要，可在 PR 批准后补一轮浅深色截图。
 
+## Review 跟进（2026-10-26，PR #22）
+
+CodeRabbit 提了 7 条可操作评论，逐条对照代码核实后全部成立并已修复：
+
+| # | 位置 | 结论 | 处理 |
+| --- | --- | --- | --- |
+| 1 | `navigator/navigator/menus.rs` | “删除配置文件”用了 `profiles.is_empty()`，新模型下永远启用但点了没反应 | 改成 `profiles.len() <= 1` |
+| 2 | `grid/viewer/render.rs` | “限制记录数”复选框把 `0` 当成有效值，和输入框回车的 `n > 0` 规则不一致 | 解析后加 `.filter(|n| *n > 0)` |
+| 3 | `navigator/catalog.rs` | `refresh_scope` 只丢掉 DDL 缓存、没有重载，打开中的 DDL 视图会一直显示旧文本 | 收集该 scope 的 DDL key，删缓存后按 `Requirement::Ddl` 强制重载；`catalog_lifecycle` 补回归 |
+| 4 | `navigator/ops.rs` | `refresh` 直接按对象生成 requirement，同一批里多个同类对象会重复触发 `list_objects` | 用 `HashSet` 按 `(scope, kind)` 去重 |
+| 5 | `schema/table_design/options.rs` | `pg_clause` 和 SQLite 分支用 MySQL 规则扫描选项 | PostgreSQL/SQLite 各自用自己的方言；补 SQLite 选项测试（`#` 不是注释） |
+| 6 | `sql/span.rs` | 例程体里的 `CASE … END` 会被当成例程的 `END`，导致语句提前切分 | 词法器单独跟踪 `CASE` 嵌套，区分 `END CASE`/`END IF`/例程 `END`；补嵌套 CASE、`END CASE`、`END IF` 回归 |
+| 7 | `scripts/check-deps.sh` | `cargo tree \| grep -q` 在 `pipefail` 下会被 SIGPIPE 短路，可能漏报 | 先把完整输出写到临时文件，再 grep，并检查 `cargo tree` 自身退出码 |
+
+未处理：CodeRabbit 的 Docstring coverage 门禁（本仓库不要求每个函数都有 docstring，补 224 条会制造噪音）；Sourcery 因 diff 超过 20000 行无法 review；安全架构审查无 finding。
+
 ## 遗留
 
 - `TableViewer` 的 `*_after_commit` 状态量合并成 `enum AfterCommit` 没做（理由见上）。

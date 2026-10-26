@@ -150,6 +150,38 @@ fn statement_ends_skip_routine_bodies_and_custom_delimiters() {
 }
 
 #[test]
+fn statement_ends_ignore_case_expressions_inside_routines() {
+    // `CASE … END` closes the expression, so the following `;` stays inside the routine.
+    let sql = "CREATE PROCEDURE p() BEGIN SELECT CASE WHEN 1 THEN 2 END; SELECT 2; END;";
+    assert_eq!(
+        ends(sql, Dialect::MySql).len(),
+        1,
+        "the routine is one statement"
+    );
+    // Nested CASE expressions.
+    let nested =
+        "CREATE PROCEDURE p() BEGIN SELECT CASE WHEN 1 THEN CASE WHEN 2 THEN 3 END END; END;";
+    assert_eq!(ends(nested, Dialect::MySql).len(), 1);
+    // A CASE statement ends with `END CASE`; the trailing CASE is not a new opener.
+    let statement = "CREATE PROCEDURE p() BEGIN CASE 1 WHEN 1 THEN SELECT 1; END CASE; END;";
+    assert_eq!(ends(statement, Dialect::MySql).len(), 1);
+    // `END IF` still does not close the routine.
+    assert_eq!(
+        ends(
+            "CREATE PROCEDURE p() BEGIN IF 1 THEN SELECT 1; END IF; END;",
+            Dialect::MySql
+        )
+        .len(),
+        1
+    );
+    // Outside a routine a CASE expression is plain text and the statement ends at its semicolon.
+    assert_eq!(
+        ends("SELECT CASE WHEN 1 THEN 2 END; SELECT 2", Dialect::MySql).len(),
+        1
+    );
+}
+
+#[test]
 fn separators_ignore_quotes_comments_and_groups() {
     let sql = "a, 'x,y', f(1, 2), -- c,\n b /* , */";
     assert_eq!(separators(sql, Dialect::MySql, b','), [1, 8, 17]);

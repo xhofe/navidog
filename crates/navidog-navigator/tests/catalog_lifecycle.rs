@@ -12,8 +12,8 @@ use navidog_app_state::workspace::{Selection, Workspace};
 use navidog_db::{ConnectParams, Secrets, connect, runtime, sqlite::SqliteDriver};
 use navidog_model::connection::Connection;
 use navidog_model::crypto::Key;
-use navidog_model::object::{ObjectKind, Scope};
-use navidog_navigator::catalog::{Catalog, Load};
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
+use navidog_navigator::catalog::{Catalog, Load, Requirement};
 use navidog_session::sessions::Sessions;
 
 fn wait(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
@@ -110,6 +110,35 @@ fn selection_drives_loads_and_the_session_lifecycle_clears_them(cx: &mut TestApp
                 Catalog::global(cx)
                     .read(cx)
                     .objects(&scope, ObjectKind::View),
+                Some(Load::Ready(_))
+            )
+        })
+    });
+
+    // Refreshing a scope reloads the DDL entries open views read instead of only dropping them.
+    let items = ObjectRef {
+        scope: scope.clone(),
+        kind: ObjectKind::Table,
+        name: "items".into(),
+    };
+    cx.update(|cx| {
+        Catalog::global(cx).update(cx, |catalog, cx| {
+            catalog.require(Requirement::Ddl(items.clone()), cx)
+        });
+    });
+    wait(cx, "the DDL entry", |cx| {
+        cx.update(|cx| {
+            matches!(
+                Catalog::global(cx).read(cx).ddl(&items),
+                Some(Load::Ready(_))
+            )
+        })
+    });
+    cx.update(|cx| Catalog::global(cx).update(cx, |catalog, cx| catalog.refresh_scope(&scope, cx)));
+    wait(cx, "the DDL entry after a scope refresh", |cx| {
+        cx.update(|cx| {
+            matches!(
+                Catalog::global(cx).read(cx).ddl(&items),
                 Some(Load::Ready(_))
             )
         })

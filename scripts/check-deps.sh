@@ -7,8 +7,16 @@ cd "$(dirname "$0")/.."
 
 fail=0
 
+trees="$(mktemp -d)"
+trap 'rm -rf "$trees"' EXIT
+
 for crate in navidog-model navidog-db navidog-sql navidog-schema navidog-util navidog-sql-log navidog-headless; do
-    if cargo tree -p "$crate" -e normal --prefix none | grep -qE '^gpui([- ]|$)'; then
+    # Read the whole tree into a file first: `grep -q` in a pipeline stops reading early, and
+    # with `pipefail` a cargo tree killed by SIGPIPE would make the check pass silently.
+    if ! cargo tree -p "$crate" -e normal --prefix none >"$trees/$crate"; then
+        echo "dependency check: cargo tree failed for $crate" >&2
+        fail=1
+    elif grep -qE '^gpui([- ]|$)' "$trees/$crate"; then
         echo "dependency check: $crate links gpui" >&2
         fail=1
     fi

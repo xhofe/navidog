@@ -407,10 +407,21 @@ impl Catalog {
             .filter(|key| &key.scope == scope)
             .map(|key| key.table.clone())
             .collect();
+        // Open DDL views read the cache, so a scope refresh must reload them instead of only
+        // dropping their entries.
+        let ddl: Vec<ObjectRef> = self
+            .ddl
+            .keys()
+            .filter(|key| &key.scope == scope)
+            .cloned()
+            .collect();
         self.ddl.retain(|key| &key.scope != scope);
         self.columns.retain(|key| &key.scope != scope);
         self.children.retain(|key| &key.scope != scope);
         self.generation.retain(|id, _| id.scope() != Some(scope));
+        for object in ddl {
+            self.require_with(Requirement::Ddl(object), true, cx);
+        }
         for kind in kinds {
             self.require_with(
                 Requirement::Objects {
