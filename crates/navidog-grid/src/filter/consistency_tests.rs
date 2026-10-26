@@ -5,7 +5,7 @@
 use super::parse_where;
 use navidog_db::dialect::Dialect;
 use navidog_db::sql::split_statements;
-use navidog_db::table_design::{column_properties, split_field_list};
+use navidog_schema::table_design::{column_properties, split_field_list};
 use navidog_util::sql_format::{Token, tokens};
 use navidog_util::sql_text::find_params;
 

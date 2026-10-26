@@ -123,6 +123,7 @@ flowchart TD
 | `navidog-app-state` | GPUI 应用状态：`Settings`、`ConnectionStore`、`Workspace` 选择、收藏、虚拟组、代码段、跨 feature 命令、对象 URI、驱动注册表 | M1 |
 | `navidog-sql` | 方言（标识符/字面量/分页/变更 SQL）、关键字表、唯一的 SQL 扫描器（`span::spans`） | M2 |
 | `navidog-session` | 驱动注册表与会话、元数据缓存状态机（`ScopeCache`）、代码补全信息缓存 | M1 |
+| `navidog-schema` | 表草稿的解析与编辑、约束/索引/选项表单、三种方言的迁移计划与执行。不依赖界面，也不承担驱动协议 | M4 |
 | `navidog-sql-log` | SQL 日志文件的写入与轮转 | M3 |
 | `navidog-headless` | 只依赖 `navidog-model` + `navidog-db` 的编译与运行检查，证明驱动栈不链接 GPUI | M2 |
 | `navidog-util` | 不依赖界面和驱动的纯函数：SQL 类型名归类、enum/set 列表、十六进制和 JSON 文本 | M2 |
@@ -140,8 +141,8 @@ flowchart TD
 | `navidog-ai` | AI 助手 | M11 |
 
 规则：
-- 依赖只能向下：feature crate 可以依赖 `navidog-ui`、`navidog-app-state`、`navidog-model`、`navidog-db`、`navidog-sql`、`navidog-session`、`navidog-util`，**不能依赖其他 feature crate**。feature 之间通过 `navidog-app-state::actions` 中的命令、事件和领域 ID 协作。`navidog-util` 只依赖 `navidog-sql`。唯一的例外是 `navidog-query` 依赖 `navidog-grid`，复用结果网格和提交流程；`navidog-grid` 不能反过来依赖它。
-- GPUI 只出现在 `navidog-app-state`、`navidog-session`、`navidog-ui` 和 feature crate 里。`navidog-model`、`navidog-db`、`navidog-sql`、`navidog-util`、`navidog-sql-log` 的 normal 依赖不允许出现 `gpui-kit`，由 `scripts/check-deps.sh` 检查；`navidog-headless` 提供只用 model + db 的编译/运行回归。
+- 依赖只能向下：feature crate 可以依赖 `navidog-ui`、`navidog-app-state`、`navidog-model`、`navidog-db`、`navidog-sql`、`navidog-schema`、`navidog-session`、`navidog-util`，**不能依赖其他 feature crate**。feature 之间通过 `navidog-app-state::actions` 中的命令、事件和领域 ID 协作。`navidog-util` 只依赖 `navidog-sql`。唯一的例外是 `navidog-query` 依赖 `navidog-grid`，复用结果网格和提交流程；`navidog-grid` 不能反过来依赖它。
+- GPUI 只出现在 `navidog-app-state`、`navidog-session`、`navidog-ui` 和 feature crate 里。`navidog-model`、`navidog-db`、`navidog-sql`、`navidog-schema`、`navidog-util`、`navidog-sql-log` 的 normal 依赖不允许出现 `gpui-kit`，由 `scripts/check-deps.sh` 检查；`navidog-headless` 提供只用 model + db 的编译/运行回归。
 - 每个 feature crate 把自己的 model、service、view、command、dialog 放在一起，禁止建立全局的 `models/`、`views/`、`commands/` 目录。
 - 小能力先作为 module 留在最接近的 crate 里，等边界有实际收益再拆成 crate。不依赖界面、也不需要驱动的纯函数例外，直接放 `navidog-util`。
 - feature crate 对外只暴露 `init(cx)`、需要被外壳放进 Dock 的 Panel 类型，以及少量公开的 Entity 或命令。

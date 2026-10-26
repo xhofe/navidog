@@ -19,7 +19,6 @@ pub mod runtime;
 pub mod sql;
 pub mod sqlite;
 pub mod ssh;
-pub mod table_design;
 
 use std::sync::Arc;
 

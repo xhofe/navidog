@@ -14,16 +14,12 @@ use gpui_kit::{
 };
 use grid::DesignerGrid;
 use navidog_app_state::actions::TableStructureChanged;
-use navidog_db::table_design::{
-    ColumnProperty, DesignEntry, EntryKind, column_properties, edit_column, parse_entry,
-    split_field_list,
-};
-use navidog_db::{
-    DbError, DbResult,
-    dialect::Dialect,
-    table_design::{self, DesignColumn, TableDesign, TableSnapshot},
-};
+use navidog_db::{DbError, DbResult, dialect::Dialect};
 use navidog_model::object::{ObjectRef, Scope};
+use navidog_schema::table_design::{
+    self, ColumnProperty, DesignColumn, DesignEntry, EntryKind, TableDesign, TableSnapshot,
+    column_properties, edit_column, parse_entry, split_field_list,
+};
 use navidog_session::sessions::Sessions;
 use navidog_ui::{
     assets::lucide,

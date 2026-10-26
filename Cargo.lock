@@ -5112,6 +5112,7 @@ dependencies = [
  "navidog-app-state",
  "navidog-db",
  "navidog-model",
+ "navidog-schema",
  "navidog-session",
  "navidog-ui",
  "navidog-util",
@@ -5129,6 +5130,7 @@ dependencies = [
  "navidog-app-state",
  "navidog-db",
  "navidog-model",
+ "navidog-schema",
  "navidog-session",
  "navidog-sql",
  "navidog-test-support",
@@ -5214,6 +5216,19 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "navidog-schema"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "navidog-db",
+ "navidog-model",
+ "navidog-sql",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

@@ -15,7 +15,7 @@
 | D-08 | Catalog/OutlineCache 统一缓存 | 已完成 | ScopeCache | 无 | 中 |
 | A-01 | `navidog-core` 拆 app-state | 已完成 | app-state split | 无 | 大 |
 | A-02 | core 去掉 gpui-kit | 已完成 | 随 A-01 | A-01 | 中 |
-| A-03 | `navidog-db` 去掉 table_design | 部分完成 | schema crate | R-04 | 大 |
+| A-03 | `navidog-db` 去掉 table_design | 已完成 | schema crate | R-04 | 大 |
 | A-06 | 缓存/选择状态收口 | 已完成 | Cache/selection | D-08 | 中 |
 | A-07 | god object/超长文件 | 部分完成 | file splits | 无 | 大 |
 | A-10 | Connection `profiles + active` | 部分完成 | connection model | 无 | 中 |
@@ -209,6 +209,12 @@ pub fn spans(sql: &str, dialect: Dialect) -> Vec<Span>;
 ### 主要文件
 
 `crates/navidog-db/src/table_design/`、`crates/navidog-designer/`、`crates/navidog-db/Cargo.toml`。
+
+### 完成情况（2026-10-26，`refactor/remaining-work`）
+
+- 新建 `navidog-schema`：`table_design`（parse/properties/entries/options/comments/plan/tests，约 4,000 行）整体迁入，依赖 `navidog-model` + `navidog-db`（`DbError`/`DbResult`/`Relational`/`Dialect`/`sql::split_script`）+ `navidog-sql`，没有复制任何驱动类型。
+- `navidog-db` 删除 `pub mod table_design`，`rg 'table_design' crates/navidog-db/src` 为空，只保留 driver/session trait、dialect、metadata、sql、params、ssh、commit。唯一的仓库内消费者（designer、grid 一致性测试）改为 `navidog_schema::table_design`；公开 API 在同一次提交内完成迁移（仓库外没有消费者，因此没有保留过渡 re-export）。
+- table_design 的解析改用 R-04 的 `navidog_sql::span`（`parse::positions`/`fragment`、properties `words`、entries `group`），没有第 7 份解析器；实库 DDL 测试随模块迁到 `navidog-schema` 的 `tests` 并保留 `NAVIDOG_LIVE` 开关。
 
 ## 6. A-06：缓存/选择状态收口
 

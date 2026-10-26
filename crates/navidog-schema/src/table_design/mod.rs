@@ -11,7 +11,7 @@ mod plan;
 #[cfg(test)]
 mod tests;
 
-use crate::{DbError, DbResult, Relational, dialect::Dialect};
+use navidog_db::{DbError, DbResult, Relational, dialect::Dialect};
 use navidog_model::object::{ObjectKind, Scope};
 pub use plan::{plan, plan_with};
 use serde::{Deserialize, Serialize};
@@ -127,7 +127,7 @@ impl TableDesign {
         }
         parse::fragment(&self.options, dialect)?;
         for index in &self.indexes {
-            if crate::sql::split_script(index, dialect).len() != 1 {
+            if navidog_db::sql::split_script(index, dialect).len() != 1 {
                 return Err(DbError::msg(
                     "Each supplemental definition must contain one SQL statement.",
                 ));
@@ -138,7 +138,7 @@ impl TableDesign {
             {
                 continue;
             }
-            if crate::sql::split_script(index, dialect).len() != 1
+            if navidog_db::sql::split_script(index, dialect).len() != 1
                 || !index.trim_start().to_uppercase().starts_with("CREATE ")
             {
                 return Err(DbError::msg(

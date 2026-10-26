@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 
 fail=0
 
-for crate in navidog-model navidog-db navidog-sql navidog-util navidog-sql-log navidog-headless; do
+for crate in navidog-model navidog-db navidog-sql navidog-schema navidog-util navidog-sql-log navidog-headless; do
     if cargo tree -p "$crate" -e normal --prefix none | grep -qE '^gpui([- ]|$)'; then
         echo "dependency check: $crate links gpui" >&2
         fail=1
@@ -18,6 +18,7 @@ for manifest in \
     crates/navidog-model/Cargo.toml \
     crates/navidog-db/Cargo.toml \
     crates/navidog-sql/Cargo.toml \
+    crates/navidog-schema/Cargo.toml \
     crates/navidog-util/Cargo.toml \
     crates/navidog-headless/Cargo.toml; do
     if grep -q 'gpui' "$manifest"; then

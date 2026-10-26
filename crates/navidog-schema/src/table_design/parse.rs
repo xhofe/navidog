@@ -77,7 +77,7 @@ pub(super) fn ident(input: &str) -> DbResult<(String, &str)> {
     Ok((input[..len].into(), input[len..].trim_start()))
 }
 pub(super) fn create(ddl: &str, name: &str, d: Dialect) -> DbResult<TableDesign> {
-    let statements = crate::sql::split_script(ddl, d);
+    let statements = navidog_db::sql::split_script(ddl, d);
     let sql = statements
         .first()
         .ok_or_else(|| DbError::msg("No CREATE TABLE definition returned."))?

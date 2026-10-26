@@ -731,9 +731,9 @@ fn option_forms_use_saved_dialect_and_guard_invalid_previews(cx: &mut TestAppCon
 fn postgres_comments_edit_in_the_grid_preview_and_restore(cx: &mut TestAppContext) {
     use gpui_kit::component::dock::{BasePanel as _, PanelInfo};
     use navidog_app_state::store::ConnectionStore;
-    use navidog_db::table_design::TableDesign;
     use navidog_model::connection::Connection;
     use navidog_model::crypto::Key;
+    use navidog_schema::table_design::TableDesign;
     let (_guard, _home) = isolate_home("pg-comments");
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -865,7 +865,7 @@ fn postgres_comments_edit_in_the_grid_preview_and_restore(cx: &mut TestAppContex
 fn reload_rebuilds_entry_forms_and_clears_validation(cx: &mut TestAppContext) {
     use super::{ChooseValue, Page};
     use gpui_kit::component::dock::BasePanel as _;
-    use navidog_db::table_design::TableSnapshot;
+    use navidog_schema::table_design::TableSnapshot;
     let (_guard, _) = isolate_home("review-reload");
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -960,7 +960,7 @@ fn reload_rebuilds_entry_forms_and_clears_validation(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn reload_while_previewing_replaces_stale_sql(cx: &mut TestAppContext) {
     use super::Page;
-    use navidog_db::table_design::{DesignColumn, TableDesign, TableSnapshot};
+    use navidog_schema::table_design::{DesignColumn, TableDesign, TableSnapshot};
     let (_guard, _) = isolate_home("preview-reload");
     cx.update(|cx| {
         gpui_kit::init(cx);

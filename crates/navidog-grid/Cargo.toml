@@ -15,6 +15,7 @@ navidog-app-state.workspace = true
 navidog-util.workspace = true
 navidog-sql = { path = "../navidog-sql" }
 navidog-db.workspace = true
+navidog-schema = { path = "../navidog-schema" }
 chrono.workspace = true
 gpui-kit = { workspace = true, features = ["tree-sitter-sql"] }
 rust-i18n.workspace = true

@@ -118,8 +118,8 @@ fn sqlite_rebuild_renames_the_old_table_and_leaves_it() {
 
 #[test]
 fn sqlite_rebuild_preserves_rows_indexes_triggers_and_rolls_back() {
-    crate::runtime::runtime().block_on(async {
-        let mut session=crate::connect(Arc::new(crate::sqlite::SqliteDriver::default()),crate::ConnectParams {file:Some(":memory:".into()),create_new:true,..Default::default()}).await.unwrap();
+    navidog_db::runtime::runtime().block_on(async {
+        let mut session=navidog_db::connect(Arc::new(navidog_db::sqlite::SqliteDriver::default()),navidog_db::ConnectParams {file:Some(":memory:".into()),create_new:true,..Default::default()}).await.unwrap();
         let r=session.relational().unwrap(); let scope=Scope::new("test","main",None);
         r.execute("PRAGMA foreign_keys=ON; CREATE TABLE p(id INTEGER PRIMARY KEY); INSERT INTO p VALUES(1); CREATE TABLE t(id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT NOT NULL, parent INTEGER REFERENCES p(id), CHECK(length(value)>0)); CREATE INDEX ix_t ON t(value); CREATE TABLE audit(v TEXT); CREATE TRIGGER audit_t AFTER INSERT ON t BEGIN INSERT INTO audit VALUES(new.value); END; INSERT INTO t(value,parent) VALUES('before',1)").await.unwrap();
         let old=load(r,&scope,"t").await.unwrap();assert_eq!(old.triggers.len(),1);assert_eq!(old.design.indexes.len(),1);
@@ -151,8 +151,8 @@ fn sqlite_rebuild_preserves_rows_indexes_triggers_and_rolls_back() {
 
 #[test]
 fn sqlite_rebuild_keeps_inbound_references_views_sequence_and_rowid() {
-    crate::runtime::runtime().block_on(async {
-        let mut session=crate::connect(Arc::new(crate::sqlite::SqliteDriver::default()),crate::ConnectParams {file:Some(":memory:".into()),create_new:true,..Default::default()}).await.unwrap();
+    navidog_db::runtime::runtime().block_on(async {
+        let mut session=navidog_db::connect(Arc::new(navidog_db::sqlite::SqliteDriver::default()),navidog_db::ConnectParams {file:Some(":memory:".into()),create_new:true,..Default::default()}).await.unwrap();
         let r=session.relational().unwrap(); let scope=Scope::new("test","main",None);
         r.execute("PRAGMA foreign_keys=ON; CREATE TABLE t(id INTEGER PRIMARY KEY AUTOINCREMENT,v TEXT); INSERT INTO t VALUES(1,'one'); UPDATE sqlite_sequence SET seq=100 WHERE name='t'; CREATE TABLE child(id INTEGER REFERENCES t(id)); INSERT INTO child VALUES(1); CREATE VIEW visible AS SELECT v FROM t").await.unwrap();
         let old=load(r,&scope,"t").await.unwrap();let mut draft=old.design.clone();draft.columns.push(DesignColumn::new(9,"new_field","TEXT"));
@@ -183,30 +183,31 @@ fn live_table_design_create_alter_rename_and_constraints() {
     if std::env::var_os("NAVIDOG_LIVE").is_none() {
         return;
     }
-    crate::runtime::runtime().block_on(async {
+    navidog_db::runtime::runtime().block_on(async {
         for (driver, port, db, user) in [
             (
-                Arc::new(crate::mysql::MySqlDriver::mysql()) as Arc<dyn crate::Driver>,
+                Arc::new(navidog_db::mysql::MySqlDriver::mysql()) as Arc<dyn navidog_db::Driver>,
                 13306,
                 "sakila",
                 "root",
             ),
             (
-                Arc::new(crate::mysql::MySqlDriver::mariadb()) as Arc<dyn crate::Driver>,
+                Arc::new(navidog_db::mysql::MySqlDriver::mariadb()) as Arc<dyn navidog_db::Driver>,
                 13307,
                 "sakila",
                 "root",
             ),
             (
-                Arc::new(crate::postgres::PostgresDriver::default()) as Arc<dyn crate::Driver>,
+                Arc::new(navidog_db::postgres::PostgresDriver::default())
+                    as Arc<dyn navidog_db::Driver>,
                 15432,
                 "pagila",
                 "postgres",
             ),
         ] {
-            let mut session = crate::connect(
+            let mut session = navidog_db::connect(
                 driver,
-                crate::ConnectParams {
+                navidog_db::ConnectParams {
                     host: "127.0.0.1".into(),
                     port,
                     database: Some(db.into()),
@@ -350,10 +351,10 @@ fn foreign_key_requires_matching_nonempty_field_lists() {
 
 #[test]
 fn sqlite_strict_rebuild_preserves_data_and_rejects_rowid_conversion() {
-    crate::runtime::runtime().block_on(async {
-        let mut session = crate::connect(
-            Arc::new(crate::sqlite::SqliteDriver::default()),
-            crate::ConnectParams {
+    navidog_db::runtime::runtime().block_on(async {
+        let mut session = navidog_db::connect(
+            Arc::new(navidog_db::sqlite::SqliteDriver::default()),
+            navidog_db::ConnectParams {
                 file: Some(":memory:".into()),
                 create_new: true,
                 ..Default::default()
@@ -409,30 +410,31 @@ fn live_table_options_and_dialect_attributes() {
     if std::env::var_os("NAVIDOG_LIVE").is_none() {
         return;
     }
-    crate::runtime::runtime().block_on(async {
+    navidog_db::runtime::runtime().block_on(async {
         for (driver, port, db, user) in [
             (
-                Arc::new(crate::mysql::MySqlDriver::mysql()) as Arc<dyn crate::Driver>,
+                Arc::new(navidog_db::mysql::MySqlDriver::mysql()) as Arc<dyn navidog_db::Driver>,
                 13306,
                 "sakila",
                 "root",
             ),
             (
-                Arc::new(crate::mysql::MySqlDriver::mariadb()) as Arc<dyn crate::Driver>,
+                Arc::new(navidog_db::mysql::MySqlDriver::mariadb()) as Arc<dyn navidog_db::Driver>,
                 13307,
                 "sakila",
                 "root",
             ),
             (
-                Arc::new(crate::postgres::PostgresDriver::default()) as Arc<dyn crate::Driver>,
+                Arc::new(navidog_db::postgres::PostgresDriver::default())
+                    as Arc<dyn navidog_db::Driver>,
                 15432,
                 "pagila",
                 "postgres",
             ),
         ] {
-            let mut session = crate::connect(
+            let mut session = navidog_db::connect(
                 driver,
-                crate::ConnectParams {
+                navidog_db::ConnectParams {
                     host: "127.0.0.1".into(),
                     port,
                     database: Some(db.into()),
@@ -615,10 +617,10 @@ fn live_postgres_comments_round_trip_rename_rollback_and_concurrency() {
     if std::env::var_os("NAVIDOG_LIVE").is_none() {
         return;
     }
-    crate::runtime::runtime().block_on(async {
-        let mut session = crate::connect(
-            Arc::new(crate::postgres::PostgresDriver::default()),
-            crate::ConnectParams {
+    navidog_db::runtime::runtime().block_on(async {
+        let mut session = navidog_db::connect(
+            Arc::new(navidog_db::postgres::PostgresDriver::default()),
+            navidog_db::ConnectParams {
                 host: "127.0.0.1".into(),
                 port: 15432,
                 database: Some("pagila".into()),

@@ -1,0 +1,19 @@
+[package]
+name = "navidog-schema"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Lossless table drafts, definition parsing and guarded schema changes. UI-free; depends on the driver interfaces in navidog-db."
+
+[dependencies]
+navidog-db = { path = "../navidog-db" }
+navidog-model.workspace = true
+navidog-sql = { path = "../navidog-sql" }
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
