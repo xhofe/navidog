@@ -69,6 +69,7 @@
 - **S-06**：数字排序用 `total_cmp`，NaN 和解析失败值有确定的全序。
 - **CR-02**：按维护者决定只记录限制，不实现通配/`@revoked`/`@cert-authority` 匹配。
 - **CR-04**：脚本仍只覆盖字面量 `t!` key，动态 `format!` key 作为已知限制。
+- 完整遗留架构清单和验收标准见 [2026-10-26-remaining-work.md](../cr/2026-10-26-remaining-work.md)。
 
 ## 暂缓
 
