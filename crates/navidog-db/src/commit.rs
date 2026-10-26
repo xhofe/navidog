@@ -54,8 +54,15 @@ pub async fn apply(
     if in_tx {
         rel.execute("RELEASE SAVEPOINT navidog_apply").await?;
     }
-    if !in_tx || end {
-        rel.execute("COMMIT").await?;
+    if (!in_tx || end)
+        && let Err(error) = rel.execute("COMMIT").await
+    {
+        if !in_tx {
+            // We opened this transaction, so a failed COMMIT must not leave
+            // it active (SQLite keeps the write lock after SQLITE_BUSY).
+            let _ = rel.execute("ROLLBACK").await;
+        }
+        return Err(error);
     }
     Ok(())
 }
@@ -79,6 +86,74 @@ pub fn matched_a_row(sql: &str, sets: &[ResultSet], dialect: Dialect) -> DbResul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Scripted {
+        log: Vec<String>,
+        fail_commit: bool,
+    }
+
+    impl Relational for Scripted {
+        fn dialect(&self) -> Dialect {
+            Dialect::Sqlite
+        }
+
+        fn execute<'a>(
+            &'a mut self,
+            sql: &'a str,
+        ) -> futures::future::BoxFuture<'a, DbResult<Vec<ResultSet>>> {
+            self.log.push(sql.to_string());
+            let fail = self.fail_commit && sql == "COMMIT";
+            Box::pin(async move {
+                if fail {
+                    Err(DbError::msg("injected COMMIT failure"))
+                } else {
+                    Ok(vec![ResultSet {
+                        affected_rows: Some(1),
+                        ..ResultSet::default()
+                    }])
+                }
+            })
+        }
+    }
+
+    #[test]
+    fn a_failed_commit_rolls_back_a_transaction_we_opened() {
+        let mut rel = Scripted {
+            log: Vec::new(),
+            fail_commit: true,
+        };
+        let error = futures::executor::block_on(apply(
+            &mut rel,
+            Commit::new(Dialect::Sqlite, Vec::new()),
+            false,
+            false,
+        ))
+        .unwrap_err();
+        assert_eq!(error.message, "injected COMMIT failure");
+        assert_eq!(rel.log, ["BEGIN", "COMMIT", "ROLLBACK"]);
+    }
+
+    #[test]
+    fn a_failed_commit_does_not_roll_back_the_users_transaction() {
+        let mut rel = Scripted {
+            log: Vec::new(),
+            fail_commit: true,
+        };
+        let _ = futures::executor::block_on(apply(
+            &mut rel,
+            Commit::new(Dialect::Sqlite, Vec::new()),
+            true,
+            true,
+        ));
+        assert_eq!(
+            rel.log,
+            [
+                "SAVEPOINT navidog_apply",
+                "RELEASE SAVEPOINT navidog_apply",
+                "COMMIT"
+            ]
+        );
+    }
 
     #[test]
     fn a_write_that_matched_no_row_fails() {

@@ -532,8 +532,8 @@ mod tests {
             }
         }
 
-        fn block_write(&self) {
-            block_writes(&self.path, true);
+        fn block_write(&self) -> bool {
+            block_writes(&self.path, true)
         }
 
         fn unblock_write(&self) {
@@ -541,19 +541,51 @@ mod tests {
         }
     }
 
-    fn block_writes(path: &std::path::Path, block: bool) {
+    fn block_writes(path: &std::path::Path, block: bool) -> bool {
+        if !block {
+            restore_writes(path);
+            return true;
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let dir = path.parent().unwrap();
-            let mode = if block { 0o500 } else { 0o700 };
-            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+            let probe = dir.join(format!(".navidog-write-probe-{}", std::process::id()));
+            let blocked = std::fs::File::create(&probe).is_err();
+            let _ = std::fs::remove_file(&probe);
+            if !blocked {
+                restore_writes(path);
+            }
+            blocked
         }
         #[cfg(not(unix))]
         {
             let mut permissions = std::fs::metadata(path).unwrap().permissions();
-            permissions.set_readonly(block);
+            permissions.set_readonly(true);
             std::fs::set_permissions(path, permissions).unwrap();
+            let blocked = std::fs::OpenOptions::new().write(true).open(path).is_err();
+            if !blocked {
+                restore_writes(path);
+            }
+            blocked
+        }
+    }
+
+    fn restore_writes(path: &std::path::Path) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = path.parent().unwrap();
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        }
+        #[cfg(not(unix))]
+        {
+            let Ok(mut permissions) = std::fs::metadata(path).map(|m| m.permissions()) else {
+                return;
+            };
+            permissions.set_readonly(false);
+            let _ = std::fs::set_permissions(path, permissions);
         }
     }
 
@@ -624,7 +656,9 @@ mod tests {
                 seen.set(seen.get() + 1);
             })
         });
-        fixture.block_write();
+        if !fixture.block_write() {
+            return;
+        }
         store.update(cx, |store, cx| {
             let mut edited = store.get(&ids[0]).unwrap().clone();
             edited.name = "changed".into();
@@ -717,7 +751,9 @@ mod tests {
                 seen.set(seen.get() + 1);
             })
         });
-        fixture.block_write();
+        if !fixture.block_write() {
+            return;
+        }
         store.update(cx, |store, cx| {
             assert!(matches!(
                 store.set_master_password(Some("fixture-master"), cx),
@@ -762,7 +798,9 @@ mod tests {
             assert_profile_secrets(store.get(&id).unwrap(), &retained);
         });
         // A failed password change must preserve the already active master key as well.
-        fixture.block_write();
+        if !fixture.block_write() {
+            return;
+        }
         let committed = std::fs::read(&fixture.path).unwrap();
         store.update(cx, |store, cx| {
             assert!(matches!(
@@ -954,7 +992,9 @@ mod tests {
             cx.subscribe(&store, move |_, _: &StoreEvent, _| seen.set(seen.get() + 1))
         });
         let callbacks = Cell::new(0);
-        fixture.block_write();
+        if !fixture.block_write() {
+            return;
+        }
         store.update(cx, |store, cx| {
             let missing = "missing-connection".to_string();
             let result = store.update(&missing, |_| callbacks.set(callbacks.get() + 1), cx);

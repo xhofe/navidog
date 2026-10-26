@@ -481,7 +481,6 @@ impl ConnectionForm {
         c.group = self.group_ids.get(group_ix).cloned().flatten();
         let g = &mut c.general;
         g.host = Self::value(&self.host, cx);
-        g.port = port_value(&Self::value(&self.port, cx), &t!("conn.port"))?;
         g.database = Self::opt(&self.database, cx);
         g.file = Self::opt(&self.file, cx);
         g.user = Self::value(&self.user, cx);
@@ -496,6 +495,7 @@ impl ConnectionForm {
             let ix = Self::selected(&self.host_preference, cx);
             g.host_preference = HostPreference::ALL[ix.min(2)];
         } else {
+            g.port = port_value(&Self::value(&self.port, cx), &t!("conn.port"))?;
             g.members.clear();
             g.host_preference = HostPreference::Any;
         }
@@ -547,7 +547,9 @@ impl ConnectionForm {
         c.ssl.cipher = Self::opt(&self.cipher, cx);
         c.ssl.crl = Self::opt(&self.crl, cx);
         c.ssh.host = Self::value(&self.ssh_host, cx);
-        c.ssh.port = port_or_default(&Self::value(&self.ssh_port, cx), 22, &t!("conn.port"))?;
+        if c.ssh.enabled {
+            c.ssh.port = port_or_default(&Self::value(&self.ssh_port, cx), 22, &t!("conn.port"))?;
+        }
         c.ssh.user = Self::value(&self.ssh_user, cx);
         let auth_ix = self
             .ssh_auth

@@ -47,6 +47,9 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     tmp.write_all(bytes)?;
     tmp.as_file().sync_all()?;
     tmp.persist(path).map_err(|err| err.error)?;
+    // The rename itself is only durable once the directory entry is flushed.
+    #[cfg(unix)]
+    std::fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
 

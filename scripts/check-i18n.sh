@@ -42,7 +42,9 @@ def parse(path):
         if value:
             flat = '.'.join(k for _, k in stack)
             if flat.endswith('.en'):
-                keys[flat[:-3]] = (path, value.strip().strip('"'))
+                keys.setdefault(flat[:-3], {})['en'] = value.strip().strip('"')
+            elif flat.endswith('.zh-CN'):
+                keys.setdefault(flat[:-6], {})['zh-CN'] = value.strip().strip('"')
     return keys
 
 definitions = {}
@@ -50,22 +52,27 @@ by_crate = {}
 for path in glob.glob('crates/*/locales/*.yml'):
     crate = path.split('/')[1]
     crate_keys = by_crate.setdefault(crate, set())
-    for key, (source, value) in parse(path).items():
-        definitions.setdefault(key, []).append((source, value))
+    for key, languages in parse(path).items():
+        if 'en' not in languages or 'zh-CN' not in languages:
+            print(f'{path}: `{key}` must define both en and zh-CN')
+            FAIL = True
+            continue
+        definitions.setdefault(key, []).append((path, languages['en']))
         crate_keys.add(key)
 
 # A feature crate's backend only loads its own locale files, so a literal
-# `t!("…")` key must be defined there. Cross-crate UI keys resolve through
-# explicit helpers, not through another backend.
+# `t!(...)` key must be defined there. Cross-crate UI keys resolve through
+# explicit helpers, not through another backend. Scan the whole file so
+# whitespace and line breaks inside the macro are accepted too.
 for source in glob.glob('crates/*/src/**/*.rs', recursive=True):
     crate = source.split('/')[1]
     text = open(source, encoding='utf-8').read()
-    for number, line in enumerate(text.splitlines(), 1):
-        for match in re.finditer(r't!\("([A-Za-z0-9_.-]+)"', line):
-            key = match.group(1)
-            if key not in by_crate.get(crate, set()):
-                print(f'{source}:{number}: `{key}` is not defined in {crate} locales')
-                FAIL = True
+    for match in re.finditer(r't!\s*\(\s*"([A-Za-z0-9_.-]+)"', text):
+        key = match.group(1)
+        if key not in by_crate.get(crate, set()):
+            line = text.count('\n', 0, match.start()) + 1
+            print(f'{source}:{line}: `{key}` is not defined in {crate} locales')
+            FAIL = True
 
 for key, entries in sorted(definitions.items()):
     values = {value for _, value in entries}

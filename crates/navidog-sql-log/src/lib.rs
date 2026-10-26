@@ -238,9 +238,34 @@ mod tests {
             .enable_all()
             .build()
             .unwrap()
-            .block_on(updates.recv())
-            .expect("the history channel stays open");
+            .block_on(async {
+                loop {
+                    match updates.recv().await {
+                        Ok(revision) => return revision,
+                        // Another test may record enough entries to make this
+                        // receiver lag; keep pulling instead of failing.
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            panic!("the history channel stays open")
+                        }
+                    }
+                }
+            });
         assert!(revision > 0);
+    }
+
+    #[test]
+    fn a_slow_subscriber_reports_lag_instead_of_missing_entries() {
+        let mut updates = subscribe();
+        for n in 0..70 {
+            record(entry(&format!("SELECT {n}"), None));
+        }
+        match updates.try_recv() {
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(missed)) => {
+                assert!(missed > 0)
+            }
+            other => panic!("expected a lag error, got {other:?}"),
+        }
     }
 
     #[test]

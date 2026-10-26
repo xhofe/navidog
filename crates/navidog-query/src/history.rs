@@ -125,6 +125,7 @@ impl HistoryLog {
                 .line_number(false)
                 .soft_wrap(false)
         });
+        let mut updates = log::subscribe();
         let (entries, next) = log::since(0);
         let text = render_entries(&entries, header(Settings::global(cx).history_header), false);
         editor.update(cx, |e, cx| {
@@ -134,10 +135,14 @@ impl HistoryLog {
         cx.new(|cx: &mut Context<Self>| {
             // The log broadcasts on every record; no timer wakes an idle panel.
             let poll = cx.spawn_in(window, async move |this, cx| {
-                let mut updates = navidog_db::log::subscribe();
                 loop {
-                    if updates.recv().await.is_err() {
-                        return;
+                    match updates.recv().await {
+                        Ok(_) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            // Pull the current ring so no history is lost when the
+                            // panel was busy for more than the channel capacity.
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
                     }
                     if this
                         .update_in(cx, |this, window, cx| this.pull(window, cx))

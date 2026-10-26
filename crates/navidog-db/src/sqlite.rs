@@ -98,7 +98,7 @@ impl Driver for SqliteDriver {
                 if !params.create_new && !file.exists() {
                     return Err(DbError::coded(
                         "navidog.database_missing",
-                        format!("Database file does not exist: {}", file.display()),
+                        file.display().to_string(),
                     ));
                 }
                 let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_URI;

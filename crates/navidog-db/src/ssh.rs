@@ -34,17 +34,46 @@ impl client::Handler for HostKeyVerifier {
         match russh::keys::check_known_hosts(&self.host, self.port, &public) {
             Ok(true) => Ok(true),
             Ok(false) => {
-                match russh::keys::known_hosts::learn_known_hosts(&self.host, self.port, &public) {
-                    Ok(()) => {
-                        tracing::warn!(
+                // `check_known_hosts` returns false both for a new host and for
+                // a recorded key with a different algorithm. Only the former may
+                // be learned; otherwise a changed RSA key could replace a
+                // recorded Ed25519 key.
+                match russh::keys::known_hosts::known_host_keys(&self.host, self.port) {
+                    Ok(keys) if keys.is_empty() => {
+                        match russh::keys::known_hosts::learn_known_hosts(
+                            &self.host, self.port, &public,
+                        ) {
+                            Ok(()) => {
+                                tracing::warn!(
+                                    host = %self.host,
+                                    port = self.port,
+                                    "SSH host key was new; added it to known_hosts"
+                                );
+                                Ok(true)
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    host = %self.host,
+                                    "could not record the SSH host key: {err}"
+                                );
+                                Ok(false)
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        tracing::error!(
                             host = %self.host,
                             port = self.port,
-                            "SSH host key was new; added it to known_hosts"
+                            "SSH host key does not match known_hosts"
                         );
-                        Ok(true)
+                        Ok(false)
                     }
                     Err(err) => {
-                        tracing::error!(host = %self.host, "could not record the SSH host key: {err}");
+                        tracing::error!(
+                            host = %self.host,
+                            port = self.port,
+                            "could not read known_hosts: {err}"
+                        );
                         Ok(false)
                     }
                 }

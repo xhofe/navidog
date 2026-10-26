@@ -1036,40 +1036,58 @@ fn tsv_field(value: &str) -> String {
 
 /// Rows of quoted-or-plain TSV. A quoted field may contain tabs, newlines and
 /// doubled quotes; CRLF input is accepted.
+fn end_tsv_row(row: &mut Vec<String>, field: &mut String, rows: &mut Vec<Vec<String>>) {
+    row.push(std::mem::take(field));
+    rows.push(std::mem::take(row));
+}
+
 fn parse_tsv(text: &str) -> Vec<Vec<String>> {
     let mut rows = Vec::new();
     let mut row = Vec::new();
     let mut field = String::new();
     let mut quoted = false;
+    let mut started = false;
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
-        match ch {
-            '"' if quoted => {
-                if chars.peek() == Some(&'"') {
+        if quoted {
+            match ch {
+                '"' if chars.peek() == Some(&'"') => {
                     chars.next();
                     field.push('"');
-                } else {
-                    quoted = false;
                 }
+                '"' => quoted = false,
+                other => field.push(other),
             }
-            '"' if field.is_empty() => quoted = true,
-            '\t' if !quoted => row.push(std::mem::take(&mut field)),
-            '\n' if !quoted => {
-                if field.ends_with('\r') {
-                    field.pop();
-                }
+            continue;
+        }
+        match ch {
+            '"' if field.is_empty() => {
+                quoted = true;
+                started = true;
+            }
+            '\t' => {
                 row.push(std::mem::take(&mut field));
-                rows.push(std::mem::take(&mut row));
+                started = false;
             }
-            other => field.push(other),
+            '\r' if chars.peek() == Some(&'\n') => {
+                // CRLF is a row delimiter; a CR at the end of a quoted field was
+                // already pushed while `quoted` was true and must survive.
+                chars.next();
+                end_tsv_row(&mut row, &mut field, &mut rows);
+                started = false;
+            }
+            '\n' => {
+                end_tsv_row(&mut row, &mut field, &mut rows);
+                started = false;
+            }
+            other => {
+                field.push(other);
+                started = true;
+            }
         }
     }
-    if !field.is_empty() || !row.is_empty() {
-        if field.ends_with('\r') {
-            field.pop();
-        }
-        row.push(field);
-        rows.push(row);
+    if started || !row.is_empty() {
+        end_tsv_row(&mut row, &mut field, &mut rows);
     }
     rows
 }
@@ -1462,6 +1480,27 @@ mod tests {
         assert_eq!(m.row_count(), 3);
         assert_eq!(m.value(2, 1), Some(&Some("y".into())));
         assert_eq!(m.value(2, 0), None);
+    }
+
+    #[test]
+    fn tsv_preserves_a_cr_at_the_end_of_a_quoted_field() {
+        let mut m = model(true);
+        m.set_value(0, 1, Some("abc\r".into()));
+        m.select((0, 1), false);
+        let text = m.selected_tsv(false, true, None);
+        assert_eq!(text, "\"abc\r\"");
+        let mut out = model(true);
+        out.select((0, 1), false);
+        out.paste(&text, false);
+        assert_eq!(out.value(0, 1), Some(&Some("abc\r".into())));
+    }
+
+    #[test]
+    fn a_single_quoted_empty_field_replaces_the_cell() {
+        let mut m = model(true);
+        m.select((0, 1), false);
+        m.paste("\"\"", false);
+        assert_eq!(m.value(0, 1).cloned().flatten(), Some("".into()));
     }
 
     #[test]

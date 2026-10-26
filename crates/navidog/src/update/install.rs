@@ -209,12 +209,29 @@ pub fn relaunch() {
 
 #[cfg(target_os = "windows")]
 pub(super) fn install_windows(path: &Path) -> Result<Delivery, String> {
-    // One argument so cmd does not split a path that contains spaces.
-    std::process::Command::new("cmd")
-        .arg("/C")
-        .arg(format!("start \"\" \"{}\"", path.display()))
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    // Never build a `cmd /C` string: `cmd.exe` has its own quoting rules, and
+    // a space or quote in the temp path would change the command. The MSI is
+    // passed as one argument to `msiexec`, and a bare executable is spawned
+    // directly.
+    let mut command = match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("msi") => {
+            let mut command = std::process::Command::new("msiexec");
+            command.arg("/i").arg(path);
+            command
+        }
+        Some("exe") => std::process::Command::new(path),
+        _ => {
+            let mut command = std::process::Command::new("explorer");
+            command.arg(path);
+            command
+        }
+    };
+    command.spawn().map_err(|e| e.to_string())?;
     Ok(Delivery::HandedToOs)
 }
 

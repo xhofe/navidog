@@ -170,7 +170,9 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
 
     // A failed profile save leaves the form and current live session available for retry.
     let original = std::fs::read(home.join("connections.json")).unwrap();
-    block_writes(&home.join("connections.json"), true);
+    if !block_writes(&home.join("connections.json"), true) {
+        return;
+    }
     let reconnects = std::rc::Rc::new(std::cell::Cell::new(0));
     let seen = reconnects.clone();
     let _subscription = cx.update(|cx| {
@@ -268,18 +270,50 @@ fn creates_and_opens_sqlite_connection(cx: &mut TestAppContext) {
     let _ = std::fs::remove_dir_all(home);
 }
 
-fn block_writes(path: &std::path::Path, block: bool) {
+fn block_writes(path: &std::path::Path, block: bool) -> bool {
+    if !block {
+        restore_writes(path);
+        return true;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let dir = path.parent().unwrap();
-        let mode = if block { 0o500 } else { 0o700 };
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let probe = dir.join(format!(".navidog-write-probe-{}", std::process::id()));
+        let blocked = std::fs::File::create(&probe).is_err();
+        let _ = std::fs::remove_file(&probe);
+        if !blocked {
+            restore_writes(path);
+        }
+        blocked
     }
     #[cfg(not(unix))]
     {
         let mut permissions = std::fs::metadata(path).unwrap().permissions();
-        permissions.set_readonly(block);
+        permissions.set_readonly(true);
         std::fs::set_permissions(path, permissions).unwrap();
+        let blocked = std::fs::OpenOptions::new().write(true).open(path).is_err();
+        if !blocked {
+            restore_writes(path);
+        }
+        blocked
+    }
+}
+
+fn restore_writes(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = path.parent().unwrap();
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
+    #[cfg(not(unix))]
+    {
+        let Ok(mut permissions) = std::fs::metadata(path).map(|m| m.permissions()) else {
+            return;
+        };
+        permissions.set_readonly(false);
+        let _ = std::fs::set_permissions(path, permissions);
     }
 }

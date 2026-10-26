@@ -73,9 +73,10 @@ pub fn find_params(sql: &str) -> Vec<Param> {
                     .find("*/")
                     .map_or(bytes.len(), |n| i + 2 + n + 2);
             }
-            b'$' => {
+            b'$' if !after_identifier(sql, i) => {
                 // PostgreSQL dollar-quoted strings: `$$…$$` or `$tag$…$tag$`.
-                // They may contain `[$name]` text that is not a parameter.
+                // They may contain `[$name]` text that is not a parameter;
+                // `foo$tag$` is an identifier, not an opener.
                 i = dollar_end(sql, i).unwrap_or(i + 1);
             }
             b'[' if bytes.get(i + 1) == Some(&b'$') => match sql[i + 2..].find(']') {
@@ -117,6 +118,14 @@ pub fn skip_quoted(sql: &str, start: usize, escapes: bool) -> usize {
         }
     }
     bytes.len()
+}
+
+fn after_identifier(sql: &str, start: usize) -> bool {
+    start > 0
+        && matches!(
+            sql.as_bytes()[start - 1],
+            b if b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+        )
 }
 
 /// The end of a PostgreSQL dollar-quoted string starting at `start`, or `None`
@@ -239,6 +248,17 @@ mod tests {
             "SELECT $$ [$x] $$, 'y'"
         );
         assert!(find_params("SELECT $tag$ [$x] $tag$, $1").is_empty());
+    }
+
+    #[test]
+    fn a_dollar_tag_inside_an_identifier_is_not_a_quote() {
+        let sql = "SELECT foo$tag$ FROM t WHERE id = [$id] AND note = $tag$text$tag$";
+        let params: Vec<_> = find_params(sql).into_iter().map(|p| p.name).collect();
+        assert_eq!(params, ["id"]);
+        assert_eq!(
+            substitute_params(sql, |name| format!("'{name}'")),
+            "SELECT foo$tag$ FROM t WHERE id = 'id' AND note = $tag$text$tag$"
+        );
     }
 
     #[test]

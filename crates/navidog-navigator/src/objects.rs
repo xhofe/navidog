@@ -66,9 +66,10 @@ pub struct ObjectsPanel {
     /// Detail view sort: (column key, ascending)
     sort: Option<(String, bool)>,
     scroll: UniformListScrollHandle,
-    /// Row count from the last render. The status bar reads this instead of
-    /// rebuilding every row (and cloning every property) on each frame.
-    last_rows: Option<usize>,
+    /// Selection and row count from the last render. The status bar reads this
+    /// instead of rebuilding every row (and cloning every property) on each
+    /// frame, but only while the selection still matches.
+    last_rows: Option<(Selection, usize)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -265,11 +266,14 @@ impl ObjectsPanel {
 
     /// The row count of the last render, or `None` until the panel rendered once.
     pub(crate) fn cached_rows(cx: &App) -> Option<usize> {
-        cx.try_global::<SharedObjects>()?
-            .0
-            .upgrade()?
-            .read(cx)
+        let current = Workspace::global(cx).read(cx).selection().clone();
+        let panel = cx.try_global::<SharedObjects>()?.0.upgrade()?;
+        let panel = panel.read(cx);
+        panel
             .last_rows
+            .as_ref()
+            .filter(|(selection, _)| *selection == current)
+            .map(|(_, rows)| *rows)
     }
 
     pub(crate) fn content(cx: &App) -> Content {
@@ -810,12 +814,12 @@ impl Render for ObjectsPanel {
         }
         let p = palette(cx);
         let content = Self::content(cx);
+        let selection = Workspace::global(cx).read(cx).selection().clone();
         self.last_rows = match &content {
-            Content::Rows(rows, _) => Some(rows.len()),
+            Content::Rows(rows, _) => Some((selection.clone(), rows.len())),
             _ => None,
         };
         let show_profile = crate::navigator::view_options(cx).show_table_profile;
-        let selection = Workspace::global(cx).read(cx).selection().clone();
         let mut profile = None;
         let (body, listed) = match content {
             Content::Empty => (
