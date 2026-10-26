@@ -42,7 +42,10 @@
 - **i18n 脚本**：每个 key 必须同时有 `en` 和 `zh-CN`；`t!` 扫描支持空格/换行。
 - **Windows 更新**：`.msi` 直接交给 `msiexec /i`，`.exe` 直接启动，不再拼 `cmd /C start`。
 - **写入耐久性**：Unix 原子替换后 sync 父目录。
-- **失败写入测试**：helper 先探测权限是否真的阻断写入，root/CAP_DAC/non-Unix 下跳过，避免假失败。
+- **失败写入测试**：helper 先探测权限是否真的阻断写入；只跳过失败保存断言，Manage Connections 检查继续执行。
+- **写入耐久性**：父目录同步改为 best-effort；rename 已完成后目录 fsync 失败不再报告保存失败。
+- **navigator detail view**：行数缓存改为 detail 过滤后的实际显示行数。
+- **i18n 注释**：`t!` 扫描先剥离 Rust 行/块注释，注释里的示例 key 不再误报。
 
 已确认无需再改：
 

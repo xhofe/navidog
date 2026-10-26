@@ -815,10 +815,7 @@ impl Render for ObjectsPanel {
         let p = palette(cx);
         let content = Self::content(cx);
         let selection = Workspace::global(cx).read(cx).selection().clone();
-        self.last_rows = match &content {
-            Content::Rows(rows, _) => Some((selection.clone(), rows.len())),
-            _ => None,
-        };
+        self.last_rows = None;
         let show_profile = crate::navigator::view_options(cx).show_table_profile;
         let mut profile = None;
         let (body, listed) = match content {
@@ -863,6 +860,7 @@ impl Render for ObjectsPanel {
                 } else {
                     rows
                 };
+                self.last_rows = Some((selection.clone(), rows.len()));
                 if show_profile {
                     profile = rows.iter().find(|r| r.target == selection).and_then(|r| {
                         (!r.properties.is_empty()).then(|| profile_line(&r.properties))

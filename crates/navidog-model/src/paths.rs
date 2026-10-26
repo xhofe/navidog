@@ -47,9 +47,18 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     tmp.write_all(bytes)?;
     tmp.as_file().sync_all()?;
     tmp.persist(path).map_err(|err| err.error)?;
-    // The rename itself is only durable once the directory entry is flushed.
+    // The rename already replaced the target. A directory sync is best effort:
+    // some filesystems reject fsync on directories, and reporting an error here
+    // would leave the caller's memory state behind the bytes on disk. On macOS
+    // this is still a plain fsync, not F_FULLFSYNC.
     #[cfg(unix)]
-    std::fs::File::open(parent)?.sync_all()?;
+    if let Err(error) = std::fs::File::open(parent).and_then(|dir| dir.sync_all()) {
+        tracing::warn!(
+            %error,
+            path = %path.display(),
+            "could not sync the parent directory after rename"
+        );
+    }
     Ok(())
 }
 

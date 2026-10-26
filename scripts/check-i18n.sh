@@ -60,13 +60,77 @@ for path in glob.glob('crates/*/locales/*.yml'):
         definitions.setdefault(key, []).append((path, languages['en']))
         crate_keys.add(key)
 
+def strip_rust_comments(text):
+    """Blanks // and nested /* */ comments while preserving newlines and strings."""
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text.startswith('//', i):
+            end = text.find('\n', i)
+            if end == -1:
+                break
+            out.append('\n')
+            i = end + 1
+        elif text.startswith('/*', i):
+            depth = 1
+            i += 2
+            while i < n and depth:
+                if text.startswith('/*', i):
+                    depth += 1
+                    i += 2
+                elif text.startswith('*/', i):
+                    depth -= 1
+                    i += 2
+                else:
+                    if text[i] == '\n':
+                        out.append('\n')
+                    i += 1
+        elif text[i] == '"':
+            out.append('"')
+            i += 1
+            while i < n:
+                ch = text[i]
+                out.append(ch)
+                if ch == '\\' and i + 1 < n:
+                    out.append(text[i + 1])
+                    i += 2
+                    continue
+                i += 1
+                if ch == '"':
+                    break
+        elif text[i] == 'r' or (text[i] == 'b' and i + 1 < n and text[i + 1] == 'r'):
+            start = i
+            j = i + 1 if text[i] == 'r' else i + 2
+            hashes = 0
+            while j < n and text[j] == '#':
+                hashes += 1
+                j += 1
+            if j < n and text[j] == '"':
+                delim = '"' + '#' * hashes
+                out.append(text[start:j + 1])
+                i = j + 1
+                end = text.find(delim, i)
+                if end == -1:
+                    out.append(text[i:])
+                    break
+                out.append(text[i:end + len(delim)])
+                i = end + len(delim)
+            else:
+                out.append(text[i])
+                i += 1
+        else:
+            out.append(text[i])
+            i += 1
+    return ''.join(out)
+
 # A feature crate's backend only loads its own locale files, so a literal
 # `t!(...)` key must be defined there. Cross-crate UI keys resolve through
 # explicit helpers, not through another backend. Scan the whole file so
 # whitespace and line breaks inside the macro are accepted too.
 for source in glob.glob('crates/*/src/**/*.rs', recursive=True):
     crate = source.split('/')[1]
-    text = open(source, encoding='utf-8').read()
+    text = strip_rust_comments(open(source, encoding='utf-8').read())
     for match in re.finditer(r't!\s*\(\s*"([A-Za-z0-9_.-]+)"', text):
         key = match.group(1)
         if key not in by_crate.get(crate, set()):
