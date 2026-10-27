@@ -8,8 +8,12 @@ cd "$(dirname "$0")/.."
 
 # A receiver that is a dialect (`dialect`, `self.dialect`, `t.dialect`, … or the short `d`),
 # followed by `.id()`. One pattern covers both comparison orders, `matches!` and `match`.
+# The short `d` needs an identifier boundary on comparisons, so `thread.id()` is not
+# treated as `d.id()`. `matches!` and `match` stay unanchored; their samples already
+# require `matches!(` or `match `.
 receiver='([A-Za-z_][A-Za-z0-9_]*\.)*([Dd]ialect|d)\.id\(\)'
-pattern="(${receiver}[[:space:]]*(==|!=))|((==|!=)[[:space:]]*${receiver})|(matches!\([[:space:]]*${receiver})|(match[[:space:]]+${receiver})"
+boundary='(^|[^A-Za-z0-9_.])'
+pattern="(${boundary}${receiver}[[:space:]]*(==|!=))|((==|!=)[[:space:]]*${boundary}${receiver})|(matches!\([[:space:]]*${receiver})|(match[[:space:]]+${receiver})"
 
 # Prove the pattern still catches every shape before trusting a clean run.
 samples=(
@@ -23,6 +27,16 @@ samples=(
 for sample in "${samples[@]}"; do
     if ! grep -qE "$pattern" <<<"$sample"; then
         echo "self-test: the pattern no longer catches: $sample" >&2
+        exit 2
+    fi
+done
+
+negative_samples=(
+    'if thread.id() == other {}'
+)
+for sample in "${negative_samples[@]}"; do
+    if grep -qE "$pattern" <<<"$sample"; then
+        echo "self-test: the pattern incorrectly catches: $sample" >&2
         exit 2
     fi
 done
