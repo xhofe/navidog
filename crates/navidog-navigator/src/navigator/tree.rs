@@ -60,7 +60,7 @@ impl TreeBuilder<'_> {
                             Ok(cols.iter().map(|c| c.name.clone()).collect())
                         }
                         Some(Load::Failed(e)) => Err(e.to_string()),
-                        _ => Err(t!("nav.loading").to_string()),
+                        _ => Err(String::new()),
                     },
                     _ => match self.catalog.table_children(&table.scope, &table.name) {
                         Some(Load::Ready(c)) => Ok(match child {
@@ -69,7 +69,7 @@ impl TreeBuilder<'_> {
                             _ => c.triggers.clone(),
                         }),
                         Some(Load::Failed(e)) => Err(e.to_string()),
-                        _ => Err(t!("nav.loading").to_string()),
+                        _ => Err(String::new()),
                     },
                 };
                 let items = match loaded {
@@ -107,7 +107,7 @@ impl TreeBuilder<'_> {
     }
 
     /// Search opens the containers above a match. A table and the folders under
-    /// it stay as the user left them: forcing those open shows "Loading…" rows
+    /// it stay as the user left them: forcing those open shows skeleton rows
     /// whose catalog fetch never starts.
     pub(super) fn expanded(&self, node: &Node) -> bool {
         self.panel.expanded.contains(&node.id()) || (self.filtering && search_opens(node))
@@ -125,6 +125,7 @@ impl TreeBuilder<'_> {
             .expanded(expanded)
     }
 
+    /// An empty `label` is still loading (the row draws a skeleton). Any other label is an error.
     pub(super) fn placeholder(parent: &Node, label: String) -> Vec<TreeItem> {
         vec![TreeItem::new(
             Node::Placeholder(parent.id().to_string()).id(),
@@ -210,7 +211,7 @@ impl TreeBuilder<'_> {
                     })
                     .collect(),
                 Some(Load::Failed(e)) => Self::placeholder(&node, e.to_string()),
-                _ => Self::placeholder(&node, t!("nav.loading").to_string()),
+                _ => Self::placeholder(&node, String::new()),
             }
         } else {
             self.categories(&Scope::new(conn, db, None), dialect.as_ref())
@@ -269,7 +270,7 @@ impl TreeBuilder<'_> {
                     }
                     Some(Load::Failed(e)) => Self::placeholder(&node, e.to_string()),
                     _ if self.filtering => return None,
-                    _ => Self::placeholder(&node, t!("nav.loading").to_string()),
+                    _ => Self::placeholder(&node, String::new()),
                 };
                 if self.filtering && children.is_empty() {
                     return None;

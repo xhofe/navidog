@@ -17,7 +17,7 @@ use navidog_app_state::workspace::Workspace;
 use navidog_session::outline::{OutlineCache, OutlineState};
 use navidog_session::sessions::Sessions;
 use navidog_ui::assets::lucide;
-use navidog_ui::skin::truncated;
+use navidog_ui::skin::{skeleton_rows, truncated};
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
 
@@ -189,7 +189,13 @@ impl InfoPanel {
             }
             Some(OutlineState::Failed(e)) => self.message(e.to_string(), cx),
             _ if scope.is_none() => self.message(t!("snippet.no_database").to_string(), cx),
-            _ => self.message(t!("nav.loading").to_string(), cx),
+            _ => div()
+                .flex_1()
+                .min_h_0()
+                .px_2()
+                .py_1()
+                .child(skeleton_rows(8, tokens::navigator::ROW_HEIGHT.rems(), None))
+                .into_any_element(),
         };
         v_flex()
             .size_full()

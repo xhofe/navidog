@@ -1,6 +1,8 @@
 use super::*;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::resizable::{resizable_panel, v_resizable};
+use gpui_kit::component::skeleton::Skeleton;
+use gpui_kit::relative;
 use structured::{ENTRY_KEYS, PROPERTIES, PROPERTY_IDS};
 
 /// Choice-menu id space of the identity row; see `render_property_row`.
@@ -30,10 +32,11 @@ impl TableDesigner {
                         .small()
                         .icon(lucide("play"))
                         .label(t!("designer.execute").to_string())
+                        .loading(self.busy && self.loaded)
                         .disabled(
-                            disabled
+                            !self.loaded
                                 || self.needs_reload
-                                || self.preview.as_ref().is_none_or(Vec::is_empty),
+                                || (!self.busy && self.preview.as_ref().is_none_or(Vec::is_empty)),
                         )
                         .on_click(cx.listener(|this, _, w, cx| this.request(true, w, cx))),
                 )
@@ -45,7 +48,8 @@ impl TableDesigner {
                         .small()
                         .icon(lucide("save"))
                         .label(t!("designer.save").to_string())
-                        .disabled(disabled || self.needs_reload)
+                        .loading(self.busy && self.loaded)
+                        .disabled(!self.loaded || self.needs_reload)
                         .on_click(cx.listener(|this, _, w, cx| this.show_preview(w, cx))),
                 )
             })
@@ -401,12 +405,10 @@ impl TableDesigner {
                         .ghost()
                         .small()
                         .label(t!("designer.refresh_references").to_string())
-                        .disabled(disabled || self.references.loading)
+                        .loading(self.references.loading)
+                        .disabled(disabled && !self.references.loading)
                         .on_click(cx.listener(|this, _, w, cx| this.load_references(w, cx))),
                 )
-                .when(self.references.loading, |v| {
-                    v.child(t!("designer.loading_references").to_string())
-                })
                 .when_some(self.references.error.clone(), |v, error| {
                     v.child(gpui_kit::div().text_color(palette(cx).danger).child(error))
                 })
@@ -531,13 +533,6 @@ impl Render for TableDesigner {
                         }),
                     ),
             )
-            .when(self.busy, |v| {
-                v.child(
-                    gpui_kit::div()
-                        .px_2()
-                        .child(t!("designer.loading").to_string()),
-                )
-            })
             .when_some(self.error.clone(), |v, error| {
                 v.child(gpui_kit::div().px_2().text_color(p.danger).child(error))
             })
@@ -585,13 +580,11 @@ impl Render for TableDesigner {
                         .on_click(cx.listener(|this, _, w, cx| this.load(w, cx))),
                 )
             })
-            .child(
-                gpui_kit::div()
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .w_full()
-                    .child(match self.page {
+            .child(gpui_kit::div().flex_1().min_h_0().min_w_0().w_full().child(
+                if self.busy && !self.loaded {
+                    loading_grid().into_any_element()
+                } else {
+                    match self.page {
                         Page::Fields | Page::Indexes | Page::ForeignKeys | Page::Checks => {
                             self.render_grid_page(window, cx).into_any_element()
                         }
@@ -645,9 +638,42 @@ impl Render for TableDesigner {
                                     .min_h_0(),
                             )
                             .into_any_element(),
-                    }),
-            )
+                    }
+                },
+            ))
     }
+}
+
+/// Column-shaped bars shown until the first table snapshot arrives.
+fn loading_grid() -> gpui_kit::AnyElement {
+    const COLS: [(tokens::Pt, f32); 3] = [
+        (tokens::designer::NAME_WIDTH, 0.72),
+        (tokens::designer::TYPE_WIDTH, 0.55),
+        (tokens::designer::ARG_WIDTH, 0.6),
+    ];
+    v_flex()
+        .size_full()
+        .children((0..8).map(|row| {
+            h_flex()
+                .h(tokens::designer::ROW_HEIGHT.rems())
+                .px_2()
+                .gap_2()
+                .items_center()
+                .children(
+                    COLS.into_iter()
+                        .enumerate()
+                        .map(|(col, (width, fraction))| {
+                            let fraction = (fraction - ((row + col) % 3) as f32 * 0.08).max(0.35);
+                            div().w(width.rems()).flex_none().child(
+                                Skeleton::new()
+                                    .h(tokens::font::LINE_BODY.rems())
+                                    .w(relative(fraction))
+                                    .rounded_sm(),
+                            )
+                        }),
+                )
+        }))
+        .into_any_element()
 }
 
 pub(super) fn choices(

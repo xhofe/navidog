@@ -506,14 +506,7 @@ impl Render for ConnectionForm {
                     .justify_between()
                     .child(
                         Button::new("test")
-                            .label(
-                                if testing {
-                                    t!("conn.testing")
-                                } else {
-                                    t!("conn.test")
-                                }
-                                .to_string(),
-                            )
+                            .label(t!("conn.test").to_string())
                             .loading(testing)
                             .on_click(cx.listener(|this, _, window, cx| this.test(window, cx))),
                     )

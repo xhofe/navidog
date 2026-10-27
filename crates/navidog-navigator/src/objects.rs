@@ -28,7 +28,7 @@ use navidog_db::ObjectInfo;
 use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_session::sessions::{ConnState, Sessions};
 use navidog_ui::assets::lucide;
-use navidog_ui::skin::truncated;
+use navidog_ui::skin::{skeleton_rows, truncated};
 use navidog_ui::{palette, tabs, tokens};
 use rust_i18n::t;
 
@@ -94,6 +94,8 @@ enum RowIcon {
 /// List contents for the current selection.
 pub(crate) enum Content {
     Rows(Vec<Row>, Option<(Scope, ObjectKind)>),
+    /// Catalog or connection is still arriving; the pane draws skeleton rows.
+    Loading,
     Message(SharedString),
     Empty,
 }
@@ -323,16 +325,14 @@ impl ObjectsPanel {
                 Content::Rows(rows, Some((scope.clone(), kind)))
             }
             Some(Load::Failed(e)) => Content::Message(e.clone()),
-            _ => Content::Message(t!("obj.loading").to_string().into()),
+            _ => Content::Loading,
         };
 
         let conn = selection.connection_id().cloned();
         if let Some(c) = &conn {
             match sessions.state(c) {
                 ConnState::Open { .. } => {}
-                ConnState::Opening => {
-                    return Content::Message(t!("obj.connecting").to_string().into());
-                }
+                ConnState::Opening => return Content::Loading,
                 ConnState::Failed(e) => return Content::Message(e.clone().into()),
                 ConnState::Closed => {
                     return Content::Message(t!("obj.not_connected").to_string().into());
@@ -374,7 +374,7 @@ impl ObjectsPanel {
                         None,
                     ),
                     Some(Load::Failed(e)) => Content::Message(e.clone()),
-                    _ => Content::Message(t!("obj.loading").to_string().into()),
+                    _ => Content::Loading,
                 },
                 _ => objects(&Scope::new(c.clone(), d.clone(), None), ObjectKind::Table),
             },
@@ -792,6 +792,16 @@ impl Render for ObjectsPanel {
                     .text_color(p.label_secondary)
                     .child(lucide("plug").size(tokens::conn_type::TILE_ICON.rems()))
                     .child(t!("obj.empty_hint").to_string())
+                    .into_any_element(),
+                None,
+            ),
+            Content::Loading => (
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .px(tokens::navigator::ROW_INSET_X.rems())
+                    .py_1()
+                    .child(skeleton_rows(8, tokens::list::ROW_HEIGHT.rems(), None))
                     .into_any_element(),
                 None,
             ),

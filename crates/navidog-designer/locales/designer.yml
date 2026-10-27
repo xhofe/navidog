@@ -69,12 +69,6 @@ designer:
   options_help:
     en: 'Table options, for example: ENGINE=InnoDB or WITHOUT ROWID.'
     zh-CN: 表选项，例如 ENGINE=InnoDB 或 WITHOUT ROWID。
-  loading:
-    en: Loading…
-    zh-CN: 正在加载…
-  saving:
-    en: Applying schema changes…
-    zh-CN: 正在修改表结构…
   saved:
     en: Table saved
     zh-CN: 表已保存
@@ -216,9 +210,6 @@ designer:
   refresh_references:
     en: Refresh referenced objects
     zh-CN: 刷新被引用对象
-  loading_references:
-    en: Loading referenced objects…
-    zh-CN: 正在加载被引用对象…
   option_engine:
     en: Engine
     zh-CN: 引擎

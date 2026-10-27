@@ -2,11 +2,13 @@
 //! components; these only handle appearance and sizing.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::skeleton::Skeleton;
 use gpui_kit::component::{Icon, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, ClickEvent, ElementId, FontWeight, Hsla, InteractiveElement as _, IntoElement,
-    ParentElement, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled, Window, div,
+    ParentElement, Rems, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled, Window,
+    div, relative,
 };
 
 use crate::tokens::{self, palette};
@@ -37,6 +39,27 @@ pub fn truncated(
             gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
         })
         .child(display)
+}
+
+/// Bars standing in for rows that have not loaded. Widths cycle through fractions of the parent
+/// so the block does not read as one slab. `subline` draws a shorter bar under each row.
+pub fn skeleton_rows(count: usize, row_height: Rems, subline: Option<Rems>) -> impl IntoElement {
+    const WIDTHS: [f32; 8] = [0.72, 0.55, 0.64, 0.48, 0.60, 0.42, 0.68, 0.50];
+    v_flex()
+        .w_full()
+        .gap(tokens::info::ROW_GAP.rems())
+        .children((0..count).map(|i| {
+            let width = WIDTHS[i % WIDTHS.len()];
+            let bar = |fraction: f32, height: Rems| {
+                Skeleton::new().h(height).w(relative(fraction)).rounded_sm()
+            };
+            v_flex()
+                .child(bar(width, row_height))
+                .when_some(subline, |stack, height| {
+                    let detail = (WIDTHS[(i + 3) % WIDTHS.len()] * 0.65).clamp(0.28, 0.55);
+                    stack.child(bar(detail, height))
+                })
+        }))
 }
 
 /// Makes the dialog's Confirm (Enter in a single-line field, or on the dialog itself) call `ok` on

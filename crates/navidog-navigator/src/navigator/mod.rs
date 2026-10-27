@@ -823,7 +823,7 @@ impl Render for NavigatorPanel {
         let marked: HashSet<SharedString> = Self::selected_ids(cx).into_iter().collect();
         // Other panes read the catalog while they render, so gpui skips its
         // observers and only redraws those panes. This tree is a snapshot, and
-        // would keep showing "Loading…" until the next click. Reading the
+        // would keep showing skeleton rows until the next click. Reading the
         // revision subscribes this pane; a change rebuilds on the next frame.
         let revision = Catalog::global(cx).read(cx).revision();
         if revision != self.built_revision {
