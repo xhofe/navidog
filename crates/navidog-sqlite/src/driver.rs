@@ -8,13 +8,18 @@ use rusqlite::types::ValueRef;
 use rusqlite::{OpenFlags, params};
 use tokio::sync::watch;
 
-use crate::dialect::Dialect;
-use crate::driver::{
-    CancelHandle, Column, ColumnOrigin, DbError, DbResult, Driver, DriverInfo, Family, Relational,
+use navidog_db::driver::{
+    CancelHandle, Column, ColumnOrigin, DbError, DbResult, Driver, DriverInfo, Relational,
     ResultSet, Session,
 };
-use crate::log::{Tag, logged};
-use crate::params::ConnectParams;
+use navidog_db::log::{Tag, logged};
+use navidog_db::params::ConnectParams;
+
+use navidog_sql::Dialect as _;
+
+use super::SqliteDialect;
+use crate::metadata;
+use rust_i18n::t;
 
 pub struct SqliteDriver {
     info: DriverInfo,
@@ -24,15 +29,10 @@ impl Default for SqliteDriver {
     fn default() -> Self {
         Self {
             info: DriverInfo {
-                id: "sqlite".into(),
-                name: "SQLite".into(),
-                family: Family::Relational,
                 default_port: navidog_model::connection::driver_defaults("sqlite").port,
                 icon: "icons/db/sqlite.svg",
-                dialect: Dialect::Sqlite,
-                supports_ssl: false,
-                supports_ssh: false,
-                per_database_sessions: false,
+                file_based: true,
+                ..DriverInfo::relational("sqlite", "SQLite", Arc::new(SqliteDialect))
             },
         }
     }
@@ -63,10 +63,10 @@ async fn blocking<T: Send + 'static>(
             let mut guard = conn.lock().unwrap_or_else(|p| p.into_inner());
             let retired = *registration.borrow();
             if retired {
-                Err(DbError::msg(
-                    rust_i18n::t!("database.sqlite_queued_session_closed").to_string(),
+                Err(
+                    DbError::msg(t!("database.sqlite_queued_session_closed").to_string())
+                        .with_session_loss(false),
                 )
-                .with_session_loss(false))
             } else {
                 f(&mut guard)
             }
@@ -189,8 +189,13 @@ impl Session for SqliteSession {
 }
 
 impl Relational for SqliteSession {
-    fn dialect(&self) -> Dialect {
-        Dialect::Sqlite
+    fn dialect(&self) -> std::sync::Arc<dyn navidog_sql::Dialect> {
+        // The dialect is stateless: one shared Arc, not one per call.
+        static DIALECT: std::sync::OnceLock<std::sync::Arc<dyn navidog_sql::Dialect>> =
+            std::sync::OnceLock::new();
+        DIALECT
+            .get_or_init(|| std::sync::Arc::new(SqliteDialect))
+            .clone()
     }
 
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
@@ -208,12 +213,14 @@ impl Relational for SqliteSession {
         }
         .boxed()
     }
+
+    navidog_db::relational_catalog!(metadata);
 }
 
 /// Runs a multi-statement script one statement at a time; each returns one result set.
 fn execute_all(conn: &mut rusqlite::Connection, sql: &str) -> DbResult<Vec<ResultSet>> {
     let mut sets = Vec::new();
-    for piece in crate::sql::split_statements(sql, Dialect::Sqlite) {
+    for piece in navidog_db::sql::split_statements(sql, SqliteDialect.lex()) {
         let mut stmt = conn.prepare(&piece).map_err(err)?;
         let origins = stmt.columns_with_metadata();
         let columns: Vec<Column> = stmt
@@ -268,7 +275,7 @@ mod tests {
 
     #[test]
     fn close_drains_dropped_execute_and_skips_work_queued_behind_the_connection_lock() {
-        crate::runtime::runtime().block_on(async {
+        navidog_db::runtime::runtime().block_on(async {
             let connection = rusqlite::Connection::open_in_memory().unwrap();
             connection
                 .execute_batch("CREATE TABLE audit (n INTEGER)")

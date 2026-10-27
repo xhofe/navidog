@@ -12,10 +12,10 @@ use gpui_kit::{App, AsyncWindowContext, Context, WeakEntity, Window};
 use navidog_app_state::actions::OpenConnectionId;
 use navidog_app_state::settings::{ResultsPosition, Settings};
 use navidog_app_state::workspace::Workspace;
-use navidog_db::dialect::Dialect;
 use navidog_db::sql::{Statement, session_setup, split_script};
 use navidog_db::{CancelHandle, DbError, DbResult, Relational, ResultSet};
 use navidog_session::sessions::{Sessions, SharedSession, run_on};
+use navidog_sql::dialect::{ContextSelection, Dialect};
 use navidog_ui::assets::lucide;
 use navidog_util::sql_text;
 use rust_i18n::t;
@@ -94,9 +94,9 @@ impl Live {
                     && context.schema == info.schema
                     && context.search_path == info.search_path
             }
-            None => match info.dialect {
-                Some(Dialect::MySql) => self.used == info.database,
-                Some(Dialect::Postgres) => {
+            None => match info.dialect.as_deref().map(|d| d.context_selection()) {
+                Some(ContextSelection::Database) => self.used == info.database,
+                Some(ContextSelection::Schema) => {
                     self.database == info.database
                         && self.used == info.schema
                         && info.search_path.is_none()
@@ -125,11 +125,11 @@ impl SessionContext {
         info.context_known = self.known;
     }
 
-    fn unknown(dialect: Dialect, info: &crate::results::RunInfo) -> Self {
+    fn unknown(dialect: &dyn Dialect, info: &crate::results::RunInfo) -> Self {
         Self {
             id: next_context_id(),
             known: false,
-            database: (dialect == Dialect::Postgres)
+            database: (dialect.context_selection() == ContextSelection::Schema)
                 .then(|| info.database.clone())
                 .flatten(),
             schema: None,
@@ -140,13 +140,8 @@ impl SessionContext {
     /// Read server state after a recognized context command; do not parse user expressions.
     async fn read(rel: &mut dyn Relational) -> DbResult<Self> {
         let dialect = rel.dialect();
-        let sql = match dialect {
-            Dialect::MySql => "SELECT DATABASE()",
-            Dialect::Postgres => {
-                "SELECT pg_catalog.current_database(), pg_catalog.current_schema(), \
-                 pg_catalog.current_setting('search_path')"
-            }
-            Dialect::Sqlite => return Err(DbError::msg("SQLite has no USE/search_path context")),
+        let Some(sql) = dialect.session_context_sql() else {
+            return Err(DbError::msg("SQLite has no USE/search_path context"));
         };
         let sets = rel.execute_read(sql).await?;
         let row = sets
@@ -158,8 +153,12 @@ impl SessionContext {
             id: next_context_id(),
             known: true,
             database: value(0),
-            schema: (dialect == Dialect::Postgres).then(|| value(1)).flatten(),
-            search_path: (dialect == Dialect::Postgres).then(|| value(2)).flatten(),
+            schema: (dialect.context_selection() == ContextSelection::Schema)
+                .then(|| value(1))
+                .flatten(),
+            search_path: (dialect.context_selection() == ContextSelection::Schema)
+                .then(|| value(2))
+                .flatten(),
         })
     }
 }
@@ -221,7 +220,7 @@ pub(crate) fn statement_at(statements: &[Statement], cursor: usize) -> Option<&S
 }
 
 /// A parameter value: a string literal, or the text itself in raw mode (31 §3).
-pub(crate) fn param_value(dialect: Dialect, value: &str, raw: bool) -> String {
+pub(crate) fn param_value(dialect: &dyn Dialect, value: &str, raw: bool) -> String {
     if raw {
         value.to_string()
     } else {
@@ -231,12 +230,12 @@ pub(crate) fn param_value(dialect: Dialect, value: &str, raw: bool) -> String {
 
 impl QueryEditor {
     /// The statements `kind` covers, with ranges in the editor text.
-    fn statements(&self, kind: RunKind, dialect: Dialect, cx: &App) -> Vec<Statement> {
+    fn statements(&self, kind: RunKind, dialect: &dyn Dialect, cx: &App) -> Vec<Statement> {
         let e = self.editor.read(cx);
         let text = e.value().to_string();
         let selection = e.selected_range();
         let within = |range: Range<usize>| {
-            split_script(&text[range.clone()], dialect)
+            split_script(&text[range.clone()], dialect.lex())
                 .into_iter()
                 .map(|s| Statement {
                     text: s.text,
@@ -246,11 +245,11 @@ impl QueryEditor {
         };
         match kind {
             RunKind::All | RunKind::Explain if !selection.is_empty() => within(selection),
-            RunKind::All | RunKind::Explain => split_script(&text, dialect),
+            RunKind::All | RunKind::Explain => split_script(&text, dialect.lex()),
             RunKind::Selected if selection.is_empty() => Vec::new(),
             RunKind::Selected => within(selection),
             RunKind::Current => {
-                let all = split_script(&text, dialect);
+                let all = split_script(&text, dialect.lex());
                 statement_at(&all, e.cursor())
                     .cloned()
                     .into_iter()
@@ -275,14 +274,14 @@ impl QueryEditor {
         let Some(dialect) = self.dialect(cx) else {
             return;
         };
-        let statements = self.statements(kind, dialect, cx);
+        let statements = self.statements(kind, dialect.as_ref(), cx);
         if statements.is_empty() {
             alert(t!("query.empty").to_string(), window, cx);
             return;
         }
         let names: Vec<String> = statements
             .iter()
-            .flat_map(|s| sql_text::param_names(&s.text, dialect))
+            .flat_map(|s| sql_text::param_names(&s.text, dialect.lex()))
             .fold(Vec::new(), |mut acc, n| {
                 if !acc.contains(&n) {
                     acc.push(n);
@@ -307,16 +306,16 @@ impl QueryEditor {
                 for (name, value, raw) in values {
                     this.params.insert(name, (value, raw));
                 }
-                this.start(kind, statements, dialect, window, cx);
+                this.start(kind, statements, dialect.clone(), window, cx);
             });
         });
     }
 
-    fn plan(&self, statements: Vec<Statement>, dialect: Dialect) -> Vec<Planned> {
+    fn plan(&self, statements: Vec<Statement>, dialect: &dyn Dialect) -> Vec<Planned> {
         statements
             .into_iter()
             .map(|s| Planned {
-                sql: sql_text::substitute_params(&s.text, dialect, |name| {
+                sql: sql_text::substitute_params(&s.text, dialect.lex(), |name| {
                     let (v, raw) = self.params.get(name).cloned().unwrap_or_default();
                     param_value(dialect, &v, raw)
                 }),
@@ -330,12 +329,12 @@ impl QueryEditor {
         &mut self,
         kind: RunKind,
         statements: Vec<Statement>,
-        dialect: Dialect,
+        dialect: Arc<dyn Dialect>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let planned = self.plan(statements, dialect);
-        let Some(session) = self.session_job(dialect, cx) else {
+        let planned = self.plan(statements, dialect.as_ref());
+        let Some(session) = self.session_job(dialect.clone(), cx) else {
             return;
         };
         self.results
@@ -346,7 +345,7 @@ impl QueryEditor {
         self.stop_flag = stop.clone();
         let continue_on_error = Settings::global(cx).continue_on_error;
         let profile = kind != RunKind::Explain
-            && dialect == Dialect::MySql
+            && dialect.features().supports_profile
             && Settings::global(cx).show_profile;
         let mariadb = self.server_version(cx).contains("MariaDB");
         let mut source = crate::results::RunInfo {
@@ -359,7 +358,7 @@ impl QueryEditor {
             search_path: None,
             context_id: None,
             context_known: true,
-            dialect: Some(dialect),
+            dialect: Some(dialect.clone()),
         };
         let refresh = (kind != RunKind::Explain)
             .then(|| RefreshAfterRun::new(source.connection_id.clone(), cx));
@@ -414,8 +413,8 @@ impl QueryEditor {
                 let result = result.map(|(sets, context)| {
                     if let Some(context) = context {
                         // A metadata probe cannot turn successful user SQL into a failure.
-                        let context =
-                            context.unwrap_or_else(|_| SessionContext::unknown(dialect, &source));
+                        let context = context
+                            .unwrap_or_else(|_| SessionContext::unknown(dialect.as_ref(), &source));
                         context.apply(&mut source);
                         let _ = this.update(cx, |this, _| {
                             if let Some(live) = &mut this.live
@@ -457,13 +456,13 @@ impl QueryEditor {
     /// The editor's session pointed at the picked database and schema, opening it on first use.
     fn session_job(
         &mut self,
-        dialect: Dialect,
+        dialect: Arc<dyn Dialect>,
         cx: &mut Context<Self>,
     ) -> Option<
         impl std::future::Future<Output = DbResult<(SharedSession, Option<SessionContext>)>> + use<>,
     > {
         let conn = self.target.connection.clone()?;
-        let pg = dialect == Dialect::Postgres;
+        let pg = dialect.context_selection() == ContextSelection::Schema;
         // Another connection, or another PostgreSQL database: that session cannot be reused
         if let Some(live) = self.live.take() {
             let same_db = !pg || live.database == self.target.database;
@@ -485,10 +484,10 @@ impl QueryEditor {
             .live
             .as_ref()
             .map(|l| (l.session.clone(), l.used.clone(), l.context.clone()));
-        let want = match dialect {
-            Dialect::MySql => self.target.database.clone(),
-            Dialect::Postgres => self.target.schema.clone(),
-            Dialect::Sqlite => None,
+        let want = match dialect.context_selection() {
+            ContextSelection::Database => self.target.database.clone(),
+            ContextSelection::Schema => self.target.schema.clone(),
+            ContextSelection::File => None,
         };
         let database = self.target.database.clone();
         let this = cx.entity().downgrade();
@@ -518,10 +517,9 @@ impl QueryEditor {
                 (None, None) => unreachable!("no session and nothing opening one"),
             };
             if let Some(name) = want.filter(|w| Some(w) != used.as_ref()) {
-                let sql = match dialect {
-                    Dialect::MySql => format!("USE {}", dialect.quote_ident(&name)),
-                    _ => search_path(&name),
-                };
+                // A picked PostgreSQL schema keeps `public` on the path. `set_search_path_sql`
+                // names only that schema, so the toolbar uses `search_path` instead.
+                let sql = toolbar_context_sql(dialect.as_ref(), &name);
                 run_on(session.clone(), move |rel| {
                     Box::pin(async move { rel.execute(&sql).await })
                 })
@@ -644,18 +642,55 @@ impl QueryEditor {
     }
 }
 
+/// Setup SQL for the toolbar's database or schema picker.
+pub(crate) fn toolbar_context_sql(dialect: &dyn Dialect, name: &str) -> String {
+    if dialect.context_selection() == ContextSelection::Schema {
+        search_path(dialect, name)
+    } else {
+        dialect
+            .prepare_database_sql(name)
+            .unwrap_or_else(|| search_path(dialect, name))
+    }
+}
+
+/// Statements that put a fresh session back where an edited result was produced.
+/// A recorded `search_path` is restored as a setting, not as one quoted identifier.
+pub(crate) fn owned_context_sql(
+    dialect: &dyn Dialect,
+    database: Option<&str>,
+    search_path_setting: Option<&str>,
+    schema: Option<&str>,
+) -> Vec<String> {
+    let mut sql = Vec::new();
+    if let Some(database) = database
+        && let Some(statement) = dialect.prepare_database_sql(database)
+    {
+        sql.push(statement);
+    }
+    if let Some(path) = search_path_setting
+        && let Some(statement) = dialect.restore_search_path_sql(path)
+    {
+        sql.push(statement);
+    } else if let Some(schema) = schema
+        && dialect.context_selection() == ContextSelection::Schema
+    {
+        sql.push(search_path(dialect, schema));
+    }
+    sql
+}
+
 /// `SET search_path` for a picked schema; `public` stays on it so extensions installed there keep
 /// resolving (31 §2).
-pub(crate) fn search_path(schema: &str) -> String {
-    let d = Dialect::Postgres;
-    if schema == "public" {
-        format!("SET search_path TO {}", d.quote_ident(schema))
-    } else {
-        format!(
+pub(crate) fn search_path(dialect: &dyn Dialect, schema: &str) -> String {
+    let d = dialect;
+    // The product's default schema stays on the path so extensions installed there resolve.
+    match d.default_schema() {
+        Some(default) if schema != default => format!(
             "SET search_path TO {}, {}",
             d.quote_ident(schema),
-            d.quote_ident("public")
-        )
+            d.quote_ident(default)
+        ),
+        _ => format!("SET search_path TO {}", d.quote_ident(schema)),
     }
 }
 
@@ -746,7 +781,7 @@ pub(crate) async fn explain_all(
     stop: Arc<AtomicBool>,
     cx: &mut AsyncWindowContext,
 ) {
-    let dialect = source.dialect.expect("a run has a dialect");
+    let dialect = source.dialect.clone().expect("a run has a dialect");
     for p in planned {
         if stop.load(Ordering::Acquire) {
             break;
@@ -754,8 +789,11 @@ pub(crate) async fn explain_all(
         let started = chrono::Local::now();
         let clock = Instant::now();
         let sql = p.sql.clone();
+        let plan_dialect = dialect.clone();
         let result = run_on(session.clone(), move |rel| {
-            Box::pin(async move { crate::explain::fetch_plan(rel, dialect, mariadb, &sql).await })
+            Box::pin(async move {
+                crate::explain::fetch_plan(rel, plan_dialect.as_ref(), mariadb, &sql).await
+            })
         })
         .await
         .map_err(|e| DbError::msg(e.to_string()))
@@ -779,8 +817,8 @@ mod tests {
         type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
         struct ProbeFailure(usize);
         impl Relational for ProbeFailure {
-            fn dialect(&self) -> Dialect {
-                Dialect::MySql
+            fn dialect(&self) -> Arc<dyn Dialect> {
+                Arc::new(navidog_mysql::MysqlDialect)
             }
             fn execute<'a>(&'a mut self, _: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
                 self.0 += 1;
@@ -797,6 +835,8 @@ mod tests {
             ) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
                 Box::pin(async { Err(DbError::msg("injected context probe failure")) })
             }
+
+            navidog_db::unsupported_catalog!();
         }
         let mut probe = ProbeFailure(0);
         let (sets, context) = navidog_db::runtime::runtime()
@@ -815,9 +855,9 @@ mod tests {
             search_path: None,
             context_id: None,
             context_known: true,
-            dialect: Some(Dialect::MySql),
+            dialect: Some(Arc::new(navidog_mysql::MysqlDialect)),
         };
-        let context = SessionContext::unknown(Dialect::MySql, &info);
+        let context = SessionContext::unknown(&navidog_mysql::MysqlDialect, &info);
         context.apply(&mut info);
         assert!(!info.context_known);
         assert!(
@@ -833,7 +873,7 @@ mod tests {
             context: Some(context),
         };
         assert!(live.matches_source(&info));
-        live.context = Some(SessionContext::unknown(Dialect::MySql, &info));
+        live.context = Some(SessionContext::unknown(&navidog_mysql::MysqlDialect, &info));
         assert!(
             !live.matches_source(&info),
             "a later unknown context cannot stand in for the original"
@@ -845,7 +885,7 @@ mod tests {
     #[test]
     fn current_statement_prefers_the_one_before_a_gap() {
         let sql = "SELECT 1;\n\nSELECT 2;";
-        let stmts = split_script(sql, Dialect::MySql);
+        let stmts = split_script(sql, navidog_mysql::MysqlDialect.lex());
         assert_eq!(statement_at(&stmts, 3).unwrap().text, "SELECT 1");
         // On the blank line between the two statements
         assert_eq!(statement_at(&stmts, 10).unwrap().text, "SELECT 1");
@@ -854,16 +894,56 @@ mod tests {
 
     #[test]
     fn parameters_are_literals_unless_raw() {
-        assert_eq!(param_value(Dialect::MySql, "O'Hara", false), "'O''Hara'");
-        assert_eq!(param_value(Dialect::MySql, "NOW()", true), "NOW()");
+        assert_eq!(
+            param_value(&navidog_mysql::MysqlDialect, "O'Hara", false),
+            "'O''Hara'"
+        );
+        assert_eq!(
+            param_value(&navidog_mysql::MysqlDialect, "NOW()", true),
+            "NOW()"
+        );
     }
 
     #[test]
     fn search_path_keeps_public() {
-        assert_eq!(search_path("public"), "SET search_path TO \"public\"");
         assert_eq!(
-            search_path("inventory"),
+            search_path(&navidog_postgres::PostgresDialect, "public"),
+            "SET search_path TO \"public\""
+        );
+        assert_eq!(
+            search_path(&navidog_postgres::PostgresDialect, "inventory"),
             "SET search_path TO \"inventory\", \"public\""
+        );
+        assert_eq!(
+            toolbar_context_sql(&navidog_postgres::PostgresDialect, "inventory"),
+            "SET search_path TO \"inventory\", \"public\""
+        );
+        assert_eq!(
+            toolbar_context_sql(&navidog_mysql::MysqlDialect, "sakila"),
+            "USE `sakila`"
+        );
+        let reload = owned_context_sql(
+            &navidog_postgres::PostgresDialect,
+            Some("pagila"),
+            Some("inventory, public"),
+            Some("inventory"),
+        );
+        assert_eq!(
+            reload,
+            vec![
+                "SELECT pg_catalog.set_config('search_path', 'inventory, public', false)"
+                    .to_string()
+            ]
+        );
+        let schema_only = owned_context_sql(
+            &navidog_postgres::PostgresDialect,
+            None,
+            None,
+            Some("inventory"),
+        );
+        assert_eq!(
+            schema_only,
+            vec!["SET search_path TO \"inventory\", \"public\"".to_string()]
         );
     }
 

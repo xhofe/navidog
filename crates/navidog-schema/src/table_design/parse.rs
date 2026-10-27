@@ -2,14 +2,14 @@ use super::*;
 use navidog_sql::span::{self, LexError, SpanKind};
 
 /// Top-level separators, ignoring quoted text, SQL comments and nested expressions.
-pub(super) fn positions(text: &str, delimiter: u8, dialect: Dialect) -> DbResult<Vec<usize>> {
+pub(super) fn positions(text: &str, delimiter: u8, dialect: &dyn Dialect) -> DbResult<Vec<usize>> {
     validate(text, dialect)?;
-    Ok(span::separators(text, dialect, delimiter))
+    Ok(span::separators(text, dialect.lex(), delimiter))
 }
 
 /// Rejects unterminated strings and comments and unbalanced parentheses.
-fn validate(text: &str, dialect: Dialect) -> DbResult<()> {
-    span::check(text, dialect).map_err(|error| {
+fn validate(text: &str, dialect: &dyn Dialect) -> DbResult<()> {
+    span::check(text, dialect.lex()).map_err(|error| {
         DbError::msg(match error {
             LexError::UnclosedQuote => "Unclosed SQL quote.",
             LexError::UnclosedComment => "Unclosed SQL comment.",
@@ -19,14 +19,14 @@ fn validate(text: &str, dialect: Dialect) -> DbResult<()> {
 }
 
 /// One SQL definition: no extra statements, no comments and no dollar quotes.
-pub(super) fn fragment(text: &str, dialect: Dialect) -> DbResult<()> {
+pub(super) fn fragment(text: &str, dialect: &dyn Dialect) -> DbResult<()> {
     if text.contains('\0') {
         return Err(DbError::msg(
             "A SQL definition cannot contain extra statements.",
         ));
     }
     validate(text, dialect)?;
-    let spans = span::spans(text, dialect);
+    let spans = span::spans(text, dialect.lex());
     if spans.iter().any(|s| s.kind == SpanKind::StatementEnd) {
         return Err(DbError::msg(
             "A SQL definition cannot contain extra statements.",
@@ -76,8 +76,8 @@ pub(super) fn ident(input: &str) -> DbResult<(String, &str)> {
     }
     Ok((input[..len].into(), input[len..].trim_start()))
 }
-pub(super) fn create(ddl: &str, name: &str, d: Dialect) -> DbResult<TableDesign> {
-    let statements = navidog_db::sql::split_script(ddl, d);
+pub(super) fn create(ddl: &str, name: &str, d: &dyn Dialect) -> DbResult<TableDesign> {
+    let statements = navidog_db::sql::split_script(ddl, d.lex());
     let sql = statements
         .first()
         .ok_or_else(|| DbError::msg("No CREATE TABLE definition returned."))?

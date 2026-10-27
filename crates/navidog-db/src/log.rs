@@ -8,7 +8,7 @@ use crate::driver::DbResult;
 pub use navidog_sql_log::*;
 
 /// Runs `fut`, which sends `sql`, and records it with its time and error.
-pub(crate) async fn logged<T>(
+pub async fn logged<T>(
     tag: &Tag,
     sql: &str,
     fut: impl Future<Output = DbResult<T>>,

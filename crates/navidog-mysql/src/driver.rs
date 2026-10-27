@@ -9,14 +9,18 @@ use mysql_async::consts::{ColumnFlags, ColumnType};
 use mysql_async::prelude::Queryable as _;
 use mysql_async::{Conn, Opts, OptsBuilder, SslOpts};
 
-use crate::dialect::Dialect;
-use crate::driver::{
-    CancelHandle, Column, ColumnOrigin, DbError, DbResult, Driver, DriverInfo, Family, Relational,
+use navidog_db::driver::{
+    CancelHandle, Column, ColumnOrigin, DbError, DbResult, Driver, DriverInfo, Relational,
     ResultSet, Session,
 };
-use crate::execution::{Cancellation, RecoveryState, interrupted};
-use crate::log::{Tag, logged};
-use crate::params::ConnectParams;
+use navidog_db::execution::{Cancellation, RecoveryState};
+use navidog_db::log::{Tag, logged};
+use navidog_db::params::ConnectParams;
+
+use navidog_sql::Dialect as _;
+
+use super::MysqlDialect;
+use crate::metadata;
 
 pub struct MySqlDriver {
     info: DriverInfo,
@@ -34,19 +38,17 @@ impl MySqlDriver {
     fn new(id: &'static str, name: &'static str) -> Self {
         Self {
             info: DriverInfo {
-                id: id.into(),
-                name: name.into(),
-                family: Family::Relational,
                 default_port: navidog_model::connection::driver_defaults(id).port,
                 icon: if id == "mariadb" {
                     "icons/db/mariadb.svg"
                 } else {
                     "icons/db/mysql.svg"
                 },
-                dialect: Dialect::MySql,
+                supports_network: true,
                 supports_ssl: true,
                 supports_ssh: true,
-                per_database_sessions: false,
+                protocol_timeouts: true,
+                ..DriverInfo::relational(id, name, Arc::new(MysqlDialect))
             },
         }
     }
@@ -85,9 +87,9 @@ fn build_opts(p: &ConnectParams) -> Opts {
         .user(Some(p.user.clone()))
         .pass(p.password.clone())
         .db_name(p.database.clone())
-        .init(crate::sql::split_statements(
+        .init(navidog_db::sql::split_statements(
             &p.initial_queries,
-            Dialect::MySql,
+            MysqlDialect.lex(),
         ))
         .socket(p.socket.clone())
         .prefer_socket(p.socket.is_some());
@@ -144,7 +146,7 @@ impl Driver for MySqlDriver {
                 connect_timeout: params.timeout(),
                 tag,
                 setup: None,
-                recovery: RecoveryState::new(&params.initial_queries, Dialect::MySql),
+                recovery: RecoveryState::new(&params.initial_queries, &MysqlDialect),
                 cancellation,
             }) as Box<dyn Session>)
         }
@@ -188,7 +190,7 @@ impl MySqlSession {
     }
 
     fn remember(&mut self, sql: &str) {
-        if let Some(setup) = crate::sql::session_setup(sql) {
+        if let Some(setup) = navidog_db::sql::session_setup(sql) {
             self.setup = Some(setup);
         }
     }
@@ -244,7 +246,7 @@ impl Session for MySqlSession {
         &self.version
     }
 
-    crate::recovering_ping!(self, async { self.conn.ping().await.map_err(err) });
+    navidog_db::recovering_ping!(self, async { self.conn.ping().await.map_err(err) });
 
     fn cancel_handle(&self) -> Option<CancelHandle> {
         Some(self.cancellation.handle())
@@ -265,11 +267,17 @@ impl Session for MySqlSession {
 }
 
 impl Relational for MySqlSession {
-    fn dialect(&self) -> Dialect {
-        Dialect::MySql
+    fn dialect(&self) -> std::sync::Arc<dyn navidog_sql::Dialect> {
+        // The dialect is stateless: one shared Arc, not one per call.
+        static DIALECT: std::sync::OnceLock<std::sync::Arc<dyn navidog_sql::Dialect>> =
+            std::sync::OnceLock::new();
+        DIALECT
+            .get_or_init(|| std::sync::Arc::new(MysqlDialect))
+            .clone()
     }
 
-    crate::recovering_execute!();
+    navidog_db::recovering_execute!();
+    navidog_db::relational_catalog!(metadata);
 }
 
 async fn query(conn: &mut Conn, sql: &str) -> DbResult<Vec<ResultSet>> {

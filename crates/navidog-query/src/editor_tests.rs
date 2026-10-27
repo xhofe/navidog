@@ -15,11 +15,11 @@ use gpui_kit::{
 use navidog_app_state::settings::{ResultsPosition, Settings};
 use navidog_app_state::store::ConnectionStore;
 use navidog_app_state::workspace::{Workspace, WorkspaceEvent};
-use navidog_db::sqlite::SqliteDriver;
 use navidog_db::{ConnectParams, Secrets, connect, runtime};
 use navidog_model::connection::Connection;
 use navidog_model::crypto::Key;
 use navidog_session::sessions::Sessions;
+use navidog_sqlite::SqliteDriver;
 
 use crate::editor::{QueryEditor, QuerySource, Target};
 use crate::results::Body;
@@ -38,9 +38,9 @@ impl Render for Host {
 fn live_sql(driver: &str, port: u16, database: &str, statements: &str) {
     runtime::runtime().block_on(async {
         let driver: Arc<dyn navidog_db::Driver> = match driver {
-            "postgres" => Arc::new(navidog_db::postgres::PostgresDriver::default()),
-            "mariadb" => Arc::new(navidog_db::mysql::MySqlDriver::mariadb()),
-            _ => Arc::new(navidog_db::mysql::MySqlDriver::mysql()),
+            "postgres" => Arc::new(navidog_postgres::PostgresDriver::default()),
+            "mariadb" => Arc::new(navidog_mysql::MySqlDriver::mariadb()),
+            _ => Arc::new(navidog_mysql::MySqlDriver::mysql()),
         };
         let mut session = connect(
             driver,
@@ -2294,9 +2294,9 @@ fn live_editor_runs_selection_current_errors_and_stop(cx: &mut TestAppContext) {
         wait(cx, "the server to execute the slow statement", |_| {
             runtime::runtime().block_on(async {
                 let driver: Arc<dyn navidog_db::Driver> = match driver {
-                    "postgres" => Arc::new(navidog_db::postgres::PostgresDriver::default()),
-                    "mariadb" => Arc::new(navidog_db::mysql::MySqlDriver::mariadb()),
-                    _ => Arc::new(navidog_db::mysql::MySqlDriver::mysql()),
+                    "postgres" => Arc::new(navidog_postgres::PostgresDriver::default()),
+                    "mariadb" => Arc::new(navidog_mysql::MySqlDriver::mariadb()),
+                    _ => Arc::new(navidog_mysql::MySqlDriver::mysql()),
                 };
                 let mut session = connect(driver, ConnectParams {
                     host: "127.0.0.1".into(), port,

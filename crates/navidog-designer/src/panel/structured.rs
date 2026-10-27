@@ -1,6 +1,6 @@
 use super::*;
 
-const PROPERTIES: [ColumnProperty; 11] = [
+pub(super) const PROPERTIES: [ColumnProperty; 11] = [
     ColumnProperty::Type,
     ColumnProperty::Length,
     ColumnProperty::Scale,
@@ -29,6 +29,21 @@ pub(super) const PROPERTY_IDS: [&str; 11] = [
 pub(super) const REFERENCE_SCHEMA: usize = 4;
 pub(super) const REFERENCE_TABLE: usize = 5;
 pub(super) const REFERENCE_FIELDS: usize = 6;
+/// Columns of the fields table, in the order the renderer below builds them.
+pub(super) const FIELD_NAME: usize = 0;
+pub(super) const FIELD_TYPE: usize = 1;
+pub(super) const FIELD_LENGTH: usize = 2;
+pub(super) const FIELD_SCALE: usize = 3;
+pub(super) const FIELD_COMMENT: usize = 7;
+
+/// Row of a column property in the form, taken from the `PROPERTIES` order.
+fn property_row(property: ColumnProperty) -> usize {
+    PROPERTIES
+        .iter()
+        .position(|p| *p == property)
+        .expect("the form lists every column property")
+}
+
 pub(super) const ENTRY_KEYS: [&str; 10] = [
     "name",
     "fields",
@@ -48,13 +63,13 @@ impl TableDesigner {
             .constraints
             .iter()
             .enumerate()
-            .map(|(ix, s)| (false, ix, s.clone(), parse_entry(s, self.dialect)))
+            .map(|(ix, s)| (false, ix, s.clone(), parse_entry(s, self.dialect.as_ref())))
             .chain(
                 self.draft
                     .indexes
                     .iter()
                     .enumerate()
-                    .map(|(ix, s)| (true, ix, s.clone(), parse_entry(s, self.dialect))),
+                    .map(|(ix, s)| (true, ix, s.clone(), parse_entry(s, self.dialect.as_ref()))),
             )
             .filter(|(_, _, _, e)| match self.page {
                 Page::Indexes => e.as_ref().is_some_and(|e| {
@@ -123,7 +138,7 @@ impl TableDesigner {
                 .columns
                 .iter()
                 .map(|c| {
-                    let p = column_properties(&c.definition, self.dialect);
+                    let p = column_properties(&c.definition, self.dialect.as_ref());
                     vec![
                         c.name.clone(),
                         p.data_type,
@@ -132,7 +147,7 @@ impl TableDesigner {
                         p.not_null.to_string(),
                         p.generated.to_string(),
                         self.is_primary(&c.name).to_string(),
-                        if self.dialect == Dialect::Postgres {
+                        if self.dialect.features().separate_comments {
                             c.comment.clone()
                         } else {
                             p.comment
@@ -146,12 +161,16 @@ impl TableDesigner {
                 .iter()
                 .position(|c| Some(c.id) == self.selected);
             let editing = row.zip(self.active_cell).and_then(|(r, c)| {
+                let property = |property: ColumnProperty| {
+                    let row = property_row(property);
+                    (self.properties[row].clone(), PROPERTY_IDS[row])
+                };
                 let (input, id) = match c {
-                    0 => (self.name.clone(), "designer-field-name"),
-                    1 => (self.properties[0].clone(), PROPERTY_IDS[0]),
-                    2 => (self.properties[1].clone(), PROPERTY_IDS[1]),
-                    3 => (self.properties[2].clone(), PROPERTY_IDS[2]),
-                    7 => (self.properties[3].clone(), PROPERTY_IDS[3]),
+                    FIELD_NAME => (self.name.clone(), "designer-field-name"),
+                    FIELD_TYPE => property(ColumnProperty::Type),
+                    FIELD_LENGTH => property(ColumnProperty::Length),
+                    FIELD_SCALE => property(ColumnProperty::Scale),
+                    FIELD_COMMENT => property(ColumnProperty::Comment),
                     _ => return None,
                 };
                 Some((r, c, input, id))
@@ -255,7 +274,9 @@ impl TableDesigner {
                 1 => Some(self.properties[0].clone()),
                 2 => Some(self.properties[1].clone()),
                 3 => Some(self.properties[2].clone()),
-                7 if self.dialect != Dialect::Sqlite => Some(self.properties[3].clone()),
+                7 if self.dialect.features().supports_column_comments => {
+                    Some(self.properties[3].clone())
+                }
                 _ => None,
             };
             if let Some(input) = input {
@@ -286,21 +307,29 @@ impl TableDesigner {
         else {
             return;
         };
-        if ix == 3 && self.dialect == Dialect::Postgres {
-            if value.contains('\0') {
-                self.invalid_inputs
-                    .insert(ix, t!("designer.invalid_comment").to_string());
-            } else {
-                c.comment = value;
-                self.invalid_inputs.remove(&ix);
-                self.preview = None;
-            }
+        // Two independent facts: the text type may reject NUL, and the comment may live outside
+        // the column definition. Either can hold on its own.
+        if PROPERTIES[ix] == ColumnProperty::Comment
+            && self.dialect.features().text_rejects_nul
+            && value.contains('\0')
+        {
+            self.invalid_inputs
+                .insert(ix, t!("designer.invalid_comment").to_string());
             self.error = self.invalid_inputs.values().next().cloned();
             self.refresh_grid(cx);
             cx.notify();
             return;
         }
-        match edit_column(&c.definition, PROPERTIES[ix], &value, self.dialect) {
+        if PROPERTIES[ix] == ColumnProperty::Comment && self.dialect.features().separate_comments {
+            c.comment = value;
+            self.invalid_inputs.remove(&ix);
+            self.preview = None;
+            self.error = self.invalid_inputs.values().next().cloned();
+            self.refresh_grid(cx);
+            cx.notify();
+            return;
+        }
+        match edit_column(&c.definition, PROPERTIES[ix], &value, self.dialect.as_ref()) {
             Ok(sql) => {
                 c.definition = sql.clone();
                 self.syncing = true;
@@ -325,15 +354,15 @@ impl TableDesigner {
             .columns
             .iter()
             .find(|c| c.name == name)
-            .is_some_and(|c| column_properties(&c.definition, self.dialect).primary_key)
+            .is_some_and(|c| column_properties(&c.definition, self.dialect.as_ref()).primary_key)
             || self
                 .draft
                 .constraints
                 .iter()
-                .filter_map(|s| parse_entry(s, self.dialect))
+                .filter_map(|s| parse_entry(s, self.dialect.as_ref()))
                 .any(|e| {
                     e.kind == EntryKind::Primary
-                        && split_field_list(&e.fields, self.dialect)
+                        && split_field_list(&e.fields, self.dialect.as_ref())
                             .unwrap_or_default()
                             .iter()
                             .any(|s| s.trim().trim_matches(['`', '"', '[', ']']) == name)
@@ -373,13 +402,13 @@ impl TableDesigner {
         };
         self.select(c.id, window, cx);
         if col == 6 {
-            if column_properties(&c.definition, self.dialect).primary_key {
+            if column_properties(&c.definition, self.dialect.as_ref()).primary_key {
                 if !checked {
                     match edit_column(
                         &c.definition,
                         ColumnProperty::PrimaryKey,
                         "false",
-                        self.dialect,
+                        self.dialect.as_ref(),
                     ) {
                         Ok(sql) => self.draft.columns[row].definition = sql,
                         Err(e) => self.error = Some(e.to_string()),
@@ -391,12 +420,13 @@ impl TableDesigner {
                 return;
             }
             let primary = self.draft.constraints.iter().position(|s| {
-                parse_entry(s, self.dialect).is_some_and(|e| e.kind == EntryKind::Primary)
+                parse_entry(s, self.dialect.as_ref()).is_some_and(|e| e.kind == EntryKind::Primary)
             });
             let mut entry = primary
-                .and_then(|ix| parse_entry(&self.draft.constraints[ix], self.dialect))
+                .and_then(|ix| parse_entry(&self.draft.constraints[ix], self.dialect.as_ref()))
                 .unwrap_or_else(|| DesignEntry::new(EntryKind::Primary));
-            let mut fields = split_field_list(&entry.fields, self.dialect).unwrap_or_default();
+            let mut fields =
+                split_field_list(&entry.fields, self.dialect.as_ref()).unwrap_or_default();
             fields.retain(|s| s.trim_matches(['`', '"', '[', ']']) != c.name);
             if checked {
                 fields.push(self.dialect.quote_ident(&c.name));
@@ -407,13 +437,13 @@ impl TableDesigner {
                     self.draft.constraints.remove(ix);
                 } else {
                     self.draft.constraints[ix] = entry
-                        .sql(self.dialect, &self.scope, &self.draft.name, false)
+                        .sql(self.dialect.as_ref(), &self.scope, &self.draft.name, false)
                         .unwrap();
                 }
             } else if !fields.is_empty() {
                 self.draft.constraints.push(
                     entry
-                        .sql(self.dialect, &self.scope, &self.draft.name, false)
+                        .sql(self.dialect.as_ref(), &self.scope, &self.draft.name, false)
                         .unwrap(),
                 );
             }
@@ -423,7 +453,7 @@ impl TableDesigner {
                 &c.definition,
                 ColumnProperty::Generated,
                 if checked { "true" } else { "false" },
-                self.dialect,
+                self.dialect.as_ref(),
             ) {
                 Ok(sql) => self.draft.columns[row].definition = sql,
                 Err(e) => self.error = Some(e.to_string()),
@@ -433,7 +463,7 @@ impl TableDesigner {
                 &c.definition,
                 ColumnProperty::NotNull,
                 if checked { "true" } else { "false" },
-                self.dialect,
+                self.dialect.as_ref(),
             ) {
                 Ok(sql) => self.draft.columns[row].definition = sql,
                 Err(e) => {
@@ -459,7 +489,10 @@ impl TableDesigner {
         if self.busy || !self.loaded {
             return;
         }
-        if property == ColumnProperty::AutoIncrement && checked && self.dialect == Dialect::Sqlite {
+        if property == ColumnProperty::AutoIncrement
+            && checked
+            && self.dialect.features().autoincrement_needs_integer_key
+        {
             let Some(column) = self
                 .draft
                 .columns
@@ -469,7 +502,7 @@ impl TableDesigner {
             else {
                 return;
             };
-            if !column_properties(&column.definition, self.dialect)
+            if !column_properties(&column.definition, self.dialect.as_ref())
                 .data_type
                 .eq_ignore_ascii_case("INTEGER")
             {
@@ -477,14 +510,15 @@ impl TableDesigner {
                 cx.notify();
                 return;
             }
-            if !column_properties(&column.definition, self.dialect).primary_key {
+            if !column_properties(&column.definition, self.dialect.as_ref()).primary_key {
                 let primary = self.draft.constraints.iter().position(|s| {
-                    parse_entry(s, self.dialect).is_some_and(|e| e.kind == EntryKind::Primary)
+                    parse_entry(s, self.dialect.as_ref())
+                        .is_some_and(|e| e.kind == EntryKind::Primary)
                 });
                 let single = primary
-                    .and_then(|ix| parse_entry(&self.draft.constraints[ix], self.dialect))
+                    .and_then(|ix| parse_entry(&self.draft.constraints[ix], self.dialect.as_ref()))
                     .is_some_and(|e| {
-                        split_field_list(&e.fields, self.dialect).unwrap_or_default()
+                        split_field_list(&e.fields, self.dialect.as_ref()).unwrap_or_default()
                             == vec![self.dialect.quote_ident(&column.name)]
                             || e.fields.trim() == column.name
                     });
@@ -497,7 +531,7 @@ impl TableDesigner {
                     &column.definition,
                     ColumnProperty::PrimaryKey,
                     "true",
-                    self.dialect,
+                    self.dialect.as_ref(),
                 )
                 .unwrap();
                 self.draft
@@ -522,7 +556,7 @@ impl TableDesigner {
             &c.definition,
             property,
             if checked { "true" } else { "false" },
-            self.dialect,
+            self.dialect.as_ref(),
         ) {
             Ok(s) => c.definition = s,
             Err(e) => {
@@ -621,7 +655,12 @@ impl TableDesigner {
         if let Some(unique) = unique {
             e.unique = unique;
         }
-        match e.sql(self.dialect, &self.scope, &self.draft.name, standalone) {
+        match e.sql(
+            self.dialect.as_ref(),
+            &self.scope,
+            &self.draft.name,
+            standalone,
+        ) {
             Ok(sql) => {
                 if standalone {
                     self.draft.indexes[ix] = sql;
@@ -679,8 +718,13 @@ impl TableDesigner {
         } else {
             String::new()
         };
-        let standalone = kind == EntryKind::Index && self.dialect != Dialect::MySql;
-        if let Ok(sql) = e.sql(self.dialect, &self.scope, &self.draft.name, standalone) {
+        let standalone = kind == EntryKind::Index && self.dialect.features().standalone_indexes;
+        if let Ok(sql) = e.sql(
+            self.dialect.as_ref(),
+            &self.scope,
+            &self.draft.name,
+            standalone,
+        ) {
             if standalone {
                 self.draft.indexes.push(sql);
             } else {
@@ -733,7 +777,7 @@ impl TableDesigner {
         }
         if action.target >= 100 {
             let ix = action.target - 100;
-            let Some(key) = super::options::keys(self.dialect).get(ix) else {
+            let Some(key) = super::options::keys(self.dialect.as_ref()).get(ix) else {
                 return;
             };
             let Some(input) = self.table_option_inputs.get(key).cloned() else {
@@ -764,7 +808,7 @@ impl TableDesigner {
             let value = if ix == 1 || ix == REFERENCE_FIELDS {
                 let field = self.dialect.quote_ident(&action.value);
                 let old = input.read(cx).value().to_string();
-                let fields = split_field_list(&old, self.dialect).unwrap_or_default();
+                let fields = split_field_list(&old, self.dialect.as_ref()).unwrap_or_default();
                 if fields
                     .iter()
                     .any(|s| s.trim().trim_matches(['`', '"', '[', ']']) == action.value)

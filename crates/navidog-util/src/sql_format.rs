@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use navidog_sql::Dialect;
+use navidog_sql::Lex;
 use navidog_sql::span;
 
 /// One lexical token, enough to check that formatting kept the SQL the same.
@@ -20,18 +20,10 @@ pub enum Token {
 /// escapes; every other dialect - and Generic mode, when no connection is open - uses
 /// PostgreSQL's rules: no `#` comments, `E'…'` strings and protected dollar bodies, which is
 /// what the generic scan did before there was a shared lexer.
-fn lexer(mysql: bool) -> Dialect {
-    if mysql {
-        Dialect::MySql
-    } else {
-        Dialect::Postgres
-    }
-}
-
 /// Spans of `sql` that are strings, quoted identifiers, dollar bodies or comments:
 /// (range, is_comment).
-fn protected_spans(sql: &str, dialect: Dialect) -> Vec<(Range<usize>, bool)> {
-    span::spans(sql, dialect)
+fn protected_spans(sql: &str, lex: Lex) -> Vec<(Range<usize>, bool)> {
+    span::spans(sql, lex)
         .into_iter()
         .filter(|s| s.kind.is_protected() || s.kind.is_comment())
         .map(|s| (s.range, s.kind.is_comment()))
@@ -39,7 +31,7 @@ fn protected_spans(sql: &str, dialect: Dialect) -> Vec<(Range<usize>, bool)> {
 }
 
 /// Tokens of `sql` outside whitespace; word case is folded so keyword case does not count.
-pub fn tokens(sql: &str, hash_comments: bool) -> Vec<Token> {
+pub fn tokens(sql: &str, lex: Lex) -> Vec<Token> {
     let mut out = Vec::new();
     let mut last = 0;
     let push_plain = |text: &str, out: &mut Vec<Token>| {
@@ -60,7 +52,7 @@ pub fn tokens(sql: &str, hash_comments: bool) -> Vec<Token> {
             out.push(Token::Word(word));
         }
     };
-    for (range, comment) in protected_spans(sql, lexer(hash_comments)) {
+    for (range, comment) in protected_spans(sql, lex) {
         push_plain(&sql[last..range.start], &mut out);
         let text = &sql[range.clone()];
         out.push(if comment {
@@ -91,9 +83,10 @@ pub struct BeautifyOptions {
     pub uppercase: bool,
     /// Parentheses whose content fits this length stay on one line
     pub max_inline: usize,
+    /// PostgreSQL keyword set for `sqlformat`; every other product uses the generic one
     pub postgres: bool,
-    /// MySQL: `#` starts a comment and backslashes escape in strings
-    pub mysql: bool,
+    /// Lexical rules of the connection, or [`Lex::GENERIC`] when the editor is unbound
+    pub lex: Lex,
 }
 
 /// Beautify SQL with `sqlformat`. Strings, quoted identifiers and dollar bodies are swapped for
@@ -102,7 +95,7 @@ pub fn beautify(sql: &str, o: &BeautifyOptions) -> String {
     let mut protected = String::with_capacity(sql.len());
     let mut kept = Vec::new();
     let mut last = 0;
-    for (range, comment) in protected_spans(sql, lexer(o.mysql)) {
+    for (range, comment) in protected_spans(sql, o.lex) {
         if comment {
             continue;
         }
@@ -113,8 +106,8 @@ pub fn beautify(sql: &str, o: &BeautifyOptions) -> String {
     }
     protected.push_str(&sql[last..]);
     // sqlformat knows `--` and `/* */`; MySQL `#` comments become `--` and back
-    let hashes: Vec<Range<usize>> = if o.mysql {
-        protected_spans(&protected, Dialect::MySql)
+    let hashes: Vec<Range<usize>> = if o.lex.hash_comments {
+        protected_spans(&protected, o.lex)
             .into_iter()
             .filter(|(r, c)| *c && protected[r.clone()].starts_with('#'))
             .map(|(r, _)| r)
@@ -141,7 +134,7 @@ pub fn beautify(sql: &str, o: &BeautifyOptions) -> String {
         ..Default::default()
     };
     let mut out = sqlformat::format(&input, &sqlformat::QueryParams::None, &options);
-    if o.mysql {
+    if o.lex.hash_comments {
         out = out.replace("--#", "#");
     }
     for (i, original) in kept.iter().enumerate().rev() {
@@ -154,7 +147,7 @@ pub fn beautify(sql: &str, o: &BeautifyOptions) -> String {
 
 /// Simplify SQL: whitespace outside strings collapses to one space, each statement takes one
 /// line, and line comments become block comments so they cannot swallow the code after them.
-pub fn minify(sql: &str, mysql: bool) -> String {
+pub fn minify(sql: &str, lex: Lex) -> String {
     let mut out = String::with_capacity(sql.len());
     let mut last = 0;
     let mut pending_space = false;
@@ -174,7 +167,7 @@ pub fn minify(sql: &str, mysql: bool) -> String {
             }
         }
     };
-    for (range, comment) in protected_spans(sql, lexer(mysql)) {
+    for (range, comment) in protected_spans(sql, lex) {
         flush_plain(&sql[last..range.start], &mut out, &mut pending_space);
         let text = &sql[range.clone()];
         let piece = if comment && !text.starts_with("/*") {
@@ -245,8 +238,8 @@ pub fn line_range(text: &str, selection: Range<usize>) -> Range<usize> {
 }
 
 /// Matching `(` `)` pairs outside strings and comments, as (open, close) byte offsets.
-pub fn bracket_pairs(sql: &str, hash_comments: bool) -> Vec<(usize, usize)> {
-    let skip = protected_spans(sql, lexer(hash_comments));
+pub fn bracket_pairs(sql: &str, lex: Lex) -> Vec<(usize, usize)> {
+    let skip = protected_spans(sql, lex);
     let mut out = Vec::new();
     let mut stack = Vec::new();
     let mut spans = skip.iter().peekable();
@@ -285,13 +278,13 @@ pub fn bracket_at(pairs: &[(usize, usize)], caret: usize) -> Option<(usize, usiz
 mod tests {
     use super::*;
 
-    fn opts(postgres: bool, mysql: bool) -> BeautifyOptions {
+    fn opts(postgres: bool, lex: Lex) -> BeautifyOptions {
         BeautifyOptions {
             indent_spaces: Some(4),
             uppercase: true,
             max_inline: 50,
             postgres,
-            mysql,
+            lex,
         }
     }
 
@@ -316,12 +309,13 @@ mod tests {
             ),
         ];
         for (sql, pg, my) in cases {
-            let out = beautify(sql, &opts(pg, my));
-            assert_eq!(tokens(&out, my), tokens(sql, my), "{sql}\n=>\n{out}");
+            let lex = if my { Lex::MYSQL } else { Lex::POSTGRES };
+            let out = beautify(sql, &opts(pg, lex));
+            assert_eq!(tokens(&out, lex), tokens(sql, lex), "{sql}\n=>\n{out}");
             assert!(out.contains("SELECT"), "{out}");
         }
         // Short parentheses stay inline
-        let out = beautify("select f(a, b) from t", &opts(false, false));
+        let out = beautify("select f(a, b) from t", &opts(false, Lex::POSTGRES));
         assert!(out.contains("f(a, b)"), "{out}");
     }
 
@@ -329,12 +323,12 @@ mod tests {
     fn minify_collapses_whitespace_and_line_comments() {
         let sql = "SELECT  a,\n   'x   y'  -- note\nFROM t;\n\nSELECT 2 # hash\n";
         assert_eq!(
-            minify(sql, true),
+            minify(sql, Lex::MYSQL),
             "SELECT a, 'x   y' /* note */ FROM t;\nSELECT 2 /* hash */"
         );
         assert_eq!(
-            tokens(&minify(sql, true), true).len(),
-            tokens(sql, true).len()
+            tokens(&minify(sql, Lex::MYSQL), Lex::MYSQL).len(),
+            tokens(sql, Lex::MYSQL).len()
         );
     }
 
@@ -357,7 +351,7 @@ mod tests {
         assert_eq!(line_range(text, 1..4), 0..5);
         assert_eq!(line_range(text, 0..3), 0..2);
         let sql = "f(a, '(', g(b)) -- )\n";
-        let pairs = bracket_pairs(sql, false);
+        let pairs = bracket_pairs(sql, Lex::POSTGRES);
         assert_eq!(pairs, [(1, 14), (11, 13)]);
         assert_eq!(bracket_at(&pairs, 1), Some((1, 14)));
         assert_eq!(bracket_at(&pairs, 15), Some((1, 14)));

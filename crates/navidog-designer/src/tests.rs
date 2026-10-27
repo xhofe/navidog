@@ -18,8 +18,27 @@ fn isolate_home(name: &str) -> (std::sync::MutexGuard<'static, ()>, std::path::P
     (guard, home)
 }
 
+/// The designer reads the dialect from the saved connection. Tests that use a
+/// stand-in id have to store that connection; there is no SQLite fallback.
+fn remember(cx: &mut gpui_kit::App, id: &str, driver: &str) {
+    use navidog_app_state::store::ConnectionStore;
+    use navidog_model::connection::Connection;
+    ConnectionStore::global(cx).update(cx, |store, cx| {
+        let mut conn = Connection::new(driver);
+        conn.id = id.into();
+        store.upsert(conn, &[], cx).unwrap();
+    });
+}
+
 struct Host(Entity<TableDesigner>);
 impl Render for Host {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui_kit::div().size_full().child(self.0.clone())
+    }
+}
+
+struct DockHost(Entity<gpui_kit::component::dock::DockArea>);
+impl Render for DockHost {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         gpui_kit::div().size_full().child(self.0.clone())
     }
@@ -35,6 +54,7 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
         navidog_ui::tabs::init(cx);
         navidog_session::init(cx);
         crate::init(cx);
+        remember(cx, "test", "sqlite");
     });
     let (handle, panel) = cx.update(|cx| {
         let mut panel = None;
@@ -222,7 +242,12 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
         let PanelInfo::Panel(value) = panel.read(cx).dump(cx).info else {
             panic!("draft")
         };
-        let restored = TableDesigner::restore(serde_json::from_value(value).unwrap(), window, cx);
+        let restored = TableDesigner::restore(
+            serde_json::from_value(value).unwrap(),
+            std::sync::Arc::new(navidog_sqlite::SqliteDialect),
+            window,
+            cx,
+        );
         assert_eq!(restored.read(cx).draft.columns[1].name, "display_name");
         assert_eq!(
             restored.read(cx).definition.read(cx).value(),
@@ -283,7 +308,7 @@ fn saves_only_after_preview_and_keeps_failed_draft(cx: &mut TestAppContext) {
     let sql = |query: &str| {
         navidog_db::runtime::runtime().block_on(async {
             let mut s = navidog_db::connect(
-                Arc::new(navidog_db::sqlite::SqliteDriver::default()),
+                Arc::new(navidog_sqlite::SqliteDriver::default()),
                 ConnectParams {
                     file: Some(file.clone()),
                     create_new: true,
@@ -459,7 +484,7 @@ fn cascades_real_reference_metadata_and_preserves_drafts(cx: &mut TestAppContext
             .as_nanos()
     ));
     navidog_db::runtime::runtime().block_on(async {
-        let mut session = navidog_db::connect(Arc::new(navidog_db::sqlite::SqliteDriver::default()), ConnectParams { file: Some(file.clone()), create_new: true, ..Default::default() }).await.unwrap();
+        let mut session = navidog_db::connect(Arc::new(navidog_sqlite::SqliteDriver::default()), ConnectParams { file: Some(file.clone()), create_new: true, ..Default::default() }).await.unwrap();
         session.relational().unwrap().execute("CREATE TABLE parent (a INTEGER, b INTEGER, PRIMARY KEY(a,b)); CREATE TABLE other (other_id INTEGER PRIMARY KEY)").await.unwrap();
         session.close().await.unwrap();
     });
@@ -767,6 +792,7 @@ fn postgres_comments_edit_in_the_grid_preview_and_restore(cx: &mut TestAppContex
                     baseline: None,
                     property_height: None,
                 },
+                std::sync::Arc::new(navidog_postgres::PostgresDialect),
                 w,
                 cx,
             );
@@ -835,7 +861,12 @@ fn postgres_comments_edit_in_the_grid_preview_and_restore(cx: &mut TestAppContex
         let PanelInfo::Panel(value) = p.dump(cx).info else {
             panic!("saved draft")
         };
-        let restored = TableDesigner::restore(serde_json::from_value(value).unwrap(), w, cx);
+        let restored = TableDesigner::restore(
+            serde_json::from_value(value).unwrap(),
+            std::sync::Arc::new(navidog_postgres::PostgresDialect),
+            w,
+            cx,
+        );
         assert_eq!(
             restored.read(cx).draft.columns[0].comment,
             "字段 O'Brien \\ path"
@@ -874,6 +905,7 @@ fn reload_rebuilds_entry_forms_and_clears_validation(cx: &mut TestAppContext) {
         navidog_ui::tabs::init(cx);
         navidog_session::init(cx);
         crate::init(cx);
+        remember(cx, "test", "sqlite");
     });
     let (handle, panel) = cx.update(|cx| {
         let mut panel = None;
@@ -969,6 +1001,7 @@ fn reload_while_previewing_replaces_stale_sql(cx: &mut TestAppContext) {
         navidog_ui::tabs::init(cx);
         navidog_session::init(cx);
         crate::init(cx);
+        remember(cx, "test", "sqlite");
     });
     let (handle, panel) = cx.update(|cx| {
         let mut panel = None;
@@ -1012,4 +1045,116 @@ fn reload_while_previewing_replaces_stale_sql(cx: &mut TestAppContext) {
         })
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn missing_connection_confirms_before_discarding_a_dirty_draft(cx: &mut TestAppContext) {
+    use gpui_kit::component::dock::PanelId;
+    use gpui_kit::component::dock::{
+        BasePanel as _, DockLayout, DockPlacement, DockSkin, PanelInfo, PanelState, panel_handle,
+    };
+    use navidog_schema::table_design::{TableDesign, TableSnapshot};
+    use navidog_ui::tabs::{self, Close};
+
+    let (_guard, _) = isolate_home("missing-close");
+    cx.update(|cx| cx.set_reduce_motion(true));
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_app_state::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_ui::tabs::init(cx);
+        navidog_session::init(cx);
+        crate::init(cx);
+    });
+    let state_of = |draft: TableDesign, baseline: Option<TableSnapshot>| PanelState {
+        panel_name: "TableDesigner".into(),
+        children: Vec::new(),
+        info: PanelInfo::panel(
+            serde_json::to_value(super::Saved {
+                object: None,
+                scope: Scope::new("gone", "main", None),
+                draft,
+                baseline,
+                property_height: None,
+            })
+            .unwrap(),
+        ),
+    };
+    cx.update(|cx| {
+        let clean = super::MissingConnection::open(state_of(TableDesign::new(), None), cx);
+        assert!(clean.read(cx).closable(cx));
+        let mut same = TableDesign::new();
+        same.name = "people".into();
+        let baseline = serde_json::from_value::<TableSnapshot>(serde_json::json!({
+            "design": same.clone(),
+            "ddl": "",
+            "triggers": []
+        }))
+        .unwrap();
+        let unchanged =
+            super::MissingConnection::open(state_of(same.clone(), Some(baseline.clone())), cx);
+        assert!(unchanged.read(cx).closable(cx));
+        let mut edited = same;
+        edited.name = "changed".into();
+        let changed = super::MissingConnection::open(state_of(edited, Some(baseline)), cx);
+        assert!(!changed.read(cx).closable(cx));
+    });
+
+    let (handle, area, panel_id) = cx.update(|cx| {
+        let mut draft = TableDesign::new();
+        draft.name = "people".into();
+        let mut area = None;
+        let mut panel_id = None;
+        let window = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+            let panel = super::MissingConnection::open(state_of(draft, None), cx);
+            assert!(!panel.read(cx).closable(cx));
+            panel_id = Some(PanelId::from(panel.entity_id()));
+            // The dock will not close its last panel, so a clean tab stays behind.
+            let clean = super::MissingConnection::open(state_of(TableDesign::new(), None), cx);
+            let (dock, _) = DockSkin::dock_area("designer-dock", None, window, cx);
+            let layout = DockLayout::tabs()
+                .panel_view(panel_handle(panel), cx)
+                .panel_view(panel_handle(clean), cx);
+            dock.update(cx, |dock, cx| dock.set_center(layout, window, cx));
+            area = Some(dock.clone());
+            cx.new(|_| DockHost(dock))
+        })
+        .unwrap();
+        (window.0, area.unwrap(), panel_id.unwrap())
+    });
+    let close_this = move || tabs::CloseTabs {
+        panel: Some(panel_id),
+        which: Close::This,
+    };
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(!area.read(cx).is_empty(DockPlacement::Center, cx));
+        window.dispatch_action(Box::new(close_this()), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("designer-close-discard").is_some());
+        window.click("designer-close-cancel", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert!(area.read(cx).panel(panel_id).is_some()));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.dispatch_action(Box::new(close_this()), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("designer-close-discard", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(area.read(cx).panel(panel_id).is_none());
+        assert!(!area.read(cx).is_empty(DockPlacement::Center, cx));
+    });
 }

@@ -11,13 +11,14 @@ use gpui_kit::{
 };
 use navidog_app_state::store::ConnectionStore;
 use navidog_app_state::workspace::Workspace;
-use navidog_db::{ConnectParams, Secrets, connect, runtime, sqlite::SqliteDriver};
+use navidog_db::{ConnectParams, Secrets, connect, runtime};
 use navidog_model::connection::Connection;
 use navidog_model::crypto::Key;
 use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_navigator::DdlPanel;
 use navidog_navigator::catalog::{Catalog, Load, Requirement};
 use navidog_session::sessions::Sessions;
+use navidog_sqlite::SqliteDriver;
 
 struct Host {
     ddl: Entity<DdlPanel>,

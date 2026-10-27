@@ -1,5 +1,7 @@
 //! Editor lifecycle, connection sessions and the toolbar's picked context.
 
+use std::sync::Arc;
+
 use super::*;
 
 use gpui_kit::component::WindowExt as _;
@@ -7,8 +9,8 @@ use gpui_kit::{App, Context, Window};
 use navidog_app_state::actions::OpenConnectionId;
 use navidog_app_state::store::ConnectionStore;
 use navidog_app_state::workspace::Workspace;
-use navidog_db::dialect::Dialect;
 use navidog_session::sessions::{Sessions, SessionsEvent};
+use navidog_sql::dialect::Dialect;
 use navidog_ui::assets::lucide;
 use navidog_ui::tabs;
 use rust_i18n::t;
@@ -50,7 +52,7 @@ impl QueryEditor {
         self.run(RunKind::Explain, window, cx);
     }
 
-    pub(crate) fn dialect(&self, cx: &App) -> Option<Dialect> {
+    pub(crate) fn dialect(&self, cx: &App) -> Option<Arc<dyn Dialect>> {
         let id = self.target.connection.as_deref()?;
         Sessions::global(cx).read(cx).dialect(id).or_else(|| {
             let driver = ConnectionStore::global(cx).read(cx).get(id)?.driver.clone();
@@ -150,7 +152,7 @@ impl QueryEditor {
         else {
             return;
         };
-        if self.dialect(cx) != Some(Dialect::Postgres) {
+        if !self.dialect(cx).is_some_and(|d| d.features().has_schemas) {
             return;
         }
         let Some(job) = Sessions::global(cx)
@@ -164,7 +166,7 @@ impl QueryEditor {
             let _ = this.update(cx, |this, cx| {
                 let user: Vec<String> = list
                     .into_iter()
-                    .filter(|s| !Dialect::Postgres.is_system_schema(s))
+                    .filter(|s| !this.dialect(cx).is_some_and(|d| d.is_system_schema(s)))
                     .collect();
                 if this.target.schema.is_none() && user.iter().any(|s| s == "public") {
                     this.target.schema = Some("public".into());

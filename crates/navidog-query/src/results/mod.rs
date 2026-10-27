@@ -11,6 +11,7 @@ mod tests;
 
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui_kit::component::input::{EditorState, InputEvent, Textarea, TextareaState};
@@ -20,10 +21,10 @@ use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, IntoElement,
     ParentElement as _, Render, SharedString, Styled as _, Subscription, WeakEntity, Window, div,
 };
-use navidog_db::dialect::Dialect;
 use navidog_db::{Column, ResultSet};
 use navidog_grid::{GridColumn, ResultGrid};
 use navidog_model::object::Scope;
+use navidog_sql::dialect::Dialect;
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
 
@@ -34,7 +35,7 @@ use crate::explain::ExplainView;
 pub(crate) const MAX_RESULTS: usize = 20;
 
 /// When and where a result came from, shown on hover over a pinned tab and on explain tabs.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct RunInfo {
     pub at: chrono::DateTime<chrono::Local>,
     pub query_time: Duration,
@@ -46,7 +47,7 @@ pub(crate) struct RunInfo {
     pub search_path: Option<String>,
     pub context_id: Option<u64>,
     pub context_known: bool,
-    pub dialect: Option<Dialect>,
+    pub dialect: Option<Arc<dyn Dialect>>,
 }
 
 impl RunInfo {
@@ -54,13 +55,15 @@ impl RunInfo {
     /// PostgreSQL the schema of the database this editor runs in.
     pub fn scope_for(&self, origin_schema: &str) -> Option<Scope> {
         let conn = self.connection_id.clone();
-        Some(match self.dialect? {
-            Dialect::Postgres => Scope::new(
+        let dialect = self.dialect.as_ref()?;
+        Some(if dialect.features().has_schemas {
+            Scope::new(
                 conn,
                 self.database.clone()?,
                 Some(origin_schema.to_string()),
-            ),
-            Dialect::MySql | Dialect::Sqlite => Scope::new(conn, origin_schema, None),
+            )
+        } else {
+            Scope::new(conn, origin_schema, None)
         })
     }
 
@@ -196,7 +199,7 @@ impl Results {
 
 /// Where an editable result writes.
 struct Editing {
-    dialect: Dialect,
+    dialect: Arc<dyn Dialect>,
     scope: Scope,
     table: String,
     /// Result column name → table column name

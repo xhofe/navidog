@@ -9,8 +9,12 @@ description = "Open connection runtime state, metadata cache and code-completion
 
 [dependencies]
 navidog-model.workspace = true
+navidog-sql = { path = "../navidog-sql" }
 navidog-app-state.workspace = true
 navidog-db = { path = "../navidog-db" }
+navidog-mysql = { path = "../navidog-mysql" }
+navidog-postgres = { path = "../navidog-postgres" }
+navidog-sqlite = { path = "../navidog-sqlite" }
 gpui-kit.workspace = true
 tokio.workspace = true
 futures.workspace = true

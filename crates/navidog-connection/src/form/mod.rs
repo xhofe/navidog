@@ -28,6 +28,10 @@ use navidog_ui::skin::confirm_with;
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
 
+fn driver_flag(cx: &App, driver: &str, flag: impl FnOnce(&navidog_db::DriverInfo) -> bool) -> bool {
+    navidog_session::DriverRegistry::get(cx, driver).is_some_and(|driver| flag(driver.info()))
+}
+
 pub fn open_new(driver: SharedString, window: &mut Window, cx: &mut App) {
     let mut conn = Connection::new(&driver);
     if let Selection::Group(g) = Workspace::global(cx).read(cx).selection() {
@@ -395,7 +399,8 @@ impl ConnectionForm {
     }
 
     fn multi_node(&self, cx: &App) -> bool {
-        self.draft.driver == "postgres" && Self::selected(&self.node_type, cx) == 1
+        driver_flag(cx, &self.draft.driver, |info| info.multi_host)
+            && Self::selected(&self.node_type, cx) == 1
     }
 
     /// Carries the host between the host/port fields and the first member line on a node type switch.

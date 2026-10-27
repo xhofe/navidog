@@ -3,6 +3,8 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use std::sync::Arc;
+
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::component::native_menu::NativeMenu;
@@ -18,8 +20,8 @@ use gpui_kit::{
     TextAlign, WeakEntity, Window, actions, div, px,
 };
 use navidog_app_state::settings::{RowShade, Settings};
-use navidog_db::dialect::Dialect;
 use navidog_model::object::Scope;
+use navidog_sql::dialect::Dialect;
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::{confirm_with, truncated};
 use navidog_ui::{palette, tokens};
@@ -137,7 +139,7 @@ pub(crate) fn init(cx: &mut App) {
 /// The table behind the grid; "Copy As INSERT / UPDATE" is only available when it is set.
 #[derive(Clone)]
 pub struct GridTarget {
-    pub dialect: Dialect,
+    pub dialect: Arc<dyn Dialect>,
     pub scope: Scope,
     pub table: String,
 }
@@ -198,7 +200,7 @@ impl ResultGrid {
             show_type: true,
             show_comment: false,
             raw: false,
-            dialect: Dialect::Sqlite,
+            dialect: None,
             find: None,
             layout: ColumnLayout::default(),
             widths: BTreeMap::new(),
@@ -302,10 +304,7 @@ impl ResultGrid {
     }
 
     pub fn set_target(&mut self, target: Option<GridTarget>, cx: &mut Context<Self>) {
-        let dialect = target
-            .as_ref()
-            .map(|t| t.dialect)
-            .unwrap_or(Dialect::Sqlite);
+        let dialect = target.as_ref().map(|t| t.dialect.clone());
         self.target = target;
         let widths = self
             .target
@@ -907,15 +906,17 @@ fn grid_em(rem: Pixels, cx: &App) -> Pixels {
 }
 
 /// Text the cell paints, so the fit matches the grid rather than the stored value.
-fn cell_text(
+/// Painted text: NULL and an unfilled cell have their own text, and a bound dialect may quote a
+/// string in raw data mode.
+pub(super) fn cell_text(
     model: &GridModel,
     r: usize,
     c: usize,
     raw: bool,
-    dialect: Dialect,
+    dialect: Option<&dyn Dialect>,
 ) -> gpui_kit::SharedString {
     match model.value(r, c) {
-        Some(Some(_)) => model.shown_text(r, c, raw, dialect),
+        Some(Some(_)) => model.display_text(r, c, raw, dialect),
         Some(None) => "(NULL)".into(),
         None => gpui_kit::SharedString::default(),
     }
@@ -926,7 +927,7 @@ fn refit_auto(d: &mut GridDelegate, cx: &App) {
     let em = grid_em(d.rem, cx).as_f32();
     let rows = d.model.row_count().min(FIT_ROWS);
     let raw = d.raw;
-    let dialect = d.dialect;
+    let dialect = d.dialect.clone();
     let columns: Vec<(usize, SharedString)> = d
         .model
         .columns
@@ -940,7 +941,7 @@ fn refit_auto(d: &mut GridDelegate, cx: &App) {
             continue;
         }
         let texts: Vec<gpui_kit::SharedString> = (0..rows)
-            .map(|r| cell_text(&d.model, r, c, raw, dialect))
+            .map(|r| cell_text(&d.model, r, c, raw, dialect.as_deref()))
             .collect();
         auto.insert(
             name.clone(),

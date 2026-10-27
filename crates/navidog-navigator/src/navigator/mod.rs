@@ -2,6 +2,7 @@
 //! group > connection > database > (schema) > object category > object.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use gpui_kit::base::{Tree, TreeEntry, TreeEvent, TreeItem, TreeState};
 use gpui_kit::component::button::ButtonVariants as _;
@@ -27,10 +28,10 @@ use navidog_app_state::settings::Settings;
 use navidog_app_state::store::ConnectionStore;
 use navidog_app_state::vgroups::VirtualGroups;
 use navidog_app_state::workspace::{Selection, Workspace, WorkspaceEvent};
-use navidog_db::dialect::Dialect;
 use navidog_model::connection::Connection;
 use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_session::sessions::{ConnState, Sessions, SessionsEvent};
+use navidog_sql::dialect::Dialect;
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
 use navidog_ui::{palette, tabs, tokens};
@@ -254,13 +255,13 @@ impl Node {
     }
 
     /// Ancestors from the root down to this node (exclusive), expanded to reveal a selection.
-    fn ancestors(&self, dialect: Option<Dialect>) -> Vec<Node> {
+    fn ancestors(&self, dialect: Option<Arc<dyn Dialect>>) -> Vec<Node> {
         let scope_chain = |s: &Scope| {
             let mut v = vec![
                 Node::Connection(s.connection.clone()),
                 Node::Database(s.connection.clone(), s.database.clone()),
             ];
-            if s.schema.is_some() && dialect.is_some_and(|d| d.has_schemas()) {
+            if s.schema.is_some() && dialect.is_some_and(|d| d.features().has_schemas) {
                 v.push(Node::Schema(s.clone()));
             }
             v
@@ -568,7 +569,7 @@ impl NavigatorPanel {
                 if Sessions::global(cx)
                     .read(cx)
                     .dialect(c)
-                    .is_some_and(|d| d.has_schemas())
+                    .is_some_and(|d| d.features().has_schemas)
                 {
                     requirements.push(Requirement::Schemas {
                         connection: c.clone(),
@@ -1072,7 +1073,7 @@ mod tests {
             name: "t".into(),
         });
         let ids: Vec<_> = obj
-            .ancestors(Some(Dialect::MySql))
+            .ancestors(Some(Arc::new(navidog_mysql::MysqlDialect)))
             .iter()
             .map(|n| n.id().to_string())
             .collect();
@@ -1081,7 +1082,11 @@ mod tests {
             Scope::new("c", "db", Some("public".into())),
             ObjectKind::Table,
         );
-        assert_eq!(pg.ancestors(Some(Dialect::Postgres)).len(), 3);
+        assert_eq!(
+            pg.ancestors(Some(Arc::new(navidog_postgres::PostgresDialect)))
+                .len(),
+            3
+        );
     }
 
     #[test]

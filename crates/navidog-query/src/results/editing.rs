@@ -11,9 +11,9 @@ use gpui_kit::{Context, Entity, Window};
 use navidog_app_state::settings::Settings;
 use navidog_db::Column;
 use navidog_db::commit::{Commit, apply};
-use navidog_db::dialect::{ChangeSet, Dialect, RowKey, Values, Writes};
 use navidog_grid::{GridEvent, GridTarget, ResultGrid};
 use navidog_session::sessions::{Sessions, prepare_database, run_on};
+use navidog_sql::dialect::{ChangeSet, RowKey, Values, Writes};
 use navidog_ui::assets::lucide;
 use navidog_util::sql_text;
 use rust_i18n::t;
@@ -124,7 +124,7 @@ impl ResultView {
     /// Looks up the primary key of the result's table; with all of it in the result, the result
     /// becomes editable.
     pub(crate) fn find_table(&mut self, cx: &mut Context<Self>) {
-        let Some(dialect) = self.session.info.dialect else {
+        let Some(dialect) = self.session.info.dialect.clone() else {
             return;
         };
         let Some((schema, table)) = single_table(&self.session.sql, &self.session.columns) else {
@@ -165,7 +165,7 @@ impl ResultView {
                     return;
                 }
                 this.session.edit = Some(Editing {
-                    dialect,
+                    dialect: dialect.clone(),
                     scope: scope.clone(),
                     table: table.clone(),
                     names,
@@ -254,19 +254,19 @@ impl ResultView {
             return;
         }
         self.session.status = statements.join(";\n").into();
-        let commit = Commit::new(edit.dialect, statements);
+        let commit = Commit::new(edit.dialect.clone(), statements);
         let generation = Sessions::global(cx)
             .read(cx)
             .generation(&self.session.info.connection_id);
         let database = edit.scope.database.clone();
-        let dialect = edit.dialect;
+        let dialect = edit.dialect.clone();
         // A fresh operation session cannot inherit a metadata caller's transaction or locks.
         let Some(job) = Sessions::global(cx).read(cx).run_operation_rel(
             &edit.scope.connection,
             Some(&edit.scope.database),
             move |rel| {
                 Box::pin(async move {
-                    prepare_database(rel, dialect, &database).await?;
+                    prepare_database(rel, dialect.as_ref(), &database).await?;
                     apply(rel, commit, false, false).await
                 })
             },
@@ -378,29 +378,14 @@ impl ResultView {
                 };
                 let result = run_on(session.clone(), move |rel| {
                     Box::pin(async move {
-                        if owned {
-                            match info.dialect {
-                                Some(Dialect::MySql) => {
-                                    if let Some(database) = info.database {
-                                        rel.execute(&format!(
-                                            "USE {}",
-                                            Dialect::MySql.quote_ident(&database)
-                                        ))
-                                        .await?;
-                                    }
-                                }
-                                Some(Dialect::Postgres) => {
-                                    if let Some(path) = info.search_path {
-                                        rel.execute(&format!(
-                                            "SELECT pg_catalog.set_config('search_path', {}, false)",
-                                            Dialect::Postgres.string_literal(&path)
-                                        ))
-                                        .await?;
-                                    } else if let Some(schema) = info.schema {
-                                        rel.execute(&crate::run::search_path(&schema)).await?;
-                                    }
-                                }
-                                _ => {}
+                        if owned && let Some(dialect) = info.dialect.as_ref() {
+                            for statement in crate::run::owned_context_sql(
+                                dialect.as_ref(),
+                                info.database.as_deref(),
+                                info.search_path.as_deref(),
+                                info.schema.as_deref(),
+                            ) {
+                                rel.execute(&statement).await?;
                             }
                         }
                         rel.execute_statement(&sql).await
@@ -430,20 +415,26 @@ impl ResultView {
                             this.session.columns = set.columns;
                             // Preserve a valid accepted sort across synchronization. Otherwise
                             // the SQL's original order would disagree with the cached arrow.
-                            this.session.accepted_sort = this.session.accepted_sort.take().filter(|(name, _)| {
-                                columns.iter().any(|column| column.name == *name)
-                            });
+                            this.session.accepted_sort =
+                                this.session.accepted_sort.take().filter(|(name, _)| {
+                                    columns.iter().any(|column| column.name == *name)
+                                });
                             this.grid.update(cx, |g, cx| {
                                 let mut drafts = None;
-                                g.update_model(cx, |model| drafts = Some(model.take_blank_insert_drafts()));
+                                g.update_model(cx, |model| {
+                                    drafts = Some(model.take_blank_insert_drafts())
+                                });
                                 g.set_data(columns, rows, cx);
                                 if let Some((name, asc)) = &this.session.accepted_sort
-                                    && let Some(col) = g.model(cx).columns.iter().position(|c| c.name == *name)
+                                    && let Some(col) =
+                                        g.model(cx).columns.iter().position(|c| c.name == *name)
                                 {
                                     g.update_model(cx, |model| model.sort_rows(col, *asc));
                                 }
                                 if let Some(drafts) = drafts {
-                                    g.update_model(cx, |model| model.restore_blank_insert_drafts(drafts));
+                                    g.update_model(cx, |model| {
+                                        model.restore_blank_insert_drafts(drafts)
+                                    });
                                 }
                                 g.set_sort(this.session.accepted_sort.clone(), cx);
                             });
@@ -516,7 +507,7 @@ pub(super) fn rename_changes(changes: ChangeSet, names: &BTreeMap<String, String
         updates: changes
             .updates
             .into_iter()
-            .map(|u| navidog_db::dialect::RowUpdate {
+            .map(|u| navidog_sql::dialect::RowUpdate {
                 key: RowKey(values(u.key.0)),
                 values: writes(u.values),
             })

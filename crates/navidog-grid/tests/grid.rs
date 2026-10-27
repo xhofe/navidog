@@ -12,9 +12,9 @@ use gpui_kit::{
     MouseUpEvent, ParentElement as _, Render, Styled as _, TestAppContext, Window, WindowBounds,
     WindowOptions, div, size,
 };
-use navidog_db::dialect::Written;
 use navidog_grid::model::GridColumn;
 use navidog_grid::{GridEvent, ResultGrid};
+use navidog_sql::dialect::Written;
 use navidog_ui::tokens;
 
 fn fit(rem: gpui_kit::Pixels, header: &str, values: &[&str]) -> gpui_kit::Pixels {

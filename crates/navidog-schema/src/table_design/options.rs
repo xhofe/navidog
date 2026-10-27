@@ -1,40 +1,7 @@
 //! Lossless edits of known table options; unknown clauses remain in the SQL tail.
 use super::*;
+use navidog_sql::TableOptionStyle;
 use std::collections::BTreeMap;
-
-pub const MYSQL_OPTIONS: &[&str] = &[
-    "engine",
-    "charset",
-    "collation",
-    "auto_increment",
-    "row_format",
-    "avg_row_length",
-    "max_rows",
-    "min_rows",
-    "key_block_size",
-    "stats_auto_recalc",
-    "stats_persistent",
-    "stats_sample_pages",
-    "checksum",
-    "delay_key_write",
-    "pack_keys",
-    "insert_method",
-    "connection",
-    "data_directory",
-    "index_directory",
-    "tablespace",
-    "compression",
-    "encryption",
-    "table_comment",
-];
-pub const POSTGRES_OPTIONS: &[&str] = &[
-    "owner",
-    "tablespace",
-    "inherits",
-    "fillfactor",
-    "autovacuum_enabled",
-    "table_comment",
-];
 
 #[derive(Clone, Debug)]
 struct Token {
@@ -44,62 +11,15 @@ struct Token {
 /// Tokens of a table-option string: top-level whitespace separates them, `=` and `,` are tokens
 /// of their own, and strings, quoted identifiers and dollar bodies stay inside the token they
 /// belong to. The shared scanner decides where those end for this dialect.
-fn tokens(s: &str, d: Dialect) -> DbResult<Vec<Token>> {
+fn tokens(s: &str, d: &dyn Dialect) -> DbResult<Vec<Token>> {
     parse::fragment(s, d)?;
-    let mut protected = navidog_sql::span::spans(s, d)
+    Ok(navidog_sql::span::segments(s, d.lex(), &['=', ','])
         .into_iter()
-        .filter(|span| span.kind.is_protected())
-        .map(|span| span.range)
-        .peekable();
-    let mut out = Vec::new();
-    let mut depth = 0u32;
-    let mut start: Option<usize> = None;
-    let mut i = 0;
-    while i < s.len() {
-        if let Some(range) = protected.peek()
-            && range.start == i
-        {
-            start.get_or_insert(i);
-            i = range.end;
-            protected.next();
-            continue;
-        }
-        let c = s[i..].chars().next().unwrap_or('\0');
-        if c.is_whitespace() && depth == 0 {
-            if let Some(from) = start.take() {
-                out.push(Token {
-                    start: from,
-                    end: i,
-                });
-            }
-        } else if depth == 0 && (c == '=' || c == ',') {
-            if let Some(from) = start.take() {
-                out.push(Token {
-                    start: from,
-                    end: i,
-                });
-            }
-            out.push(Token {
-                start: i,
-                end: i + 1,
-            });
-        } else {
-            start.get_or_insert(i);
-        }
-        match c {
-            '(' => depth += 1,
-            ')' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-        i += c.len_utf8();
-    }
-    if let Some(from) = start {
-        out.push(Token {
-            start: from,
-            end: s.len(),
-        });
-    }
-    Ok(out)
+        .map(|range| Token {
+            start: range.start,
+            end: range.end,
+        })
+        .collect())
 }
 
 fn text<'a>(s: &'a str, t: &Token) -> &'a str {
@@ -107,7 +27,7 @@ fn text<'a>(s: &'a str, t: &Token) -> &'a str {
 }
 /// A token's value with its quotes removed. A backslash is an escape only where MySQL makes it
 /// one; PostgreSQL and SQLite keep it literal.
-fn decoded(s: &str, d: Dialect) -> String {
+fn decoded(s: &str, d: &dyn Dialect) -> String {
     if s.len() < 2 || !s.starts_with(['\'', '"', '`']) {
         return s.into();
     }
@@ -116,7 +36,7 @@ fn decoded(s: &str, d: Dialect) -> String {
         return s.into();
     }
     let body = s[1..s.len() - 1].replace(&format!("{quote}{quote}"), &quote.to_string());
-    if d == Dialect::MySql {
+    if d.lex().backslash_strings {
         body.replace("\\'", "'").replace("\\\\", "\\")
     } else {
         body
@@ -138,13 +58,14 @@ fn aliases(key: &str) -> Vec<&str> {
         _ => vec![key],
     }
 }
-fn mysql_span(s: &str, key: &str) -> DbResult<Option<(usize, usize, String)>> {
-    let ts = tokens(s, Dialect::MySql)?;
+fn mysql_span(s: &str, key: &str, d: &dyn Dialect) -> DbResult<Option<(usize, usize, String)>> {
+    let ts = tokens(s, d)?;
     let mut found = None;
     let mut i = 0;
     while i < ts.len() {
         let mut matched = None;
-        for name in MYSQL_OPTIONS
+        for name in d
+            .table_option_keys()
             .iter()
             .copied()
             .chain(std::iter::once("union"))
@@ -166,7 +87,7 @@ fn mysql_span(s: &str, key: &str) -> DbResult<Option<(usize, usize, String)>> {
                         name,
                         ts[i].start,
                         value.end,
-                        decoded(text(s, value), Dialect::MySql),
+                        decoded(text(s, value), d),
                         v + 1,
                     ));
                     break;
@@ -192,8 +113,8 @@ fn mysql_span(s: &str, key: &str) -> DbResult<Option<(usize, usize, String)>> {
     }
     Ok(found)
 }
-fn pg_clause(s: &str, key: &str) -> DbResult<Option<(usize, usize, String)>> {
-    let ts = tokens(s, Dialect::Postgres)?;
+fn pg_clause(s: &str, key: &str, d: &dyn Dialect) -> DbResult<Option<(usize, usize, String)>> {
+    let ts = tokens(s, d)?;
     let mut found = None;
     for (i, t) in ts.iter().enumerate() {
         if text(s, t).eq_ignore_ascii_case(key) {
@@ -208,8 +129,8 @@ fn pg_clause(s: &str, key: &str) -> DbResult<Option<(usize, usize, String)>> {
     }
     Ok(found)
 }
-pub(super) fn pg_storage(s: &str) -> DbResult<BTreeMap<String, String>> {
-    let Some((_, _, group)) = pg_clause(s, "WITH")? else {
+pub(super) fn pg_storage(s: &str, d: &dyn Dialect) -> DbResult<BTreeMap<String, String>> {
+    let Some((_, _, group)) = pg_clause(s, "WITH", d)? else {
         return Ok(BTreeMap::new());
     };
     let body = group
@@ -217,7 +138,7 @@ pub(super) fn pg_storage(s: &str) -> DbResult<BTreeMap<String, String>> {
         .and_then(|v| v.strip_suffix(')'))
         .ok_or_else(|| DbError::msg("Invalid PostgreSQL storage parameters."))?;
     let mut values = BTreeMap::new();
-    for field in split_field_list(body, Dialect::Postgres)? {
+    for field in split_field_list(body, d)? {
         let (k, v) = field
             .split_once('=')
             .ok_or_else(|| DbError::msg("Invalid PostgreSQL storage parameter."))?;
@@ -235,17 +156,17 @@ pub(super) fn pg_storage(s: &str) -> DbResult<BTreeMap<String, String>> {
     }
     Ok(values)
 }
-pub fn table_option(s: &str, key: &str, d: Dialect) -> DbResult<String> {
-    match d {
-        Dialect::MySql => Ok(mysql_span(s, key)?.map(|v| v.2).unwrap_or_default()),
-        Dialect::Postgres => match key {
+pub fn table_option(s: &str, key: &str, d: &dyn Dialect) -> DbResult<String> {
+    match d.table_option_style() {
+        TableOptionStyle::Clauses => Ok(mysql_span(s, key, d)?.map(|v| v.2).unwrap_or_default()),
+        TableOptionStyle::StorageParameters => match key {
             "fillfactor" | "autovacuum_enabled" => {
-                Ok(pg_storage(s)?.remove(key).unwrap_or_default())
+                Ok(pg_storage(s, d)?.remove(key).unwrap_or_default())
             }
-            "tablespace" => Ok(pg_clause(s, "TABLESPACE")?
-                .map(|v| decoded(&v.2, Dialect::Postgres))
+            "tablespace" => Ok(pg_clause(s, "TABLESPACE", d)?
+                .map(|v| decoded(&v.2, d))
                 .unwrap_or_default()),
-            "inherits" => Ok(pg_clause(s, "INHERITS")?
+            "inherits" => Ok(pg_clause(s, "INHERITS", d)?
                 .map(|v| {
                     v.2.trim_start_matches('(')
                         .trim_end_matches(')')
@@ -254,7 +175,7 @@ pub fn table_option(s: &str, key: &str, d: Dialect) -> DbResult<String> {
                 .unwrap_or_default()),
             _ => Err(DbError::msg("Unsupported PostgreSQL option.")),
         },
-        Dialect::Sqlite => {
+        TableOptionStyle::TableFlags => {
             let ts = tokens(s, d)?;
             let normalized = ts
                 .iter()
@@ -302,13 +223,13 @@ fn number(value: &str, min: u64, max: u64) -> DbResult<()> {
     }
     Ok(())
 }
-pub fn edit_table_option(s: &str, key: &str, value: &str, d: Dialect) -> DbResult<String> {
-    match d {
-        Dialect::MySql => {
-            if !MYSQL_OPTIONS.contains(&key) {
+pub fn edit_table_option(s: &str, key: &str, value: &str, d: &dyn Dialect) -> DbResult<String> {
+    match d.table_option_style() {
+        TableOptionStyle::Clauses => {
+            if !d.table_option_keys().contains(&key) {
                 return Err(DbError::msg("Unsupported MySQL table option."));
             }
-            let old = mysql_span(s, key)?;
+            let old = mysql_span(s, key, d)?;
             let literal = matches!(
                 key,
                 "connection"
@@ -359,14 +280,14 @@ pub fn edit_table_option(s: &str, key: &str, value: &str, d: Dialect) -> DbResul
             };
             Ok(replace(s, old, &replacement))
         }
-        Dialect::Postgres => match key {
+        TableOptionStyle::StorageParameters => match key {
             "fillfactor" | "autovacuum_enabled" => {
                 if key == "fillfactor" {
                     number(value, 10, 100)?;
                 } else if !["", "true", "false"].contains(&value) {
                     return Err(DbError::msg("Autovacuum must be true, false, or empty."));
                 }
-                let mut storage = pg_storage(s)?;
+                let mut storage = pg_storage(s, d)?;
                 if value.is_empty() {
                     storage.remove(key);
                 } else {
@@ -384,10 +305,10 @@ pub fn edit_table_option(s: &str, key: &str, value: &str, d: Dialect) -> DbResul
                             .join(", ")
                     )
                 };
-                let old = pg_clause(s, "WITH")?;
+                let old = pg_clause(s, "WITH", d)?;
                 // Storage parameters follow INHERITS and precede TABLESPACE.
                 if old.is_none() {
-                    let at = pg_clause(s, "INHERITS")?.map(|v| v.1).unwrap_or(0);
+                    let at = pg_clause(s, "INHERITS", d)?.map(|v| v.1).unwrap_or(0);
                     Ok(format!(
                         "{} {replacement} {}",
                         s[..at].trim_end(),
@@ -401,7 +322,7 @@ pub fn edit_table_option(s: &str, key: &str, value: &str, d: Dialect) -> DbResul
             }
             "tablespace" => Ok(replace(
                 s,
-                pg_clause(s, "TABLESPACE")?,
+                pg_clause(s, "TABLESPACE", d)?,
                 &if value.is_empty() {
                     String::new()
                 } else {
@@ -409,8 +330,8 @@ pub fn edit_table_option(s: &str, key: &str, value: &str, d: Dialect) -> DbResul
                 },
             )),
             "inherits" => {
-                let names = pg_parents(value)?;
-                let old = pg_clause(s, "INHERITS")?;
+                let names = pg_parents(value, d)?;
+                let old = pg_clause(s, "INHERITS", d)?;
                 let replacement = if names.is_empty() {
                     String::new()
                 } else {
@@ -424,7 +345,7 @@ pub fn edit_table_option(s: &str, key: &str, value: &str, d: Dialect) -> DbResul
             }
             _ => Err(DbError::msg("Unsupported PostgreSQL option.")),
         },
-        Dialect::Sqlite => {
+        TableOptionStyle::TableFlags => {
             let mut strict = table_option(s, "strict", d)? == "true";
             let mut without = table_option(s, "without_rowid", d)? == "true";
             let enabled = match value {
@@ -448,12 +369,11 @@ pub fn edit_table_option(s: &str, key: &str, value: &str, d: Dialect) -> DbResul
         }
     }
 }
-pub(super) fn pg_parents(s: &str) -> DbResult<Vec<String>> {
-    split_field_list(s, Dialect::Postgres)?
+pub(super) fn pg_parents(s: &str, d: &dyn Dialect) -> DbResult<Vec<String>> {
+    split_field_list(s, d)?
         .into_iter()
         .map(|v| {
             let (head, rest) = parse::ident(&v)?;
-            let d = Dialect::Postgres;
             if let Some(rest) = rest.strip_prefix('.') {
                 let (name, tail) = parse::ident(rest)?;
                 if !tail.is_empty() {
@@ -482,7 +402,7 @@ pub(super) fn pg_parents(s: &str) -> DbResult<Vec<String>> {
 }
 
 pub(super) fn option_alters(
-    d: Dialect,
+    d: &dyn Dialect,
     table: &str,
     old: &str,
     new: &str,
@@ -490,27 +410,27 @@ pub(super) fn option_alters(
     if old == new {
         return Ok(Vec::new());
     }
-    if d == Dialect::MySql {
+    if d.features().inline_table_options {
         let charset_changed = table_option(old, "charset", d)? != table_option(new, "charset", d)?;
         let mut changes = Vec::new();
         let mut old_tail = old.to_string();
         let mut new_tail = new.to_string();
-        for key in MYSQL_OPTIONS {
-            let before = mysql_span(old, key)?;
-            let after = mysql_span(new, key)?;
+        for key in d.table_option_keys() {
+            let before = mysql_span(old, key, d)?;
+            let after = mysql_span(new, key, d)?;
             if before.is_some() && after.is_none() {
                 return Err(DbError::msg(
                     "Removing an explicit MySQL option does not reset the server value. Enter its replacement value.",
                 ));
             }
             if (before.as_ref().map(|v| &v.2) != after.as_ref().map(|v| &v.2)
-                || (*key == "collation" && charset_changed))
+                || (key == &"collation" && charset_changed))
                 && let Some((a, b, _)) = &after
             {
                 changes.push(new[*a..*b].to_string());
             }
-            old_tail = replace(&old_tail, mysql_span(&old_tail, key)?, "");
-            new_tail = replace(&new_tail, mysql_span(&new_tail, key)?, "");
+            old_tail = replace(&old_tail, mysql_span(&old_tail, key, d)?, "");
+            new_tail = replace(&new_tail, mysql_span(&new_tail, key, d)?, "");
         }
         let normalize = |s: &str| -> DbResult<Vec<String>> {
             Ok(tokens(s, d)?
@@ -533,8 +453,8 @@ pub(super) fn option_alters(
     let mut old_tail = old.to_string();
     let mut new_tail = new.to_string();
     for key in ["WITH", "TABLESPACE", "INHERITS"] {
-        old_tail = replace(&old_tail, pg_clause(&old_tail, key)?, "");
-        new_tail = replace(&new_tail, pg_clause(&new_tail, key)?, "");
+        old_tail = replace(&old_tail, pg_clause(&old_tail, key, d)?, "");
+        new_tail = replace(&new_tail, pg_clause(&new_tail, key, d)?, "");
     }
     if old_tail.trim() != new_tail.trim() {
         return Err(DbError::msg(
@@ -542,8 +462,8 @@ pub(super) fn option_alters(
         ));
     }
     let mut out = Vec::new();
-    let old_store = pg_storage(old)?;
-    let new_store = pg_storage(new)?;
+    let old_store = pg_storage(old, d)?;
+    let new_store = pg_storage(new, d)?;
     for (key, value) in &new_store {
         if old_store.get(key) != Some(value) {
             out.push(format!("ALTER TABLE {table} SET ({key}={value})"));
@@ -564,8 +484,8 @@ pub(super) fn option_alters(
             })
         ));
     }
-    let old_parents = pg_parents(&table_option(old, "inherits", d)?)?;
-    let new_parents = pg_parents(&table_option(new, "inherits", d)?)?;
+    let old_parents = pg_parents(&table_option(old, "inherits", d)?, d)?;
+    let new_parents = pg_parents(&table_option(new, "inherits", d)?, d)?;
     let achievable = old_parents
         .iter()
         .filter(|p| new_parents.contains(p))
@@ -594,7 +514,12 @@ mod tests {
         // A backslash is literal inside a PostgreSQL identifier; MySQL rules would read `\"` as
         // an escaped quote and report an unterminated string.
         assert_eq!(
-            table_option(r#"TABLESPACE "dir\""#, "tablespace", Dialect::Postgres).unwrap(),
+            table_option(
+                r#"TABLESPACE "dir\""#,
+                "tablespace",
+                &navidog_postgres::PostgresDialect
+            )
+            .unwrap(),
             r"dir\"
         );
     }
@@ -603,20 +528,25 @@ mod tests {
     fn sqlite_options_are_scanned_with_sqlite_rules() {
         // `#` starts a comment in MySQL but is an operator in SQLite: the list is unknown, so
         // the option form has to refuse it instead of quietly reading only "STRICT".
-        assert!(table_option("STRICT # note", "strict", Dialect::Sqlite).is_err());
+        assert!(table_option("STRICT # note", "strict", &navidog_sqlite::SqliteDialect).is_err());
         assert_eq!(
-            table_option("STRICT", "strict", Dialect::Sqlite).unwrap(),
+            table_option("STRICT", "strict", &navidog_sqlite::SqliteDialect).unwrap(),
             "true"
         );
         assert_eq!(
-            table_option("WITHOUT ROWID", "without_rowid", Dialect::Sqlite).unwrap(),
+            table_option(
+                "WITHOUT ROWID",
+                "without_rowid",
+                &navidog_sqlite::SqliteDialect
+            )
+            .unwrap(),
             "true"
         );
     }
 
     #[test]
     fn mysql_edits_preserve_unknown_options_and_do_not_replay_unchanged_values() {
-        let d = Dialect::MySql;
+        let d = &navidog_mysql::MysqlDialect;
         let old = "ENGINE=InnoDB AUTO_INCREMENT=101 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='ENGINE=bad; a,b' UNION=(a,b)";
         assert_eq!(
             table_option(old, "table_comment", d).unwrap(),
@@ -647,7 +577,7 @@ mod tests {
     }
     #[test]
     fn postgres_preserves_storage_and_plans_explicit_resets_and_inheritance() {
-        let d = Dialect::Postgres;
+        let d = &navidog_postgres::PostgresDialect;
         let old = "INHERITS (\"public\".\"parent\") WITH (fillfactor=70, toast.autovacuum_enabled=false) TABLESPACE \"custom\"";
         let new = edit_table_option(old, "fillfactor", "90", d).unwrap();
         assert!(new.contains("toast.autovacuum_enabled=false"));
@@ -669,13 +599,19 @@ mod tests {
         )
         .unwrap();
         assert!(new.starts_with("INHERITS (public.parent) WITH (fillfactor=80) TABLESPACE"));
-        assert!(pg_parents("public.parent, \"schema.with.dot\".\"table space\"").is_ok());
-        assert!(pg_parents("parent; DROP TABLE t").is_err());
+        assert!(
+            pg_parents(
+                "public.parent, \"schema.with.dot\".\"table space\"",
+                &navidog_postgres::PostgresDialect
+            )
+            .is_ok()
+        );
+        assert!(pg_parents("parent; DROP TABLE t", &navidog_postgres::PostgresDialect).is_err());
         assert!(option_alters(d, "t", "INHERITS (a,b)", "INHERITS (b,a)").is_err());
     }
     #[test]
     fn sqlite_flags_round_trip_without_guessing_unknown_clauses() {
-        let d = Dialect::Sqlite;
+        let d = &navidog_sqlite::SqliteDialect;
         let sql = edit_table_option("", "strict", "true", d).unwrap();
         let sql = edit_table_option(&sql, "without_rowid", "true", d).unwrap();
         assert_eq!(sql, "WITHOUT ROWID, STRICT");

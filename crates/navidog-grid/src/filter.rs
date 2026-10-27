@@ -4,7 +4,7 @@
 //! ponytail: one pair of parentheses around the whole condition, not a nested tree. A condition the
 //! parser does not recognize stays in text mode (`parse_where` returns `None`).
 
-use navidog_db::dialect::Dialect;
+use navidog_sql::dialect::Dialect;
 use navidog_sql::span;
 use navidog_util::starts_with_ignore_ascii_case;
 use rust_i18n::t;
@@ -108,7 +108,7 @@ impl Op {
         matches!(self, Self::Between | Self::NotBetween)
     }
 
-    pub fn choices(dialect: Dialect) -> Vec<Self> {
+    pub fn choices(dialect: &dyn Dialect) -> Vec<Self> {
         let mut ops = vec![
             Self::Eq,
             Self::Ne,
@@ -119,7 +119,7 @@ impl Op {
             Self::Contains,
             Self::NotContains,
         ];
-        if dialect == Dialect::Postgres {
+        if dialect.features().case_insensitive_like {
             ops.push(Self::ContainsI);
             ops.push(Self::NotContainsI);
         }
@@ -195,7 +195,7 @@ pub struct Sort {
     pub asc: bool,
 }
 
-pub fn where_sql(filter: &Filter, dialect: Dialect) -> String {
+pub fn where_sql(filter: &Filter, dialect: &dyn Dialect) -> String {
     let mut body = String::new();
     for rule in &filter.rules {
         let Some(pred) = predicate(rule, dialect) else {
@@ -218,7 +218,7 @@ pub fn where_sql(filter: &Filter, dialect: Dialect) -> String {
     }
 }
 
-pub fn parse_where(sql: &str, dialect: Dialect) -> Option<Filter> {
+pub fn parse_where(sql: &str, dialect: &dyn Dialect) -> Option<Filter> {
     let sql = sql.trim();
     if sql.is_empty() {
         return Some(Filter::default());
@@ -244,7 +244,7 @@ pub fn parse_where(sql: &str, dialect: Dialect) -> Option<Filter> {
     })
 }
 
-pub fn order_sql(sorts: &[Sort], dialect: Dialect) -> String {
+pub fn order_sql(sorts: &[Sort], dialect: &dyn Dialect) -> String {
     sorts
         .iter()
         .filter(|s| !s.field.is_empty())
@@ -259,7 +259,7 @@ pub fn order_sql(sorts: &[Sort], dialect: Dialect) -> String {
         .join(", ")
 }
 
-pub fn parse_order(sql: &str, dialect: Dialect) -> Option<Vec<Sort>> {
+pub fn parse_order(sql: &str, dialect: &dyn Dialect) -> Option<Vec<Sort>> {
     let sql = sql.trim();
     if sql.is_empty() {
         return Some(Vec::new());
@@ -284,7 +284,7 @@ pub fn parse_order(sql: &str, dialect: Dialect) -> Option<Vec<Sort>> {
     Some(sorts)
 }
 
-fn predicate(rule: &Rule, dialect: Dialect) -> Option<String> {
+fn predicate(rule: &Rule, dialect: &dyn Dialect) -> Option<String> {
     if rule.op == Op::Custom {
         let text = rule.value.trim();
         if text.is_empty() {
@@ -299,7 +299,7 @@ fn predicate(rule: &Rule, dialect: Dialect) -> Option<String> {
     }
     let field = dialect.quote_ident(&rule.field);
     // PostgreSQL has no LIKE for numbers or dates; the cast makes "contains" work on any column
-    let text_field = if dialect == Dialect::Postgres {
+    let text_field = if dialect.features().like_text_cast {
         format!("{field}::text")
     } else {
         field.clone()
@@ -388,7 +388,7 @@ enum Like {
 
 fn like(
     field: &str,
-    dialect: Dialect,
+    dialect: &dyn Dialect,
     value: &str,
     kind: Like,
     negated: bool,
@@ -412,7 +412,7 @@ fn like(
     )
 }
 
-fn in_list(dialect: Dialect, value: &str) -> String {
+fn in_list(dialect: &dyn Dialect, value: &str) -> String {
     value
         .split(',')
         .map(|part| sql_value(dialect, part))
@@ -423,11 +423,11 @@ fn in_list(dialect: Dialect, value: &str) -> String {
 /// Always a string literal: all three databases convert it to the column's type, while a bare
 /// number fails on a PostgreSQL text column, matches every non-numeric string in MySQL, and turns
 /// `007` into 7.
-fn sql_value(dialect: Dialect, raw: &str) -> String {
+fn sql_value(dialect: &dyn Dialect, raw: &str) -> String {
     dialect.string_literal(raw.trim())
 }
 
-fn unwrap_group(sql: &str, dialect: Dialect) -> (String, bool, bool) {
+fn unwrap_group(sql: &str, dialect: &dyn Dialect) -> (String, bool, bool) {
     if let Some(inner) = strip_wrapping_not(sql, dialect)
         && split_joins(&inner, dialect).len() > 1
     {
@@ -441,12 +441,12 @@ fn unwrap_group(sql: &str, dialect: Dialect) -> (String, bool, bool) {
     (sql.to_string(), false, false)
 }
 
-fn strip_wrapping_not(sql: &str, dialect: Dialect) -> Option<String> {
+fn strip_wrapping_not(sql: &str, dialect: &dyn Dialect) -> Option<String> {
     let rest = eat_kw(sql.trim(), "NOT")?;
     strip_wrapping_paren(rest, dialect)
 }
 
-fn strip_wrapping_paren(sql: &str, dialect: Dialect) -> Option<String> {
+fn strip_wrapping_paren(sql: &str, dialect: &dyn Dialect) -> Option<String> {
     let t = sql.trim();
     if !t.starts_with('(') || !t.ends_with(')') {
         return None;
@@ -458,13 +458,13 @@ fn strip_wrapping_paren(sql: &str, dialect: Dialect) -> Option<String> {
 }
 
 /// `(or_before, piece)`: splits `WHERE` text at the top-level `AND` / `OR` joins.
-fn split_joins(sql: &str, dialect: Dialect) -> Vec<(bool, String)> {
+fn split_joins(sql: &str, dialect: &dyn Dialect) -> Vec<(bool, String)> {
     let mut parts = Vec::new();
     let mut start = 0;
     let mut or_flag = false;
     // `BETWEEN 1 AND 2` uses AND as its second value, not as a join.
     let mut pending_between = 0i32;
-    for span in span::spans(sql, dialect) {
+    for span in span::spans(sql, dialect.lex()) {
         if span.kind != SpanKind::Word || span.depth != 0 {
             continue;
         }
@@ -500,7 +500,7 @@ fn split_joins(sql: &str, dialect: Dialect) -> Vec<(bool, String)> {
     parts
 }
 
-fn parse_pred(sql: &str, dialect: Dialect) -> Option<Rule> {
+fn parse_pred(sql: &str, dialect: &dyn Dialect) -> Option<Rule> {
     let (sql, negate) = if let Some(inner) = strip_wrapping_not(sql, dialect) {
         if split_joins(&inner, dialect).len() != 1 {
             return None;
@@ -512,7 +512,7 @@ fn parse_pred(sql: &str, dialect: Dialect) -> Option<Rule> {
     let (field, rest) = parse_ident(sql.trim(), dialect)?;
     // The cast `predicate` writes before LIKE on PostgreSQL
     let rest = match rest.strip_prefix("::") {
-        Some(cast) if dialect == Dialect::Postgres => eat_kw(cast, "text")?,
+        Some(cast) if dialect.features().like_text_cast => eat_kw(cast, "text")?,
         _ => rest,
     };
     let rest = rest.trim_start();
@@ -530,7 +530,7 @@ fn parse_pred(sql: &str, dialect: Dialect) -> Option<Rule> {
     })
 }
 
-fn parse_op(rest: &str, dialect: Dialect) -> Option<(Op, String, String, &str)> {
+fn parse_op<'a>(rest: &'a str, dialect: &dyn Dialect) -> Option<(Op, String, String, &'a str)> {
     if let Some(after) = eat_kw(rest, "IS NOT NULL") {
         return Some((Op::NotNull, String::new(), String::new(), after));
     }
@@ -588,12 +588,12 @@ fn parse_op(rest: &str, dialect: Dialect) -> Option<(Op, String, String, &str)> 
     Some((op, value, String::new(), after))
 }
 
-fn parse_like(
-    rest: &str,
-    dialect: Dialect,
+fn parse_like<'a>(
+    rest: &'a str,
+    dialect: &dyn Dialect,
     negated: bool,
     ilike: bool,
-) -> Option<(Op, String, String, &str)> {
+) -> Option<(Op, String, String, &'a str)> {
     let (pattern, rest) = parse_string(rest.trim_start(), dialect)?;
     let rest = if let Some(after) = eat_kw(rest.trim_start(), "ESCAPE") {
         let (_, after) = parse_string(after.trim_start(), dialect)?;
@@ -648,11 +648,11 @@ fn unescape_like(s: &str) -> Option<String> {
     Some(out)
 }
 
-fn parse_between(
-    rest: &str,
-    dialect: Dialect,
+fn parse_between<'a>(
+    rest: &'a str,
+    dialect: &dyn Dialect,
     negated: bool,
-) -> Option<(Op, String, String, &str)> {
+) -> Option<(Op, String, String, &'a str)> {
     let (a, rest) = parse_sql_value(rest, dialect)?;
     let rest = eat_kw(rest.trim_start(), "AND")?;
     let (b, rest) = parse_sql_value(rest, dialect)?;
@@ -660,7 +660,11 @@ fn parse_between(
     Some((op, a, b, rest))
 }
 
-fn parse_in(rest: &str, dialect: Dialect, negated: bool) -> Option<(Op, String, String, &str)> {
+fn parse_in<'a>(
+    rest: &'a str,
+    dialect: &dyn Dialect,
+    negated: bool,
+) -> Option<(Op, String, String, &'a str)> {
     let rest = rest.trim_start();
     if !rest.starts_with('(') {
         return None;
@@ -684,7 +688,7 @@ fn parse_in(rest: &str, dialect: Dialect, negated: bool) -> Option<(Op, String, 
     Some((op, values.join(", "), String::new(), after))
 }
 
-fn parse_sql_value(s: &str, dialect: Dialect) -> Option<(String, &str)> {
+fn parse_sql_value<'a>(s: &'a str, dialect: &dyn Dialect) -> Option<(String, &'a str)> {
     let t = s.trim_start();
     if t.starts_with('\'') || postgres_escape_string(t, dialect).is_some() {
         return parse_string(t, dialect);
@@ -714,15 +718,15 @@ fn parse_sql_value(s: &str, dialect: Dialect) -> Option<(String, &str)> {
 
 /// The rest after `E` when `s` is a PostgreSQL escape string (`E'a\\b'`), which `string_literal`
 /// writes for values with a backslash.
-fn postgres_escape_string(s: &str, dialect: Dialect) -> Option<&str> {
+fn postgres_escape_string<'a>(s: &'a str, dialect: &dyn Dialect) -> Option<&'a str> {
     let rest = s.strip_prefix(['E', 'e'])?;
-    (dialect == Dialect::Postgres && rest.starts_with('\'')).then_some(rest)
+    (dialect.lex().escape_string_prefix && rest.starts_with('\'')).then_some(rest)
 }
 
-fn parse_string(s: &str, dialect: Dialect) -> Option<(String, &str)> {
+fn parse_string<'a>(s: &'a str, dialect: &dyn Dialect) -> Option<(String, &'a str)> {
     let (s, backslash_escapes) = match postgres_escape_string(s, dialect) {
         Some(rest) => (rest, true),
-        None => (s, dialect == Dialect::MySql),
+        None => (s, dialect.lex().backslash_strings),
     };
     if !s.starts_with('\'') {
         return None;
@@ -752,12 +756,9 @@ fn parse_string(s: &str, dialect: Dialect) -> Option<(String, &str)> {
     None
 }
 
-fn parse_ident(s: &str, dialect: Dialect) -> Option<(String, &str)> {
+fn parse_ident<'a>(s: &'a str, dialect: &dyn Dialect) -> Option<(String, &'a str)> {
     let s = s.trim_start();
-    let quote = match dialect {
-        Dialect::MySql => '`',
-        Dialect::Postgres | Dialect::Sqlite => '"',
-    };
+    let quote = dialect.ident_quote();
     let bytes = s.as_bytes();
     if bytes.first().copied() == Some(quote as u8) {
         let mut out = String::new();
@@ -789,10 +790,10 @@ fn parse_ident(s: &str, dialect: Dialect) -> Option<(String, &str)> {
     Some((s[..end].to_string(), &s[end..]))
 }
 
-fn split_commas(sql: &str, dialect: Dialect) -> Vec<&str> {
+fn split_commas<'a>(sql: &'a str, dialect: &dyn Dialect) -> Vec<&'a str> {
     let mut parts = Vec::new();
     let mut start = 0;
-    for pos in span::separators(sql, dialect, b',') {
+    for pos in span::separators(sql, dialect.lex(), b',') {
         parts.push(&sql[start..pos]);
         start = pos + 1;
     }
@@ -800,11 +801,11 @@ fn split_commas(sql: &str, dialect: Dialect) -> Vec<&str> {
     parts
 }
 
-fn paren_end(sql: &str, dialect: Dialect) -> Option<usize> {
+fn paren_end(sql: &str, dialect: &dyn Dialect) -> Option<usize> {
     if !sql.starts_with('(') {
         return None;
     }
-    let spans = span::spans(sql, dialect);
+    let spans = span::spans(sql, dialect.lex());
     let level = spans
         .iter()
         .find(|s| s.kind == SpanKind::OpenParen && s.range.start == 0)?
@@ -850,7 +851,7 @@ mod tests {
         }
     }
 
-    fn round_trip(op: Op, value: &str, value2: &str, dialect: Dialect) {
+    fn round_trip(op: Op, value: &str, value2: &str, dialect: &dyn Dialect) {
         let filter = Filter {
             rules: vec![rule("name", op, value, value2)],
             ..Filter::default()
@@ -868,7 +869,11 @@ mod tests {
 
     #[test]
     fn every_operator_round_trips() {
-        for dialect in [Dialect::MySql, Dialect::Postgres, Dialect::Sqlite] {
+        for dialect in [
+            &navidog_mysql::MysqlDialect as &dyn Dialect,
+            &navidog_postgres::PostgresDialect,
+            &navidog_sqlite::SqliteDialect,
+        ] {
             for op in [
                 Op::Eq,
                 Op::Ne,
@@ -905,13 +910,18 @@ mod tests {
             round_trip(Op::Empty, "", "", dialect);
             round_trip(Op::NotEmpty, "", "", dialect);
         }
-        round_trip(Op::ContainsI, "ab", "", Dialect::Postgres);
-        round_trip(Op::NotContainsI, "a_b", "", Dialect::Postgres);
+        round_trip(Op::ContainsI, "ab", "", &navidog_postgres::PostgresDialect);
+        round_trip(
+            Op::NotContainsI,
+            "a_b",
+            "",
+            &navidog_postgres::PostgresDialect,
+        );
     }
 
     #[test]
     fn joins_group_and_negate_round_trip() {
-        let dialect = Dialect::Sqlite;
+        let dialect = &navidog_sqlite::SqliteDialect;
         let mut filter = Filter {
             rules: vec![
                 rule("id", Op::Gt, "10", ""),
@@ -935,7 +945,7 @@ mod tests {
 
     #[test]
     fn bare_text_and_order_parse() {
-        let dialect = Dialect::MySql;
+        let dialect = &navidog_mysql::MysqlDialect;
         let parsed = parse_where("id > 10 AND name = 'a'", dialect).unwrap();
         assert_eq!(parsed.rules.len(), 2);
         assert_eq!(parsed.rules[0].op, Op::Gt);
@@ -959,7 +969,7 @@ mod tests {
 
     #[test]
     fn quoted_identifier_and_rejection() {
-        let dialect = Dialect::Postgres;
+        let dialect = &navidog_postgres::PostgresDialect;
         let filter = Filter {
             rules: vec![rule("a\"b", Op::Eq, "1", "")],
             ..Filter::default()
@@ -984,31 +994,46 @@ mod tests {
             )
         };
         // A number-looking value stays a literal, so '007' keeps its zeros through a round trip
-        let sql = one(rule("code", Op::Eq, "007", ""), Dialect::MySql);
+        let sql = one(
+            rule("code", Op::Eq, "007", ""),
+            &navidog_mysql::MysqlDialect,
+        );
         assert_eq!(sql, "`code` = '007'");
         assert_eq!(
-            parse_where(&sql, Dialect::MySql).unwrap().rules[0].value,
+            parse_where(&sql, &navidog_mysql::MysqlDialect)
+                .unwrap()
+                .rules[0]
+                .value,
             "007"
         );
         // Text a user typed with a bare number still parses
         assert_eq!(
-            parse_where("id = 5", Dialect::MySql).unwrap().rules[0].value,
+            parse_where("id = 5", &navidog_mysql::MysqlDialect)
+                .unwrap()
+                .rules[0]
+                .value,
             "5"
         );
         // PostgreSQL casts before LIKE so integer columns work, and the cast parses back
-        let sql = one(rule("id", Op::Contains, "1", ""), Dialect::Postgres);
+        let sql = one(
+            rule("id", Op::Contains, "1", ""),
+            &navidog_postgres::PostgresDialect,
+        );
         assert_eq!(sql, "\"id\"::text LIKE '%1%' ESCAPE E'\\\\'");
-        let parsed = parse_where(&sql, Dialect::Postgres).unwrap();
+        let parsed = parse_where(&sql, &navidog_postgres::PostgresDialect).unwrap();
         assert_eq!(
             (parsed.rules[0].op, parsed.rules[0].field.as_str()),
             (Op::Contains, "id")
         );
         assert_eq!(
-            one(rule("id", Op::Contains, "1", ""), Dialect::MySql),
+            one(
+                rule("id", Op::Contains, "1", ""),
+                &navidog_mysql::MysqlDialect
+            ),
             "`id` LIKE '%1%' ESCAPE '\\\\'"
         );
         // A list value with a comma in it cannot come back as builder values
-        assert!(parse_where("name IN ('a,b', 'c')", Dialect::MySql).is_none());
+        assert!(parse_where("name IN ('a,b', 'c')", &navidog_mysql::MysqlDialect).is_none());
         // A custom condition keeps its own OR together
         let filter = Filter {
             rules: vec![
@@ -1018,14 +1043,18 @@ mod tests {
             ..Filter::default()
         };
         assert_eq!(
-            where_sql(&filter, Dialect::Sqlite),
+            where_sql(&filter, &navidog_sqlite::SqliteDialect),
             "\"a\" = '1' AND (x = 1 OR y = 2)"
         );
     }
 
     #[test]
     fn non_ascii_text_does_not_panic() {
-        for dialect in [Dialect::MySql, Dialect::Postgres, Dialect::Sqlite] {
+        for dialect in [
+            &navidog_mysql::MysqlDialect as &dyn Dialect,
+            &navidog_postgres::PostgresDialect,
+            &navidog_sqlite::SqliteDialect,
+        ] {
             for sql in [
                 "名称 = 1",
                 "NOT 名称 = 1",

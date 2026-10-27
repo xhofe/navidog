@@ -9,7 +9,7 @@
 crates/navidog-designer/src/panel/grid.rs	format!("designer.{}", self.headers[i])
 crates/navidog-designer/src/panel/grid.rs	format!("designer.{}", self.headers[col])
 crates/navidog-designer/src/panel/options.rs	format!("designer.option_{key}")
-crates/navidog-designer/src/panel/options.rs	if self.dialect == Dialect::MySql { "designer.table_options_mysql_help" } else { "designer.table_options_help" }
+crates/navidog-designer/src/panel/options.rs	if self.dialect.features().inline_table_options { "designer.table_options_mysql_help" } else { "designer.table_options_help" }
 crates/navidog-designer/src/panel/view.rs	if fields { "designer.add" } else { "designer.add_object" }
 crates/navidog-designer/src/panel/view.rs	if fields { "designer.delete" } else { "designer.delete_object" }
 crates/navidog-designer/src/panel/view.rs	format!("designer.{key}")

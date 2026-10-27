@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use navidog_db::dialect::Dialect;
-use navidog_db::{ConnectParams, Driver, connect, runtime, sqlite::SqliteDriver};
+use navidog_db::{ConnectParams, Driver, connect, runtime};
+use navidog_sql::dialect::Dialect;
+use navidog_sqlite::SqliteDriver;
 
 #[test]
 fn sqlite_create_attach_execute_and_error_codes() {
@@ -48,11 +49,10 @@ fn sqlite_create_attach_execute_and_error_codes() {
         assert!(sets[0].columns[1].origin.is_none());
         assert!(session.session_id().is_none());
         // Code completion info: tables, views and their columns in one go
-        let outline = navidog_db::outline::fetch(
-            session.relational().unwrap(),
-            &navidog_model::object::Scope::new("c", "main", None),
-            false,
-        )
+        let outline = session
+            .relational()
+            .unwrap()
+            .outline(&navidog_model::object::Scope::new("c", "main", None), false)
         .await
         .unwrap();
         let t = outline.table("t").unwrap();
@@ -72,8 +72,8 @@ fn sqlite_create_attach_execute_and_error_codes() {
 
 #[test]
 fn sqlite_metadata_and_change_sets() {
-    use navidog_db::dialect::{ChangeSet, RowKey, RowUpdate, Written};
     use navidog_model::object::{ObjectKind, Scope};
+    use navidog_sql::dialect::{ChangeSet, RowKey, RowUpdate, Written};
 
     let dir = tempfile::tempdir().unwrap();
     let params = ConnectParams {
@@ -120,7 +120,12 @@ fn sqlite_metadata_and_change_sets() {
         rel.execute("INSERT INTO actor(name) VALUES ('a'), ('b')")
             .await
             .unwrap();
-        let sql = navidog_db::referenced_values_sql(Dialect::Sqlite, &keys[0], "1", Some(10));
+        let sql = navidog_db::referenced_values_sql(
+            &navidog_sqlite::SqliteDialect,
+            &keys[0],
+            "1",
+            Some(10),
+        );
         let sets = rel.execute(&sql).await.unwrap();
         assert_eq!(sets[0].rows, [vec![Some("1".to_string())]], "{sql}");
         rel.execute("DELETE FROM actor").await.unwrap();
@@ -129,11 +134,11 @@ fn sqlite_metadata_and_change_sets() {
             .object_ddl(&scope, ObjectKind::Table, "role")
             .await
             .unwrap();
-        for sql in Dialect::Sqlite
+        for sql in &navidog_sqlite::SqliteDialect
             .duplicate_table(&scope, "role", "role_copy1", true, Some(&ddl))
             .unwrap()
         {
-            rel.execute(&sql).await.unwrap();
+            rel.execute(sql).await.unwrap();
         }
         let cols = rel.table_columns(&scope, "role_copy1").await.unwrap();
         assert!(cols[0].primary_key, "{ddl}");

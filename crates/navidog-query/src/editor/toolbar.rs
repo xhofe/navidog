@@ -13,7 +13,6 @@ use gpui_kit::{
 };
 use navidog_app_state::settings::{ResultsPosition, Settings};
 use navidog_app_state::store::ConnectionStore;
-use navidog_db::dialect::Dialect;
 use navidog_session::sessions::{ConnState, Sessions};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::truncated;
@@ -141,7 +140,7 @@ impl QueryEditor {
             .as_ref()
             .and_then(|id| store.read(cx).get(id))
             .map(|c| c.name.clone());
-        let pg = self.dialect(cx) == Some(Dialect::Postgres);
+        let pg = self.dialect(cx).is_some_and(|d| d.features().has_schemas);
         let selected = self.has_selection(cx);
         let show_results = Settings::global(cx).results_position == ResultsPosition::NewPage
             && !self.results_page

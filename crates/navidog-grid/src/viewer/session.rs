@@ -5,13 +5,16 @@ use std::time::Instant;
 
 use gpui_kit::{App, Context, SharedString};
 use navidog_app_state::settings::Settings;
-use navidog_db::dialect::Dialect;
 use navidog_db::{CancelHandle, ColumnInfo};
 use navidog_session::sessions::{ConnState, Sessions, SharedSession, run_on};
+use navidog_sql::dialect::Dialect;
 
 use crate::commit::{close_session, error_message};
 use crate::grid::GridTarget;
 use crate::model::Cell;
+
+type ColumnLoad =
+    Result<navidog_db::DbResult<(Arc<dyn Dialect>, Vec<ColumnInfo>)>, tokio::task::JoinError>;
 
 impl TableViewer {
     pub(crate) fn connect(&mut self, cx: &mut Context<Self>) {
@@ -85,7 +88,7 @@ impl TableViewer {
     pub(crate) fn apply_connected(
         &mut self,
         generation: u64,
-        columns: Result<navidog_db::DbResult<(Dialect, Vec<ColumnInfo>)>, tokio::task::JoinError>,
+        columns: ColumnLoad,
         shared: SharedSession,
         cancel: Option<CancelHandle>,
         cx: &mut Context<Self>,
@@ -97,7 +100,7 @@ impl TableViewer {
         self.session_generation = generation;
         match columns {
             Ok(Ok((dialect, columns))) => {
-                self.dialect = Some(dialect);
+                self.dialect = Some(dialect.clone());
                 self.columns = columns;
                 self.view.grid.update(cx, |g, cx| {
                     g.set_target(
@@ -110,8 +113,16 @@ impl TableViewer {
                     )
                 });
             }
-            Ok(Err(e)) => self.view.status = error_message(&e).into(),
-            Err(e) => self.view.status = e.to_string().into(),
+            Ok(Err(e)) => {
+                // `connect` set `busy`, and `reload` returns immediately when the dialect was
+                // never stored. Clear it here or the grid stays locked.
+                self.set_busy(false, cx);
+                self.view.status = error_message(&e).into();
+            }
+            Err(e) => {
+                self.set_busy(false, cx);
+                self.view.status = e.to_string().into();
+            }
         }
         self.session = Some(shared);
         self.cancel = cancel;
@@ -239,7 +250,7 @@ impl TableViewer {
 
     /// Loads the current page; with `count`, also queries the total row count (when the filter changes).
     pub(crate) fn reload(&mut self, count: bool, cx: &mut Context<Self>) {
-        let (Some(session), Some(d)) = (self.session.clone(), self.dialect) else {
+        let (Some(session), Some(d)) = (self.session.clone(), self.dialect.clone()) else {
             return;
         };
         let generation = self.session_generation;

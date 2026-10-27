@@ -5,7 +5,7 @@ use std::sync::Arc;
 use gpui_kit::{App, Global};
 use navidog_app_state::registry::Registry;
 use navidog_db::Driver;
-use navidog_db::dialect::Dialect;
+use navidog_sql::dialect::Dialect;
 
 #[derive(Default)]
 pub struct DriverRegistry(pub Registry<Arc<dyn Driver>>);
@@ -23,8 +23,8 @@ impl DriverRegistry {
             .unwrap_or("icons/db/mysql.svg")
     }
 
-    pub fn dialect(cx: &App, id: &str) -> Option<Dialect> {
-        Self::get(cx, id).map(|driver| driver.info().dialect)
+    pub fn dialect(cx: &App, id: &str) -> Option<Arc<dyn Dialect>> {
+        Self::get(cx, id).map(|driver| driver.info().dialect.clone())
     }
 
     pub fn name(cx: &App, id: &str) -> gpui_kit::SharedString {

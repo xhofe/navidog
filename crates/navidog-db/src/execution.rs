@@ -1,55 +1,62 @@
-//! Conservative physical-session affinity and cancellation across safe reconnects.
+//! Session machinery a driver implementation needs: whether a physical session may be
+//! reconnected, and the handle that cancels the statement in flight.
+//!
+//! [`RecoveryState::observe`] must see every statement the driver sends: arbitrary SQL can open a
+//! transaction or create a temporary object, and inferring "stateless" from a `SELECT` prefix
+//! would let a reconnect drop that state. [`interrupted`] is public only because the
+//! `recovering_*!` macros name it.
 
 use std::sync::{Arc, Mutex};
 
 use futures::FutureExt as _;
 
-use crate::{CancelHandle, DbError, dialect::Dialect};
+use crate::{CancelHandle, DbError};
 
-pub(crate) struct RecoveryState {
+pub struct RecoveryState {
     reconnectable: bool,
 }
 
 impl RecoveryState {
-    pub(crate) fn new(initial_queries: &str, dialect: Dialect) -> Self {
+    pub fn new(initial_queries: &str, dialect: &dyn navidog_sql::dialect::Dialect) -> Self {
         Self {
-            reconnectable: crate::sql::split_statements(initial_queries, dialect)
+            reconnectable: crate::sql::split_statements(initial_queries, dialect.lex())
                 .iter()
                 .all(|sql| crate::sql::session_setup(sql).is_some()),
         }
     }
 
-    pub(crate) fn observe(&mut self, sql: &str) {
+    pub fn observe(&mut self, sql: &str) {
         // Arbitrary SQL can establish transactions, locks, temporary objects or session state.
         // Never infer that it is stateless from a SELECT prefix, nor reset affinity on COMMIT.
         self.reconnectable &= crate::sql::session_setup(sql).is_some();
     }
 
-    pub(crate) fn can_reconnect(&self) -> bool {
+    pub fn can_reconnect(&self) -> bool {
         self.reconnectable
     }
 }
 
-pub(crate) fn interrupted(error: DbError, outcome_unknown: bool) -> DbError {
+#[doc(hidden)]
+pub fn interrupted(error: DbError, outcome_unknown: bool) -> DbError {
     error.with_session_loss(outcome_unknown)
 }
 
 /// Only the driver owns this value; returned handles share the current target, not its snapshot.
 #[derive(Default)]
-pub(crate) struct Cancellation {
+pub struct Cancellation {
     target: Arc<Mutex<Option<CancelHandle>>>,
 }
 
 impl Cancellation {
-    pub(crate) fn replace(&self, target: CancelHandle) {
+    pub fn replace(&self, target: CancelHandle) {
         *self.target.lock().unwrap_or_else(|p| p.into_inner()) = Some(target);
     }
 
-    pub(crate) fn clear(&self) {
+    pub fn clear(&self) {
         *self.target.lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
 
-    pub(crate) fn handle(&self) -> CancelHandle {
+    pub fn handle(&self) -> CancelHandle {
         let target = self.target.clone();
         Arc::new(move || {
             let current = target.lock().unwrap_or_else(|p| p.into_inner()).clone();
@@ -81,7 +88,7 @@ mod tests {
 
     #[test]
     fn arbitrary_sql_and_initial_queries_pin_the_physical_session() {
-        let mut state = RecoveryState::new("", Dialect::Postgres);
+        let mut state = RecoveryState::new("", &navidog_postgres::PostgresDialect);
         assert!(state.can_reconnect());
         state.observe("SET search_path TO public");
         assert!(state.can_reconnect());
@@ -90,8 +97,8 @@ mod tests {
         state.observe("COMMIT");
         state.observe("SET search_path TO public");
         assert!(!state.can_reconnect());
-        assert!(!RecoveryState::new("BEGIN", Dialect::Postgres).can_reconnect());
-        assert!(RecoveryState::new("USE sakila", Dialect::MySql).can_reconnect());
+        assert!(!RecoveryState::new("BEGIN", &navidog_postgres::PostgresDialect).can_reconnect());
+        assert!(RecoveryState::new("USE sakila", &navidog_mysql::MysqlDialect).can_reconnect());
     }
 
     #[test]

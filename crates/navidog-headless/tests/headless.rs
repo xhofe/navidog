@@ -2,8 +2,9 @@
 
 use std::sync::Arc;
 
-use navidog_db::{ConnectParams, connect, runtime, sqlite::SqliteDriver};
+use navidog_db::{ConnectParams, connect, runtime};
 use navidog_model::connection::Connection;
+use navidog_sqlite::SqliteDriver;
 
 #[test]
 fn a_sqlite_connection_round_trips_sql_without_the_ui_stack() {

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, TabGroup, panel_handle,
@@ -10,17 +12,18 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, SharedString,
-    Subscription, Task, WeakEntity, Window, prelude::*,
+    Subscription, Task, WeakEntity, Window, div, prelude::*,
 };
 use grid::DesignerGrid;
 use navidog_app_state::actions::TableStructureChanged;
-use navidog_db::{DbError, DbResult, dialect::Dialect};
+use navidog_db::{DbError, DbResult};
 use navidog_model::object::{ObjectRef, Scope};
 use navidog_schema::table_design::{
     self, ColumnProperty, DesignColumn, DesignEntry, EntryKind, TableDesign, TableSnapshot,
     column_properties, edit_column, parse_entry, split_field_list,
 };
 use navidog_session::sessions::Sessions;
+use navidog_sql::dialect::Dialect;
 use navidog_ui::{
     assets::lucide,
     palette,
@@ -81,8 +84,160 @@ pub(crate) fn init(cx: &mut App) {
             baseline: None,
             property_height: None,
         });
-        panel_handle(TableDesigner::restore(saved, window, cx))
+        // A layout can still name a connection that was deleted. Restoring that panel must
+        // not panic; a dirty draft stays in the dumped state and asks before the tab closes.
+        let Some(dialect) = connection_dialect(cx, &saved.scope.connection) else {
+            return panel_handle(MissingConnection::open(ctx.state().clone(), cx));
+        };
+        panel_handle(TableDesigner::restore(saved, dialect, window, cx))
     });
+}
+
+/// Shown when a saved table-design tab outlives its connection.
+struct MissingConnection {
+    focus: FocusHandle,
+    state: PanelState,
+    close_approved: bool,
+}
+
+impl MissingConnection {
+    fn open(state: PanelState, cx: &mut App) -> Entity<Self> {
+        cx.new(|cx| Self {
+            focus: cx.focus_handle().tab_stop(true),
+            state,
+            close_approved: false,
+        })
+    }
+
+    /// The dumped design, when the panel state still parses.
+    fn saved(&self) -> Option<Saved> {
+        let PanelInfo::Panel(value) = &self.state.info else {
+            return None;
+        };
+        serde_json::from_value::<Saved>(value.clone()).ok()
+    }
+
+    /// Same comparison as `TableDesigner::dirty`, read from the dumped design.
+    fn dirty(&self) -> bool {
+        let Some(saved) = self.saved() else {
+            return false;
+        };
+        saved.baseline.as_ref().map_or_else(
+            || saved.draft != TableDesign::new(),
+            |old| old.design != saved.draft,
+        )
+    }
+
+    fn ask_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let weak = cx.entity().downgrade();
+        confirm_discard(window, cx, move |window, cx| {
+            if let Ok(id) = weak.update(cx, |this, cx| {
+                this.close_approved = true;
+                PanelId::from(cx.entity_id())
+            }) {
+                window.dispatch_action(
+                    Box::new(tabs::CloseTabs {
+                        panel: Some(id),
+                        which: tabs::Close::This,
+                    }),
+                    cx,
+                );
+            }
+        });
+    }
+}
+
+impl EventEmitter<PanelEvent> for MissingConnection {}
+impl Focusable for MissingConnection {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+impl BasePanel for MissingConnection {
+    fn panel_name(&self) -> &'static str {
+        PANEL
+    }
+    fn closable(&self, _: &App) -> bool {
+        self.close_approved || !self.dirty()
+    }
+    fn dump(&self, _: &App) -> PanelState {
+        self.state.clone()
+    }
+    fn on_added_to(
+        &mut self,
+        group: WeakEntity<TabGroup>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = PanelId::from(cx.entity_id());
+        tabs::added(id, group, cx);
+        let weak = cx.entity().downgrade();
+        let home = window.window_handle();
+        tabs::set_close_guard(
+            id,
+            Rc::new(move |cx| {
+                let weak = weak.clone();
+                let _ = home.update(cx, |_, window, cx| {
+                    let _ = weak.update(cx, |this, cx| this.ask_close(window, cx));
+                });
+            }),
+            cx,
+        );
+    }
+    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
+        tabs::set_active(PanelId::from(cx.entity_id()), active, cx);
+    }
+    fn on_removed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        tabs::removed(PanelId::from(cx.entity_id()), cx);
+    }
+}
+impl Panel for MissingConnection {
+    fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let dirty = self.dirty();
+        // The tab still names the design, so the user knows what closing it would discard.
+        let label = match self
+            .saved()
+            .map(|saved| (saved.draft.name, saved.scope.database))
+        {
+            Some((name, _)) if !name.is_empty() => {
+                format!("{name} — {}", t!("designer.missing_connection"))
+            }
+            Some((_, database)) if !database.is_empty() => {
+                format!("{database} — {}", t!("designer.missing_connection"))
+            }
+            _ => t!("designer.missing_connection").to_string(),
+        };
+        tabs::title(
+            PanelId::from(cx.entity_id()),
+            Some(lucide("table")),
+            label,
+            None,
+            dirty,
+        )
+    }
+}
+impl Render for MissingConnection {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .p_4()
+            .text_color(palette(cx).label)
+            .child(t!("designer.missing_connection").to_string())
+    }
+}
+
+fn connection_dialect(cx: &App, connection: &str) -> Option<Arc<dyn Dialect>> {
+    Sessions::global(cx)
+        .read(cx)
+        .dialect(connection)
+        .or_else(|| {
+            let driver = navidog_app_state::store::ConnectionStore::global(cx)
+                .read(cx)
+                .get(connection)?
+                .driver
+                .clone();
+            navidog_session::DriverRegistry::dialect(cx, &driver)
+        })
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Saved {
@@ -130,7 +285,7 @@ pub struct TableDesigner {
     selected: Option<u64>,
     next_id: u64,
     page: Page,
-    dialect: Dialect,
+    dialect: Arc<dyn Dialect>,
     busy: bool,
     loaded: bool,
     needs_reload: bool,
@@ -233,6 +388,8 @@ impl Panel for TableDesigner {
 }
 impl TableDesigner {
     pub fn new(scope: Scope, window: &mut Window, cx: &mut App) -> Entity<Self> {
+        let dialect = connection_dialect(cx, &scope.connection)
+            .expect("a table designer opens on a registered connection");
         Self::restore(
             Saved {
                 object: None,
@@ -241,6 +398,7 @@ impl TableDesigner {
                 baseline: None,
                 property_height: None,
             },
+            dialect,
             window,
             cx,
         )
@@ -255,27 +413,21 @@ impl TableDesigner {
         });
         entity
     }
-    fn restore(mut saved: Saved, window: &mut Window, cx: &mut App) -> Entity<Self> {
+    fn restore(
+        mut saved: Saved,
+        dialect: Arc<dyn Dialect>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
-            let dialect = Sessions::global(cx)
-                .read(cx)
-                .dialect(&saved.scope.connection)
-                .or_else(|| {
-                    let driver = navidog_app_state::store::ConnectionStore::global(cx)
-                        .read(cx)
-                        .get(&saved.scope.connection)?
-                        .driver
-                        .clone();
-                    navidog_session::DriverRegistry::dialect(cx, &driver)
-                })
-                .unwrap_or(Dialect::Sqlite);
-            let migration_error = if dialect == Dialect::Postgres {
+            let migration_error = if dialect.features().separate_comments {
                 saved
                     .draft
-                    .migrate_comments(&saved.scope)
+                    .migrate_comments(&saved.scope, dialect.as_ref())
                     .and_then(|_| {
                         if let Some(old) = &mut saved.baseline {
-                            old.design.migrate_comments(&saved.scope)?;
+                            old.design
+                                .migrate_comments(&saved.scope, dialect.as_ref())?;
                         }
                         Ok(())
                     })
@@ -399,23 +551,24 @@ impl TableDesigner {
                     },
                 ));
             }
-            let table_option_inputs: std::collections::BTreeMap<_, _> = options::keys(dialect)
-                .iter()
-                .enumerate()
-                .map(|(ix, key)| {
-                    let input = input(String::new(), window, cx);
-                    subscriptions.push(cx.subscribe_in(
-                        &input,
-                        window,
-                        move |this, _, event: &InputEvent, w, cx| {
-                            if matches!(event, InputEvent::Change) && !this.syncing {
-                                this.table_option_changed(ix, w, cx);
-                            }
-                        },
-                    ));
-                    (*key, input)
-                })
-                .collect();
+            let table_option_inputs: std::collections::BTreeMap<_, _> =
+                options::keys(dialect.as_ref())
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, key)| {
+                        let input = input(String::new(), window, cx);
+                        subscriptions.push(cx.subscribe_in(
+                            &input,
+                            window,
+                            move |this, _, event: &InputEvent, w, cx| {
+                                if matches!(event, InputEvent::Change) && !this.syncing {
+                                    this.table_option_changed(ix, w, cx);
+                                }
+                            },
+                        ));
+                        (*key, input)
+                    })
+                    .collect();
             let mut this = Self {
                 table,
                 properties,
@@ -495,7 +648,7 @@ impl TableDesigner {
             .map(String::from)
             .collect();
         self.draft.indexes =
-            navidog_db::sql::split_script(&self.indexes.read(cx).value(), self.dialect)
+            navidog_db::sql::split_script(&self.indexes.read(cx).value(), self.dialect.lex())
                 .into_iter()
                 .map(|s| s.text)
                 .collect();
@@ -521,7 +674,7 @@ impl TableDesigner {
             .iter()
             .find(|c| Some(c.id) == self.selected);
         let props = c
-            .map(|c| column_properties(&c.definition, self.dialect))
+            .map(|c| column_properties(&c.definition, self.dialect.as_ref()))
             .unwrap_or_default();
         self.syncing = true;
         self.name.update(cx, |s, cx| {
@@ -538,7 +691,7 @@ impl TableDesigner {
             props.data_type,
             props.length,
             props.scale,
-            if self.dialect == Dialect::Postgres {
+            if self.dialect.features().separate_comments {
                 c.map(|c| c.comment.clone()).unwrap_or_default()
             } else {
                 props.comment
@@ -646,7 +799,7 @@ impl TableDesigner {
             return;
         }
         self.flush(cx);
-        if self.dialect == Dialect::Sqlite
+        if self.dialect.features().rebuilds_tables
             && self.baseline.is_some()
             && let Some(job) = Sessions::global(cx)
                 .read(cx)
@@ -680,7 +833,7 @@ impl TableDesigner {
                     match names {
                         Ok(names) => this.publish_preview(
                             table_design::plan_with(
-                                this.dialect,
+                                this.dialect.as_ref(),
                                 &this.scope,
                                 this.baseline.as_ref(),
                                 &this.draft,
@@ -701,7 +854,7 @@ impl TableDesigner {
         }
         self.publish_preview(
             table_design::plan(
-                self.dialect,
+                self.dialect.as_ref(),
                 &self.scope,
                 self.baseline.as_ref(),
                 &self.draft,
@@ -808,12 +961,9 @@ impl TableDesigner {
                                 "This connection is not a relational database.",
                             )
                         })?;
-                        if r.dialect() == Dialect::MySql {
-                            r.execute(&format!(
-                                "USE {}",
-                                Dialect::MySql.quote_ident(&scope.database)
-                            ))
-                            .await?;
+                        let dialect = r.dialect();
+                        if let Some(sql) = dialect.prepare_database_sql(&scope.database) {
+                            r.execute(&sql).await?;
                         }
                         if save {
                             table_design::apply(r, &scope, baseline.as_ref(), &draft).await
@@ -845,7 +995,7 @@ impl TableDesigner {
                     }
                     Err(e) => {
                         this.error = Some(e.to_string());
-                        if save && this.dialect == Dialect::MySql {
+                        if save && !this.dialect.features().transactional_ddl {
                             this.needs_reload = true;
                         }
                     }
@@ -916,42 +1066,54 @@ impl TableDesigner {
             return;
         }
         let weak = cx.entity().downgrade();
-        window.open_dialog(cx, move |dialog, _, _| {
-            let weak = weak.clone();
-            dialog
-                .title(t!("designer.close_title").to_string())
-                .child(t!("designer.close_body").to_string())
-                .footer(
-                    h_flex()
-                        .justify_end()
-                        .gap_2()
-                        .child(
-                            Button::new("designer-close-cancel")
-                                .label(t!("designer.cancel").to_string())
-                                .on_click(|_, w, cx| w.close_dialog(cx)),
-                        )
-                        .child(
-                            Button::new("designer-close-discard")
-                                .label(t!("designer.discard").to_string())
-                                .on_click(move |_, w, cx| {
-                                    w.close_dialog(cx);
-                                    if let Ok(id) = weak.update(cx, |this, cx| {
-                                        this.close_approved = true;
-                                        PanelId::from(cx.entity_id())
-                                    }) {
-                                        w.dispatch_action(
-                                            Box::new(tabs::CloseTabs {
-                                                panel: Some(id),
-                                                which: tabs::Close::This,
-                                            }),
-                                            cx,
-                                        );
-                                    }
-                                }),
-                        ),
-                )
+        confirm_discard(window, cx, move |window, cx| {
+            if let Ok(id) = weak.update(cx, |this, cx| {
+                this.close_approved = true;
+                PanelId::from(cx.entity_id())
+            }) {
+                window.dispatch_action(
+                    Box::new(tabs::CloseTabs {
+                        panel: Some(id),
+                        which: tabs::Close::This,
+                    }),
+                    cx,
+                );
+            }
         });
     }
+}
+
+fn confirm_discard(
+    window: &mut Window,
+    cx: &mut App,
+    on_discard: impl Fn(&mut Window, &mut App) + 'static,
+) {
+    // The dialog builder can run again when the layer rebuilds, so the callback stays shared.
+    let on_discard = Rc::new(on_discard);
+    window.open_dialog(cx, move |dialog, _, _| {
+        let on_discard = on_discard.clone();
+        dialog
+            .title(t!("designer.close_title").to_string())
+            .child(t!("designer.close_body").to_string())
+            .footer(
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("designer-close-cancel")
+                            .label(t!("designer.cancel").to_string())
+                            .on_click(|_, w, cx| w.close_dialog(cx)),
+                    )
+                    .child(
+                        Button::new("designer-close-discard")
+                            .label(t!("designer.discard").to_string())
+                            .on_click(move |_, w, cx| {
+                                w.close_dialog(cx);
+                                on_discard(w, cx);
+                            }),
+                    ),
+            )
+    });
 }
 mod grid;
 mod options;

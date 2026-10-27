@@ -1,22 +1,34 @@
 use super::*;
 
-fn kinds(sql: &str, dialect: Dialect) -> Vec<(SpanKind, &str)> {
-    spans(sql, dialect)
+fn mysql_lex() -> Lex {
+    Lex::MYSQL
+}
+
+fn postgres_lex() -> Lex {
+    Lex::POSTGRES
+}
+
+fn sqlite_lex() -> Lex {
+    Lex::SQLITE
+}
+
+fn kinds(sql: &str, lex: Lex) -> Vec<(SpanKind, &str)> {
+    spans(sql, lex)
         .iter()
         .map(|s| (s.kind, s.text(sql)))
         .collect()
 }
 
-fn ends(sql: &str, dialect: Dialect) -> Vec<&str> {
-    spans(sql, dialect)
+fn ends(sql: &str, lex: Lex) -> Vec<&str> {
+    spans(sql, lex)
         .iter()
         .filter(|s| s.kind == SpanKind::StatementEnd)
         .map(|s| s.text(sql))
         .collect()
 }
 
-fn comments(sql: &str, dialect: Dialect) -> Vec<&str> {
-    spans(sql, dialect)
+fn comments(sql: &str, lex: Lex) -> Vec<&str> {
+    spans(sql, lex)
         .iter()
         .filter(|s| s.kind.is_comment())
         .map(|s| s.text(sql))
@@ -27,7 +39,7 @@ fn comments(sql: &str, dialect: Dialect) -> Vec<&str> {
 fn quotes_and_identifiers_follow_the_dialect() {
     // MySQL: backslash escapes in strings, `"` is also a string, `` ` `` names an identifier
     assert_eq!(
-        kinds(r#"SELECT 'it\'s', "a""b", `a b`"#, Dialect::MySql),
+        kinds(r#"SELECT 'it\'s', "a""b", `a b`"#, mysql_lex()),
         [
             (SpanKind::Word, "SELECT"),
             (SpanKind::String, r"'it\'s'"),
@@ -39,7 +51,7 @@ fn quotes_and_identifiers_follow_the_dialect() {
     );
     // PostgreSQL: a plain string takes the backslash literally, `E'…'` escapes with it
     assert_eq!(
-        kinds(r"SELECT 'C:\', E'a\';b'", Dialect::Postgres),
+        kinds(r"SELECT 'C:\', E'a\';b'", postgres_lex()),
         [
             (SpanKind::Word, "SELECT"),
             (SpanKind::String, r"'C:\'"),
@@ -50,7 +62,7 @@ fn quotes_and_identifiers_follow_the_dialect() {
     );
     // SQLite: `[x]` is an identifier and a backslash is literal
     assert_eq!(
-        kinds(r"SELECT [a'b], 'C:\'", Dialect::Sqlite),
+        kinds(r"SELECT [a'b], 'C:\'", sqlite_lex()),
         [
             (SpanKind::Word, "SELECT"),
             (SpanKind::QuotedIdent, "[a'b]"),
@@ -60,7 +72,7 @@ fn quotes_and_identifiers_follow_the_dialect() {
     );
     // `[$name]` wins over a bracket identifier in every dialect
     let sql = "SELECT [$x] FROM [t]";
-    let found = spans(sql, Dialect::Sqlite);
+    let found = spans(sql, sqlite_lex());
     assert!(
         found
             .iter()
@@ -73,7 +85,7 @@ fn quotes_and_identifiers_follow_the_dialect() {
     );
     // ... but MySQL has no bracket identifiers
     assert!(
-        !spans("[t]", Dialect::MySql)
+        !spans("[t]", mysql_lex())
             .iter()
             .any(|s| s.kind == SpanKind::QuotedIdent)
     );
@@ -82,7 +94,7 @@ fn quotes_and_identifiers_follow_the_dialect() {
 #[test]
 fn dollar_quotes_are_postgres_only_and_never_inside_identifiers() {
     let sql = "SELECT $$ [$x] $$, $tag$body$tag$, foo$tag$, $1";
-    let found = spans(sql, Dialect::Postgres);
+    let found = spans(sql, postgres_lex());
     let dollars: Vec<_> = found
         .iter()
         .filter(|s| s.kind == SpanKind::DollarQuoted)
@@ -94,7 +106,7 @@ fn dollar_quotes_are_postgres_only_and_never_inside_identifiers() {
         "a parameter marker inside a dollar body is text"
     );
     assert_eq!(
-        check(sql, Dialect::Postgres),
+        check(sql, postgres_lex()),
         Ok(()),
         "`$1` is a parameter, not an unterminated quote"
     );
@@ -105,7 +117,7 @@ fn dollar_quotes_are_postgres_only_and_never_inside_identifiers() {
     ));
     // MySQL has no dollar quoting, so `[$x]` is a parameter there
     assert!(
-        spans("SELECT $$ [$x] $$", Dialect::MySql)
+        spans("SELECT $$ [$x] $$", mysql_lex())
             .iter()
             .any(|s| s.kind == SpanKind::Param)
     );
@@ -113,15 +125,12 @@ fn dollar_quotes_are_postgres_only_and_never_inside_identifiers() {
 
 #[test]
 fn comments_come_from_the_dialect() {
-    assert_eq!(comments("SELECT 1 # c\n", Dialect::MySql), ["# c"]);
-    assert!(comments("SELECT 1 # 2", Dialect::Postgres).is_empty());
+    assert_eq!(comments("SELECT 1 # c\n", mysql_lex()), ["# c"]);
+    assert!(comments("SELECT 1 # 2", postgres_lex()).is_empty());
     // MySQL does not nest block comments; PostgreSQL does
+    assert_eq!(comments("/* a /* b */ c */", mysql_lex()), ["/* a /* b */"]);
     assert_eq!(
-        comments("/* a /* b */ c */", Dialect::MySql),
-        ["/* a /* b */"]
-    );
-    assert_eq!(
-        comments("/* a /* b */ c */", Dialect::Postgres),
+        comments("/* a /* b */ c */", postgres_lex()),
         ["/* a /* b */ c */"]
     );
 }
@@ -130,23 +139,23 @@ fn comments_come_from_the_dialect() {
 fn statement_ends_skip_routine_bodies_and_custom_delimiters() {
     let sql =
         "CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE a SET x = 1; SELECT 2; END;\nSELECT 3";
-    assert_eq!(ends(sql, Dialect::MySql), [";"]);
+    assert_eq!(ends(sql, mysql_lex()), [";"]);
 
     let sql = "DELIMITER $$\n\
                CREATE PROCEDURE p()\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND$$\n\
                DELIMITER ;\n\
                CALL p();";
-    let found = ends(sql, Dialect::MySql);
+    let found = ends(sql, mysql_lex());
     assert_eq!(found.len(), 2);
     assert_eq!(
-        spans(sql, Dialect::MySql)
+        spans(sql, mysql_lex())
             .iter()
             .filter(|s| s.kind == SpanKind::DelimiterLine)
             .count(),
         2
     );
     // `DELIMITER` is a client command only in MySQL
-    assert!(ends("DELIMITER //\nSELECT 1//", Dialect::Postgres).is_empty());
+    assert!(ends("DELIMITER //\nSELECT 1//", postgres_lex()).is_empty());
 }
 
 #[test]
@@ -154,37 +163,37 @@ fn statement_ends_ignore_case_expressions_inside_routines() {
     // `CASE … END` closes the expression, so the following `;` stays inside the routine.
     let sql = "CREATE PROCEDURE p() BEGIN SELECT CASE WHEN 1 THEN 2 END; SELECT 2; END;";
     assert_eq!(
-        ends(sql, Dialect::MySql).len(),
+        ends(sql, mysql_lex()).len(),
         1,
         "the routine is one statement"
     );
     // Nested CASE expressions.
     let nested =
         "CREATE PROCEDURE p() BEGIN SELECT CASE WHEN 1 THEN CASE WHEN 2 THEN 3 END END; END;";
-    assert_eq!(ends(nested, Dialect::MySql).len(), 1);
+    assert_eq!(ends(nested, mysql_lex()).len(), 1);
     // A CASE statement ends with `END CASE`; the trailing CASE is not a new opener.
     let statement = "CREATE PROCEDURE p() BEGIN CASE 1 WHEN 1 THEN SELECT 1; END CASE; END;";
-    assert_eq!(ends(statement, Dialect::MySql).len(), 1);
+    assert_eq!(ends(statement, mysql_lex()).len(), 1);
     // A CASE branch may hold an IF statement: `END IF` must not close the CASE nesting.
     let branch = "CREATE PROCEDURE p() BEGIN CASE 1 WHEN 1 THEN IF 1 THEN SELECT 1; END IF; \
                   END CASE; SELECT 2; END;";
-    assert_eq!(ends(branch, Dialect::MySql).len(), 1);
+    assert_eq!(ends(branch, mysql_lex()).len(), 1);
     // Comments between END and CASE do not change the terminator.
     let comment = "CREATE PROCEDURE p() BEGIN CASE 1 WHEN 1 THEN SELECT 1; END /* note */ CASE; \
                    SELECT 2; END;";
-    assert_eq!(ends(comment, Dialect::MySql).len(), 1);
+    assert_eq!(ends(comment, mysql_lex()).len(), 1);
     // `END IF` still does not close the routine.
     assert_eq!(
         ends(
             "CREATE PROCEDURE p() BEGIN IF 1 THEN SELECT 1; END IF; END;",
-            Dialect::MySql
+            mysql_lex()
         )
         .len(),
         1
     );
     // Outside a routine a CASE expression is plain text and the statement ends at its semicolon.
     assert_eq!(
-        ends("SELECT CASE WHEN 1 THEN 2 END; SELECT 2", Dialect::MySql).len(),
+        ends("SELECT CASE WHEN 1 THEN 2 END; SELECT 2", mysql_lex()).len(),
         1
     );
 }
@@ -192,44 +201,38 @@ fn statement_ends_ignore_case_expressions_inside_routines() {
 #[test]
 fn separators_ignore_quotes_comments_and_groups() {
     let sql = "a, 'x,y', f(1, 2), -- c,\n b /* , */";
-    assert_eq!(separators(sql, Dialect::MySql, b','), [1, 8, 17]);
+    assert_eq!(separators(sql, mysql_lex(), b','), [1, 8, 17]);
     assert_eq!(
-        separators("TEXT DEFAULT 'a b' NOT NULL", Dialect::Postgres, b' '),
+        separators("TEXT DEFAULT 'a b' NOT NULL", postgres_lex(), b' '),
         [4, 12, 18, 22]
     );
-    assert_eq!(
-        separators("decimal(10, 2)", Dialect::Postgres, b',').len(),
-        0
-    );
+    assert_eq!(separators("decimal(10, 2)", postgres_lex(), b',').len(), 0);
 }
 
 #[test]
 fn check_reports_unterminated_and_unbalanced_text() {
     assert_eq!(
-        check("SELECT 'x", Dialect::Postgres),
+        check("SELECT 'x", postgres_lex()),
         Err(LexError::UnclosedQuote)
     );
-    assert_eq!(check("SELECT 'x' -- c", Dialect::Postgres), Ok(()));
+    assert_eq!(check("SELECT 'x' -- c", postgres_lex()), Ok(()));
+    assert_eq!(check("/* x", mysql_lex()), Err(LexError::UnclosedComment));
     assert_eq!(
-        check("/* x", Dialect::MySql),
-        Err(LexError::UnclosedComment)
-    );
-    assert_eq!(
-        check("f(1", Dialect::Postgres),
+        check("f(1", postgres_lex()),
         Err(LexError::UnbalancedParentheses)
     );
     assert_eq!(
-        check("f(1))", Dialect::Postgres),
+        check("f(1))", postgres_lex()),
         Err(LexError::UnbalancedParentheses)
     );
-    assert_eq!(check("[x", Dialect::Sqlite), Err(LexError::UnclosedQuote));
-    assert_eq!(check("SELECT 1", Dialect::Sqlite), Ok(()));
+    assert_eq!(check("[x", sqlite_lex()), Err(LexError::UnclosedQuote));
+    assert_eq!(check("SELECT 1", sqlite_lex()), Ok(()));
 }
 
 #[test]
 fn depth_tracks_parentheses() {
     let sql = "f(g(1), 2)";
-    let found: Vec<_> = spans(sql, Dialect::Sqlite)
+    let found: Vec<_> = spans(sql, sqlite_lex())
         .into_iter()
         .filter(|s| matches!(s.kind, SpanKind::OpenParen | SpanKind::CloseParen))
         .map(|s| (s.kind, s.depth))
@@ -242,5 +245,37 @@ fn depth_tracks_parentheses() {
             (SpanKind::CloseParen, 2),
             (SpanKind::CloseParen, 1),
         ]
+    );
+}
+
+#[test]
+fn segments_split_at_top_level_and_ahead_of_protected_text() {
+    let sql = "TEXT DEFAULT 'a b' COMMENT 'x;y' , second";
+    let parts: Vec<&str> = segments(sql, Lex::MYSQL, &['=', ','])
+        .into_iter()
+        .map(|r| &sql[r])
+        .collect();
+    assert_eq!(
+        parts,
+        [
+            "TEXT", "DEFAULT", "'a b'", "COMMENT", "'x;y'", ",", "second"
+        ]
+    );
+    // Whitespace inside parentheses stays in one segment.
+    assert_eq!(
+        segments("KEY (a, b)", Lex::MYSQL, &['=', ','])
+            .into_iter()
+            .map(|r| &"KEY (a, b)"[r])
+            .collect::<Vec<_>>(),
+        ["KEY", "(a, b)"]
+    );
+    // Comments are protected, so their spaces do not split either.
+    let sql = "a /* x y */ b";
+    assert_eq!(
+        segments(sql, Lex::MYSQL, &[])
+            .into_iter()
+            .map(|r| &sql[r])
+            .collect::<Vec<_>>(),
+        ["a", "/* x y */", "b"]
     );
 }

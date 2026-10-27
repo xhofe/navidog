@@ -1,7 +1,8 @@
 use std::ops::RangeInclusive;
+use std::sync::Arc;
 
 use gpui_kit::SharedString;
-use navidog_db::dialect::Dialect;
+use navidog_sql::dialect::Dialect;
 use navidog_util::sql_type::TypeKind;
 
 use super::*;
@@ -29,13 +30,36 @@ impl GridModel {
     /// Text the cell shows and the editor starts from. In raw data mode a string value is a SQL
     /// literal (`'PENELOPE'`), including quotes. A value already typed as an expression is left as
     /// typed. NULL and an unfilled cell are empty; the grid paints NULL itself.
-    pub fn raw_text(&self, r: usize, c: usize, raw_mode: bool, dialect: Dialect) -> String {
+    pub fn raw_text(&self, r: usize, c: usize, raw_mode: bool, dialect: &dyn Dialect) -> String {
         self.shown_text(r, c, raw_mode, dialect).to_string()
+    }
+
+    /// Cell text for painting and editing. Without a bound connection raw mode cannot quote, so
+    /// the stored characters are used as typed; the returned `SharedString` still shares the
+    /// cell's string, so painting a frame does not copy every value.
+    pub fn display_text(
+        &self,
+        r: usize,
+        c: usize,
+        raw_mode: bool,
+        dialect: Option<&dyn Dialect>,
+    ) -> SharedString {
+        match (self.value(r, c), dialect) {
+            (Some(Some(_)), Some(dialect)) => self.shown_text(r, c, raw_mode, dialect),
+            (Some(Some(text)), None) => text.clone(),
+            _ => SharedString::default(),
+        }
     }
 
     /// `raw_text` for painting: shares the cell's string unless raw data mode quotes it, so a
     /// frame does not copy every visible value.
-    pub fn shown_text(&self, r: usize, c: usize, raw_mode: bool, dialect: Dialect) -> SharedString {
+    pub fn shown_text(
+        &self,
+        r: usize,
+        c: usize,
+        raw_mode: bool,
+        dialect: &dyn Dialect,
+    ) -> SharedString {
         let Some(Some(s)) = self.value(r, c) else {
             return SharedString::default();
         };
@@ -148,7 +172,7 @@ impl GridModel {
     /// quoted literals), so pasting them back in raw data mode, where text is SQL, writes the same values.
     /// Cells containing a tab, a newline or a quote use quoted TSV (RFC 4180 with a tab delimiter),
     /// so a copy/paste round trip keeps one value in one cell.
-    pub fn selected_tsv(&self, header: bool, data: bool, raw: Option<Dialect>) -> String {
+    pub fn selected_tsv(&self, header: bool, data: bool, raw: Option<Arc<dyn Dialect>>) -> String {
         let mut lines = Vec::new();
         if header {
             lines.push(
@@ -164,8 +188,8 @@ impl GridModel {
             for r in rows.filter(|&r| r < self.row_count()) {
                 let cells: Vec<String> = cols
                     .clone()
-                    .map(|c| match raw {
-                        Some(dialect) => tsv_field(&self.shown_text(r, c, true, dialect)),
+                    .map(|c| match raw.clone() {
+                        Some(dialect) => tsv_field(&self.shown_text(r, c, true, dialect.as_ref())),
                         None => tsv_field(
                             self.value(r, c)
                                 .cloned()

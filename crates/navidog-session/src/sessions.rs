@@ -14,8 +14,8 @@ use navidog_model::connection::ConnectionId;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use navidog_db::dialect::Dialect;
 use navidog_db::{ConnectParams, DbError, DbResult, Driver, Relational, Secrets, Session, runtime};
+use navidog_sql::dialect::Dialect;
 
 use crate::registry::DriverRegistry;
 use operation::OperationScope;
@@ -54,7 +54,7 @@ pub enum SessionsEvent {
 struct Live {
     driver: Arc<dyn Driver>,
     params: ConnectParams,
-    dialect: Option<Dialect>,
+    dialect: Option<Arc<dyn Dialect>>,
     primary: SharedSession,
     /// The database the primary session is connected to (PostgreSQL)
     primary_db: Option<String>,
@@ -146,8 +146,8 @@ impl Sessions {
         }
     }
 
-    pub fn dialect(&self, id: &str) -> Option<Dialect> {
-        self.live.get(id).and_then(|l| l.dialect)
+    pub fn dialect(&self, id: &str) -> Option<Arc<dyn Dialect>> {
+        self.live.get(id).and_then(|l| l.dialect.clone())
     }
 
     pub fn session_count(&self, id: &str) -> usize {
@@ -377,12 +377,11 @@ impl Sessions {
 /// application write. PostgreSQL already connected to that database via `new_session`.
 pub async fn prepare_database(
     rel: &mut dyn Relational,
-    dialect: Dialect,
+    dialect: &dyn Dialect,
     database: &str,
 ) -> DbResult<()> {
-    if dialect == Dialect::MySql && !database.is_empty() {
-        rel.execute(&format!("USE {}", dialect.quote_ident(database)))
-            .await?;
+    if let Some(sql) = dialect.prepare_database_sql(database) {
+        rel.execute(&sql).await?;
     }
     Ok(())
 }

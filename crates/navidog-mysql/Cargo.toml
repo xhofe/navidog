@@ -1,0 +1,17 @@
+[package]
+name = "navidog-mysql"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MySQL and MariaDB driver and SQL dialect for navidog."
+
+[dependencies]
+navidog-model.workspace = true
+navidog-sql = { path = "../navidog-sql" }
+navidog-db = { path = "../navidog-db" }
+tokio.workspace = true
+futures.workspace = true
+tracing.workspace = true
+mysql_async = { version = "0.37", default-features = false, features = ["default-rustls-ring"] }

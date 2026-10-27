@@ -90,6 +90,9 @@ jobs:
       - name: dependency direction check
         if: matrix.target == 'aarch64-apple-darwin'
         run: scripts/check-deps.sh
+      - name: dialect branch check
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: scripts/check-dialect-branches.sh
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test

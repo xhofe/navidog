@@ -24,9 +24,10 @@ fn refresh_keeps_spinning_for_half_a_turn_after_the_load() {
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{TestAppContext, WindowOptions};
 use navidog_app_state::store::ConnectionStore;
-use navidog_db::{ConnectParams, Secrets, connect, sqlite::SqliteDriver};
+use navidog_db::{ConnectParams, Secrets, connect};
 use navidog_model::connection::Connection;
 use navidog_model::crypto::Key;
+use navidog_sqlite::SqliteDriver;
 use std::sync::Arc;
 
 struct Host(Entity<TableViewer>);
@@ -480,7 +481,10 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
             v.apply_commit_result(old_generation, Err("stale commit".into()), true, window, cx);
             assert!(!v.apply_connected(
                 old_generation,
-                Ok(Ok((Dialect::Sqlite, Vec::new()))),
+                Ok(Ok((
+                    std::sync::Arc::new(navidog_sqlite::SqliteDialect),
+                    Vec::new()
+                ))),
                 old_session,
                 None,
                 cx,

@@ -26,10 +26,12 @@
 | M11 AI 助手 | 未开始 | | | |
 | M12 同步（替代 Cloud） | 未开始 | | | |
 | M13 HTTP 隧道 | 未开始 | | | |
-| M14 其他数据库 | 未开始 | | db/ | |
+| M14 其他数据库 | 未开始 | | db/ | 已实现的 MySQL/MariaDB、PostgreSQL、SQLite 各自一个 crate。接入一个新数据库：新建不依赖 GPUI 的 crate，实现 `Driver`（`info()`、`connect()`）；关系型再实现 `Relational`（八个目录/补全方法用 `relational_catalog!` 转发，漏实现是编译错误）和 `Dialect`（词法、引用、`features()` 与少量返回 SQL 的方法）；最后在 `navidog-session::init` 注册具体驱动。界面只读能力方法与 `DialectFeatures`，不按产品名分支（`scripts/check-dialect-branches.sh` 检查） |
 | M15 发布 | 部分 | `codex/macos-adhoc-signing` | 150-macos-distribution | 工作流、安装包、`latest.json`、应用内更新已在仓库里；无证书时免费临时签名与验签已接入并经本机验证。正式公证仍需证书与凭据（第 4 节），配置迁移（F-REL-004）未做 |
 
 ## 2. 当前里程碑：M4（表设计器）
+
+已实现的三种数据库拆成独立 crate：`navidog-mysql`（含 MariaDB）、`navidog-postgres`、`navidog-sqlite`。`Dialect` 是 trait，扫描器只看 `Lex`。目录和补全 SQL 在各会话实现里；`navidog-db` 保留 `Driver`/`Session`/`Relational` 契约、连接与 SSH 编排、执行恢复和结果集读取。表设计的语句差异是方言上的能力方法，执行顺序仍在 `navidog-schema`。连接表单读 `DriverInfo` 的多主机、超时、连接参数和 SSL 模式。界面按方言能力方法（`like_text_cast`、`standalone_indexes`、`table_option_style`、`explain_style` 等）和 `DriverInfo` 标志分支，没有按 `Dialect::id()` 的比较。相对拆分前有三处行为变化：没有方言时查询补全为空（以前回退到 MySQL 关键字）；未绑定连接的网格按输入的原文显示，不再加引号；表设计器标签在连接消失后显示缺失连接面板，未保存的草稿关闭前要确认。验证见第 5 节。
 
 ### M3 收尾记录
 
@@ -294,6 +296,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 命令列界面分输出区和输入区，不支持 `\d`、`.tables` 等客户端命令 | M3 | 需要时加显示宽度表 |
 | 弹出窗口里的查询编辑器没有代码段和标识符页 | M3 | 无 |
 | MySQL 的“写入超时”仍只保存 | M3 | mysql_async 提供发送超时后接上 |
+| `navidog-schema` 的表选项解析（`mysql_span`/`pg_storage`/`pg_clause`）仍在通用 crate 里，只按 `TableOptionStyle` 分派；表设计在 `enriches_from_catalog` / `rebuilds_tables` 下仍直接执行 PostgreSQL catalog SQL 和 SQLite 重建 SQL（`sqlite_schema`、`sqlite_sequence`、`PRAGMA`）；关键字表是手抄的保留字集合，不是脚本从官方文件生成 | 拆 crate | 接第四个数据库前把选项解析和上述 SQL 搬进方言方法（会形成 schema → 方言 crate 的依赖，需要在 00-overview 里先定方向），并让关键字表由脚本生成 |
 
 ## 5. 验证
 
@@ -304,7 +307,8 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 格式与静态检查 | `cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings` | CI 执行 |
 | 裸值检查 | `scripts/check-raw-px.sh` | CI 执行 |
 | i18n 检查 | `scripts/check-i18n.sh` | CI 执行；字面量 key 必须在本 crate 定义，动态 key 必须登记在 `scripts/i18n-dynamic-keys.txt` |
-| 依赖方向检查 | `scripts/check-deps.sh` | CI 执行；model/db/sql/schema/util/sql-log/headless 的 normal 依赖不得出现 `gpui`，`crates/navidog-core` 不得回潮 |
+| 方言分支检查 | `scripts/check-dialect-branches.sh` | CI 执行；生产代码不得比较 `dialect.id()`，方言差异写成能力方法，界面能力写成 `DriverInfo` 标志 |
+| 依赖方向检查 | `scripts/check-deps.sh` | CI 执行；model/db/sql/schema/util/sql-log/headless/mysql/postgres/sqlite 的 normal 依赖不得出现 `gpui`，`crates/navidog-core` 不得回潮 |
 | 依赖审计 | `cargo deny --all-features check`、`cargo audit` | CI 的 security-audit 工作流执行，配置在根目录 `deny.toml` 和 `.cargo/audit.toml`；只有直接依赖的 unmaintained 会失败，无补丁的 `RUSTSEC-2023-0071`（rsa）在两边都忽略 |
 | 单元测试与 headless UI 测试 | `cargo test --workspace` | CI 执行 |
 | 实库测试 | `docker compose up -d --wait && NAVIDOG_LIVE=1 cargo test -p navidog-db -p navidog-schema -p navidog-query --lib --test live --locked` | CI 的 integration 工作流和本地都执行；`--lib` 包含操作写入完成后元数据断连恢复的三驱动回归和 `navidog-schema` 的表设计 DDL 回归，测完执行 `docker compose down` |

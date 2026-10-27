@@ -222,6 +222,9 @@ pub struct DriverDefaults {
     pub port: Option<u16>,
     pub user: &'static str,
     pub database: Option<&'static str>,
+    /// The connection is a file path. The suggested name is the file stem.
+    pub file_based: bool,
+    pub supports_network: bool,
 }
 
 pub fn driver_defaults(driver: &str) -> DriverDefaults {
@@ -231,18 +234,24 @@ pub fn driver_defaults(driver: &str) -> DriverDefaults {
             port: Some(5432),
             user: "postgres",
             database: Some("postgres"),
+            file_based: false,
+            supports_network: true,
         },
         "sqlite" => DriverDefaults {
             host: "",
             port: None,
             user: "",
             database: None,
+            file_based: true,
+            supports_network: false,
         },
         _ => DriverDefaults {
             host: "localhost",
             port: Some(3306),
             user: "root",
             database: None,
+            file_based: false,
+            supports_network: true,
         },
     }
 }
@@ -364,16 +373,16 @@ impl Connection {
         conn
     }
 
-    /// Navicat's default connection name: host_port; SQLite uses the file name.
+    /// Navicat's default connection name: host_port; a file database uses the file name.
     pub fn suggested_name(&self) -> String {
-        if self.driver == "sqlite" {
+        if driver_defaults(&self.driver).file_based {
             return self
                 .general
                 .file
                 .as_deref()
                 .and_then(|f| std::path::Path::new(f).file_stem())
                 .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "sqlite".into());
+                .unwrap_or_else(|| self.driver.clone());
         }
         match self.general.port {
             Some(port) => format!("{}_{}", self.general.host, port),
@@ -382,7 +391,7 @@ impl Connection {
     }
 
     pub fn supports_network(&self) -> bool {
-        self.driver != "sqlite"
+        driver_defaults(&self.driver).supports_network
     }
 }
 

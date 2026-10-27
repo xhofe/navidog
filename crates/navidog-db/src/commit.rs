@@ -2,21 +2,23 @@
 //! UI, so it lives beside the drivers and is shared by the table viewer and
 //! editable query results.
 
+use std::sync::Arc;
+
 use navidog_util::starts_with_ignore_ascii_case;
 
-use crate::dialect::Dialect;
 use crate::{DbError, DbResult, Relational, ResultSet};
+use navidog_sql::dialect::Dialect;
 
 /// Change statements and how to commit them.
 #[derive(Clone)]
 pub struct Commit {
     pub statements: Vec<String>,
     pub begin: &'static str,
-    pub dialect: Dialect,
+    pub dialect: Arc<dyn Dialect>,
 }
 
 impl Commit {
-    pub fn new(dialect: Dialect, statements: Vec<String>) -> Self {
+    pub fn new(dialect: Arc<dyn Dialect>, statements: Vec<String>) -> Self {
         Self {
             statements,
             begin: dialect.begin_transaction(),
@@ -45,7 +47,8 @@ pub async fn apply(
     rel.execute(start).await?;
     for statement in &commit.statements {
         let result = rel.execute(statement).await;
-        if let Err(error) = result.and_then(|sets| matched_a_row(statement, &sets, commit.dialect))
+        if let Err(error) =
+            result.and_then(|sets| matched_a_row(statement, &sets, commit.dialect.as_ref()))
         {
             if let Err(rollback) = rel.execute(undo).await {
                 tracing::error!(%rollback, undo, "could not undo the failed batch");
@@ -75,9 +78,10 @@ pub async fn apply(
 /// longer find it (changed elsewhere, or a value only the server knew). MySQL
 /// counts changed rather than matched rows for UPDATE, so only its DELETE is
 /// checked.
-pub fn matched_a_row(sql: &str, sets: &[ResultSet], dialect: Dialect) -> DbResult<()> {
+pub fn matched_a_row(sql: &str, sets: &[ResultSet], dialect: &dyn Dialect) -> DbResult<()> {
     let delete = starts_with_ignore_ascii_case(sql, "DELETE");
-    let update = starts_with_ignore_ascii_case(sql, "UPDATE") && dialect != Dialect::MySql;
+    let update =
+        starts_with_ignore_ascii_case(sql, "UPDATE") && !dialect.features().counts_changed_rows;
     if (delete || update) && sets.last().and_then(|s| s.affected_rows) == Some(0) {
         return Err(DbError::coded(
             "navidog.row_not_found",
@@ -97,8 +101,8 @@ mod tests {
     }
 
     impl Relational for Scripted {
-        fn dialect(&self) -> Dialect {
-            Dialect::Sqlite
+        fn dialect(&self) -> std::sync::Arc<dyn Dialect> {
+            std::sync::Arc::new(navidog_sqlite::SqliteDialect)
         }
 
         fn execute<'a>(
@@ -118,6 +122,8 @@ mod tests {
                 }
             })
         }
+
+        crate::unsupported_catalog!();
     }
 
     #[test]
@@ -128,7 +134,10 @@ mod tests {
         };
         let error = futures::executor::block_on(apply(
             &mut rel,
-            Commit::new(Dialect::Sqlite, Vec::new()),
+            Commit::new(
+                std::sync::Arc::new(navidog_sqlite::SqliteDialect),
+                Vec::new(),
+            ),
             false,
             false,
         ))
@@ -145,7 +154,10 @@ mod tests {
         };
         let _ = futures::executor::block_on(apply(
             &mut rel,
-            Commit::new(Dialect::Sqlite, Vec::new()),
+            Commit::new(
+                std::sync::Arc::new(navidog_sqlite::SqliteDialect),
+                Vec::new(),
+            ),
             true,
             true,
         ));
@@ -169,11 +181,18 @@ mod tests {
         };
         let update = "UPDATE \"t\" SET \"name\" = 'b' WHERE \"id\" IS NULL";
         let delete = "DELETE FROM `t` WHERE `id` = 1 LIMIT 1";
-        assert!(matched_a_row(update, &affected(0), Dialect::Sqlite).is_err());
-        assert!(matched_a_row(update, &affected(1), Dialect::Postgres).is_ok());
-        assert!(matched_a_row(delete, &affected(0), Dialect::MySql).is_err());
+        assert!(matched_a_row(update, &affected(0), &navidog_sqlite::SqliteDialect).is_err());
+        assert!(matched_a_row(update, &affected(1), &navidog_postgres::PostgresDialect).is_ok());
+        assert!(matched_a_row(delete, &affected(0), &navidog_mysql::MysqlDialect).is_err());
         // MySQL counts changed rows: an UPDATE to the same value is 0 and still fine
-        assert!(matched_a_row(update, &affected(0), Dialect::MySql).is_ok());
-        assert!(matched_a_row("INSERT INTO t VALUES (1)", &affected(0), Dialect::Sqlite).is_ok());
+        assert!(matched_a_row(update, &affected(0), &navidog_mysql::MysqlDialect).is_ok());
+        assert!(
+            matched_a_row(
+                "INSERT INTO t VALUES (1)",
+                &affected(0),
+                &navidog_sqlite::SqliteDialect
+            )
+            .is_ok()
+        );
     }
 }

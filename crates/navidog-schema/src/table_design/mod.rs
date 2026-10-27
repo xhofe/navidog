@@ -5,14 +5,15 @@ mod options;
 mod parse;
 mod properties;
 pub use entries::{DesignEntry, EntryKind, parse_entry, split_field_list};
-pub use options::{MYSQL_OPTIONS, POSTGRES_OPTIONS, edit_table_option, table_option};
+pub use options::{edit_table_option, table_option};
 pub use properties::{ColumnProperties, ColumnProperty, column_properties, edit_column};
 mod plan;
 #[cfg(test)]
 mod tests;
 
-use navidog_db::{DbError, DbResult, Relational, dialect::Dialect};
+use navidog_db::{DbError, DbResult, Relational};
 use navidog_model::object::{ObjectKind, Scope};
+use navidog_sql::dialect::Dialect;
 pub use plan::{plan, plan_with};
 use serde::{Deserialize, Serialize};
 
@@ -61,7 +62,7 @@ impl TableDesign {
             ..Default::default()
         }
     }
-    pub fn create_sql(&self, dialect: Dialect, scope: &Scope, name: &str) -> DbResult<String> {
+    pub fn create_sql(&self, dialect: &dyn Dialect, scope: &Scope, name: &str) -> DbResult<String> {
         self.validate(dialect)?;
         let mut parts: Vec<_> = self
             .columns
@@ -71,7 +72,7 @@ impl TableDesign {
         parts.extend(self.constraints.iter().map(|c| format!("  {}", c.trim())));
         Ok(format!(
             "CREATE {}TABLE {} (\n{}\n){}",
-            if dialect == Dialect::Postgres && self.unlogged {
+            if dialect.features().supports_unlogged && self.unlogged {
                 "UNLOGGED "
             } else {
                 ""
@@ -85,7 +86,7 @@ impl TableDesign {
             }
         ))
     }
-    fn validate(&self, dialect: Dialect) -> DbResult<()> {
+    fn validate(&self, dialect: &dyn Dialect) -> DbResult<()> {
         if self.name.trim().is_empty() || self.columns.is_empty() {
             return Err(DbError::msg(
                 "A table needs a name and at least one column.",
@@ -115,7 +116,7 @@ impl TableDesign {
         if self.comment.contains('\0') || self.columns.iter().any(|c| c.comment.contains('\0')) {
             return Err(DbError::msg("Comments cannot contain NUL characters."));
         }
-        if dialect != Dialect::Postgres
+        if !dialect.features().separate_comments
             && (!self.comment.is_empty() || self.columns.iter().any(|c| !c.comment.is_empty()))
         {
             return Err(DbError::msg(
@@ -127,18 +128,18 @@ impl TableDesign {
         }
         parse::fragment(&self.options, dialect)?;
         for index in &self.indexes {
-            if navidog_db::sql::split_script(index, dialect).len() != 1 {
+            if navidog_db::sql::split_script(index, dialect.lex()).len() != 1 {
                 return Err(DbError::msg(
                     "Each supplemental definition must contain one SQL statement.",
                 ));
             }
-            if dialect == Dialect::Postgres
+            if dialect.features().separate_comments
                 && (index.starts_with("COMMENT ON TABLE ")
                     || index.starts_with("COMMENT ON COLUMN "))
             {
                 continue;
             }
-            if navidog_db::sql::split_script(index, dialect).len() != 1
+            if navidog_db::sql::split_script(index, dialect.lex()).len() != 1
                 || !index.trim_start().to_uppercase().starts_with("CREATE ")
             {
                 return Err(DbError::msg(
@@ -162,9 +163,9 @@ pub struct TableSnapshot {
 pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult<TableSnapshot> {
     let dialect = r.dialect();
     let mut ddl = r.object_ddl(scope, ObjectKind::Table, name).await?;
-    let mut design = parse::create(&ddl, name, dialect)?;
-    if dialect == Dialect::Postgres {
-        design.migrate_comments(scope)?;
+    let mut design = parse::create(&ddl, name, dialect.as_ref())?;
+    if dialect.features().enriches_from_catalog {
+        design.migrate_comments(scope, dialect.as_ref())?;
         // The general DDL view omits identity/generated flags and nondefault collations.
         // Include them in both the editable draft and the concurrency fingerprint.
         let table = dialect.qualified(scope, name);
@@ -241,7 +242,7 @@ pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult
         ));
     }
     let mut triggers = Vec::new();
-    if dialect == Dialect::Sqlite {
+    if dialect.features().rebuilds_tables {
         let sql = format!(
             "SELECT type, sql FROM {}.sqlite_schema WHERE tbl_name = {} AND type IN ('index', 'trigger') AND sql IS NOT NULL ORDER BY type, name",
             dialect.quote_ident(&scope.database),
@@ -269,7 +270,7 @@ pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult
 pub async fn sqlite_table_names(r: &mut dyn Relational, scope: &Scope) -> DbResult<Vec<String>> {
     let sql = format!(
         "SELECT name FROM {}.sqlite_schema WHERE type = 'table'",
-        Dialect::Sqlite.quote_ident(&scope.database)
+        r.dialect().quote_ident(&scope.database)
     );
     let mut names = Vec::new();
     for set in r.execute(&sql).await? {
@@ -298,10 +299,10 @@ pub async fn apply(
 ) -> DbResult<TableSnapshot> {
     let d = r.dialect();
     let mut legacy_before = before.cloned();
-    if d == Dialect::Postgres
+    if d.features().separate_comments
         && let Some(old) = &mut legacy_before
     {
-        old.design.migrate_comments(scope)?;
+        old.design.migrate_comments(scope, d.as_ref())?;
     }
     let before = legacy_before.as_ref();
     if let Some(old) = before {
@@ -312,35 +313,32 @@ pub async fn apply(
             ));
         }
     }
-    match d {
-        Dialect::MySql => {
-            r.execute(&format!("USE {}", d.quote_ident(&scope.database)))
-                .await?;
-        }
-        Dialect::Postgres => {
-            r.execute(&format!(
-                "SET search_path TO {}",
-                d.quote_ident(scope.schema.as_deref().unwrap_or("public"))
-            ))
-            .await?;
-        }
-        Dialect::Sqlite if scope.database != "main" => {
-            return Err(DbError::msg(
-                "The table designer only supports the primary SQLite database.",
-            ));
-        }
-        _ => {}
+    if let Some(sql) = d.prepare_database_sql(&scope.database) {
+        r.execute(&sql).await?;
     }
-    let occupied = if d == Dialect::Sqlite && before.is_some() {
+    if let Some(schema) = scope.schema.as_deref().or(d.default_schema())
+        && let Some(sql) = d.set_search_path_sql(schema)
+    {
+        r.execute(&sql).await?;
+    }
+    if let Some(primary) = d.table_rebuild_catalog()
+        && scope.database != primary
+    {
+        return Err(DbError::msg(
+            "The table designer can only rebuild tables in the primary SQLite database.",
+        ));
+    }
+    let occupied = if d.features().rebuilds_tables && before.is_some() {
         sqlite_table_names(r, scope).await?
     } else {
         Vec::new()
     };
-    let statements = plan_with(d, scope, before, after, &occupied)?;
+    let statements = plan_with(d.as_ref(), scope, before, after, &occupied)?;
     if statements.is_empty() {
         return load(r, scope, &after.name).await;
     }
-    let sqlite_rebuild = d == Dialect::Sqlite && before.is_some() && sqlite_rename(&statements);
+    let sqlite_rebuild =
+        d.features().rebuilds_tables && before.is_some() && sqlite_rename(&statements);
     let foreign_keys = if sqlite_rebuild {
         r.execute("PRAGMA foreign_keys")
             .await?
@@ -371,10 +369,10 @@ pub async fn apply(
     } else {
         false
     };
-    let transactional = d != Dialect::MySql;
+    let transactional = d.features().transactional_ddl;
     let result = async {
         if transactional {
-            r.execute(if d == Dialect::Sqlite {
+            r.execute(if d.features().begin_immediate {
                 "BEGIN IMMEDIATE"
             } else {
                 "BEGIN"
@@ -383,12 +381,8 @@ pub async fn apply(
         }
         // Recheck inside the transaction/lock as well as before the preview is applied.
         if let Some(old) = before {
-            if d == Dialect::Postgres {
-                r.execute(&format!(
-                    "LOCK TABLE {} IN ACCESS EXCLUSIVE MODE",
-                    d.qualified(scope, &old.design.name)
-                ))
-                .await?;
+            if let Some(sql) = d.exclusive_lock_sql(&d.qualified(scope, &old.design.name)) {
+                r.execute(&sql).await?;
             }
             if load(r, scope, &old.design.name).await? != *old {
                 return Err(DbError::msg(

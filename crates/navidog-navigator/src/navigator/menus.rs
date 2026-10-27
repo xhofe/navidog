@@ -88,7 +88,10 @@ impl NavigatorPanel {
                     t!("nav.edit_connection").to_string(),
                     Box::new(EditConnection),
                 );
-                let mysql = Sessions::global(cx).read(cx).dialect(id) == Some(Dialect::MySql);
+                let mysql = Sessions::global(cx)
+                    .read(cx)
+                    .dialect(id)
+                    .is_some_and(|d| d.features().switches_database);
                 let menu = if open && mysql {
                     menu.menu(t!("nav.reload").to_string(), Box::new(ReloadConnection))
                 } else {
@@ -266,6 +269,7 @@ impl NavigatorPanel {
             return Self::query_menu(o);
         }
         let d = Sessions::global(cx).read(cx).dialect(&o.scope.connection);
+        let d = d.as_ref();
         let kind = kind_label(o.kind);
         let droppable = d.and_then(|d| d.drop_keyword(o.kind)).is_some();
         let renamable = d
@@ -295,7 +299,7 @@ impl NavigatorPanel {
             );
         if o.kind == ObjectKind::Table {
             menu = menu.menu(t!("obj.empty_table").to_string(), Box::new(EmptyTables));
-            if d != Some(Dialect::Sqlite) {
+            if d.as_ref().is_none_or(|d| !d.features().exposes_rowid) {
                 menu = menu.menu(
                     t!("obj.truncate_table").to_string(),
                     Box::new(TruncateTables),

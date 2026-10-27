@@ -18,7 +18,7 @@ pub struct GridDelegate {
     pub(super) show_comment: bool,
     /// String values are shown as SQL literals (F-DATA-010)
     pub(super) raw: bool,
-    pub(super) dialect: Dialect,
+    pub(super) dialect: Option<Arc<dyn Dialect>>,
     /// Highlight cells containing this text (query, case sensitive)
     pub(super) find: Option<(SharedString, bool)>,
     /// Display order and which columns are frozen (F-DATA-009)
@@ -509,7 +509,9 @@ impl TableDelegate for GridDelegate {
             .find
             .as_ref()
             .is_some_and(|(query, case)| self.model.cell_matches(r, c, query, *case));
-        let shown = self.model.shown_text(r, c, self.raw, self.dialect);
+        let shown = self
+            .model
+            .display_text(r, c, self.raw, self.dialect.as_deref());
         // Unfilled cells of a new row show Navicat's literal "(Default)" and are not written.
         let (text, tone): (SharedString, Option<gpui_kit::Hsla>) = match self.model.value(r, c) {
             // A cell shows one line, like Navicat; the cell editor shows the full value

@@ -5031,6 +5031,7 @@ dependencies = [
  "navidog-navigator",
  "navidog-query",
  "navidog-session",
+ "navidog-sqlite",
  "navidog-test-support",
  "navidog-ui",
  "navidog-util",
@@ -5084,15 +5085,14 @@ version = "0.0.1"
 dependencies = [
  "chrono",
  "futures",
- "mysql_async",
- "native-tls",
  "navidog-model",
+ "navidog-mysql",
+ "navidog-postgres",
  "navidog-session",
  "navidog-sql",
  "navidog-sql-log",
+ "navidog-sqlite",
  "navidog-util",
- "postgres-native-tls",
- "rusqlite",
  "russh",
  "rust-i18n",
  "serde",
@@ -5100,7 +5100,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
- "tokio-postgres",
  "tracing",
 ]
 
@@ -5112,8 +5111,11 @@ dependencies = [
  "navidog-app-state",
  "navidog-db",
  "navidog-model",
+ "navidog-postgres",
  "navidog-schema",
  "navidog-session",
+ "navidog-sql",
+ "navidog-sqlite",
  "navidog-ui",
  "navidog-util",
  "rust-i18n",
@@ -5130,9 +5132,12 @@ dependencies = [
  "navidog-app-state",
  "navidog-db",
  "navidog-model",
+ "navidog-mysql",
+ "navidog-postgres",
  "navidog-schema",
  "navidog-session",
  "navidog-sql",
+ "navidog-sqlite",
  "navidog-test-support",
  "navidog-ui",
  "navidog-util",
@@ -5148,6 +5153,7 @@ version = "0.0.1"
 dependencies = [
  "navidog-db",
  "navidog-model",
+ "navidog-sqlite",
  "serde_json",
  "tempfile",
  "tokio",
@@ -5173,6 +5179,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "navidog-mysql"
+version = "0.0.1"
+dependencies = [
+ "futures",
+ "mysql_async",
+ "navidog-db",
+ "navidog-model",
+ "navidog-sql",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "navidog-navigator"
 version = "0.0.1"
 dependencies = [
@@ -5181,7 +5200,11 @@ dependencies = [
  "navidog-app-state",
  "navidog-db",
  "navidog-model",
+ "navidog-mysql",
+ "navidog-postgres",
  "navidog-session",
+ "navidog-sql",
+ "navidog-sqlite",
  "navidog-test-support",
  "navidog-ui",
  "navidog-util",
@@ -5190,6 +5213,22 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "navidog-postgres"
+version = "0.0.1"
+dependencies = [
+ "futures",
+ "native-tls",
+ "navidog-db",
+ "navidog-model",
+ "navidog-sql",
+ "navidog-util",
+ "postgres-native-tls",
+ "tokio",
+ "tokio-postgres",
  "tracing",
 ]
 
@@ -5205,7 +5244,11 @@ dependencies = [
  "navidog-db",
  "navidog-grid",
  "navidog-model",
+ "navidog-mysql",
+ "navidog-postgres",
  "navidog-session",
+ "navidog-sql",
+ "navidog-sqlite",
  "navidog-test-support",
  "navidog-ui",
  "navidog-util",
@@ -5225,7 +5268,10 @@ dependencies = [
  "chrono",
  "navidog-db",
  "navidog-model",
+ "navidog-mysql",
+ "navidog-postgres",
  "navidog-sql",
+ "navidog-sqlite",
  "serde",
  "serde_json",
  "tokio",
@@ -5241,6 +5287,10 @@ dependencies = [
  "navidog-app-state",
  "navidog-db",
  "navidog-model",
+ "navidog-mysql",
+ "navidog-postgres",
+ "navidog-sql",
+ "navidog-sqlite",
  "serde",
  "tempfile",
  "tokio",
@@ -5264,11 +5314,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "navidog-sqlite"
+version = "0.0.1"
+dependencies = [
+ "futures",
+ "navidog-db",
+ "navidog-model",
+ "navidog-sql",
+ "rusqlite",
+ "rust-i18n",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "navidog-test-support"
 version = "0.0.1"
 dependencies = [
  "gpui-kit",
  "navidog-db",
+ "navidog-sqlite",
 ]
 
 [[package]]
@@ -8588,7 +8653,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -9198,9 +9263,9 @@ checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
 
 [[package]]
 name = "unicode-normalization"
-version = "0.1.25"
+version = "0.1.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+checksum = "75cd3fb03d5288b3ba9a1ee103ac7e9cbb59f0b03d64f8ddfcc04dd42758a85d"
 dependencies = [
  "tinyvec",
 ]

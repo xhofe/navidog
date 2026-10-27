@@ -25,7 +25,6 @@ use navidog_app_state::store::ConnectionStore;
 use navidog_app_state::vgroups::VirtualGroups;
 use navidog_app_state::workspace::{Selection, Workspace, WorkspaceEvent};
 use navidog_db::ObjectInfo;
-use navidog_db::dialect::Dialect;
 use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_session::sessions::{ConnState, Sessions};
 use navidog_ui::assets::lucide;
@@ -360,7 +359,7 @@ impl ObjectsPanel {
                 _ => Content::Empty,
             },
             Selection::Database(c, d) => match sessions.dialect(c) {
-                Some(dialect) if dialect.has_schemas() => match catalog.schemas(c, d) {
+                Some(dialect) if dialect.features().has_schemas => match catalog.schemas(c, d) {
                     Some(Load::Ready(list)) => Content::Rows(
                         list.iter()
                             .map(|s| {
@@ -424,7 +423,7 @@ impl ObjectsPanel {
         let is_query = kind == Some(ObjectKind::Query);
         let droppable = is_query
             || kind
-                .zip(dialect)
+                .zip(dialect.clone())
                 .is_some_and(|(k, d)| d.drop_keyword(k).is_some());
         let button = |id: &'static str, icon: &'static str, label: String| {
             Button::new(id)
@@ -496,15 +495,18 @@ impl ObjectsPanel {
                             window.dispatch_action(Box::new(EmptyTables), cx)
                         }),
                 )
-                .when(dialect != Some(Dialect::Sqlite), |bar| {
-                    bar.child(
-                        button("obj-truncate", "scissors", t!("obj.truncate").to_string())
-                            .disabled(selected.is_none())
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(TruncateTables), cx)
-                            }),
-                    )
-                })
+                .when(
+                    dialect.as_ref().is_none_or(|d| !d.features().exposes_rowid),
+                    |bar| {
+                        bar.child(
+                            button("obj-truncate", "scissors", t!("obj.truncate").to_string())
+                                .disabled(selected.is_none())
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(TruncateTables), cx)
+                                }),
+                        )
+                    },
+                )
             })
             .child(div().flex_1())
             .when_some(kind.filter(|_| view == ViewMode::Detail), |bar, kind| {

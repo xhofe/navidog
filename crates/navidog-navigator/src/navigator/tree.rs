@@ -167,7 +167,7 @@ impl TreeBuilder<'_> {
                 let dialect = self.sessions.dialect(&c.id);
                 databases
                     .iter()
-                    .filter_map(|d| self.database(&c.id, d, dialect, &c.name))
+                    .filter_map(|d| self.database(&c.id, d, dialect.clone(), &c.name))
                     .collect()
             }
             _ => Vec::new(),
@@ -182,7 +182,7 @@ impl TreeBuilder<'_> {
         &self,
         conn: &str,
         db: &str,
-        dialect: Option<Dialect>,
+        dialect: Option<Arc<dyn Dialect>>,
         conn_name: &str,
     ) -> Option<TreeItem> {
         let node = Node::Database(conn.to_string(), db.to_string());
@@ -195,7 +195,7 @@ impl TreeBuilder<'_> {
         {
             return None;
         }
-        let children = if dialect.has_schemas() {
+        let children = if dialect.features().has_schemas {
             match self.catalog.schemas(conn, db) {
                 Some(Load::Ready(list)) => list
                     .iter()
@@ -205,7 +205,7 @@ impl TreeBuilder<'_> {
                         self.item(
                             Node::Schema(scope.clone()),
                             s.clone(),
-                            self.categories(&scope, dialect),
+                            self.categories(&scope, dialect.as_ref()),
                         )
                     })
                     .collect(),
@@ -213,7 +213,7 @@ impl TreeBuilder<'_> {
                 _ => Self::placeholder(&node, t!("nav.loading").to_string()),
             }
         } else {
-            self.categories(&Scope::new(conn, db, None), dialect)
+            self.categories(&Scope::new(conn, db, None), dialect.as_ref())
         };
         let any_match = self.matches(db)
             || self.matches(conn_name)
@@ -221,7 +221,7 @@ impl TreeBuilder<'_> {
         any_match.then(|| self.item(node, db.to_string(), children))
     }
 
-    pub(super) fn categories(&self, scope: &Scope, dialect: Dialect) -> Vec<TreeItem> {
+    pub(super) fn categories(&self, scope: &Scope, dialect: &dyn Dialect) -> Vec<TreeItem> {
         if !self.show_objects {
             return Vec::new();
         }

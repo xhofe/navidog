@@ -6,12 +6,12 @@ fn scope() -> Scope {
 #[test]
 fn quoted_definitions_round_trip_and_change_by_identity() {
     let sql = "CREATE TABLE `t` (`id` int NOT NULL AUTO_INCREMENT, `a``b` enum('x,y','z') DEFAULT 'x,y', PRIMARY KEY (`id`), KEY `ix` (`a``b`)) ENGINE=InnoDB";
-    let design = super::parse::create(sql, "t", Dialect::MySql).unwrap();
+    let design = super::parse::create(sql, "t", &navidog_mysql::MysqlDialect).unwrap();
     assert_eq!(design.columns[1].name, "a`b");
     assert_eq!(design.constraints.len(), 2);
     assert!(
         design
-            .create_sql(Dialect::MySql, &scope(), "t")
+            .create_sql(&navidog_mysql::MysqlDialect, &scope(), "t")
             .unwrap()
             .contains("enum('x,y','z') DEFAULT 'x,y'")
     );
@@ -22,7 +22,13 @@ fn quoted_definitions_round_trip_and_change_by_identity() {
     };
     let mut after = design;
     after.columns[1].name = "renamed".into();
-    let plan = plan(Dialect::MySql, &scope(), Some(&before), &after).unwrap();
+    let plan = plan(
+        &navidog_mysql::MysqlDialect,
+        &scope(),
+        Some(&before),
+        &after,
+    )
+    .unwrap();
     assert_eq!(plan.len(), 1);
     assert!(plan[0].contains("CHANGE COLUMN `a``b` `renamed` enum('x,y','z') DEFAULT 'x,y'"));
 }
@@ -31,10 +37,22 @@ fn invalid_fragments_and_unsupported_attributes_are_rejected() {
     let mut draft = TableDesign::new();
     draft.name = "t".into();
     draft.columns[0].definition = "int); DROP TABLE x; --".into();
-    assert!(plan(Dialect::MySql, &scope(), None, &draft).is_err());
+    assert!(plan(&navidog_mysql::MysqlDialect, &scope(), None, &draft).is_err());
     assert!(super::plan::index_name("CREATE TABLE x (id int)").is_err());
-    assert!(super::parse::fragment("TEXT DEFAULT 'semi;hash#-- $$/*'", Dialect::MySql).is_ok());
-    assert!(super::parse::fragment("TEXT DEFAULT 1 -- hidden suffix", Dialect::MySql).is_err());
+    assert!(
+        super::parse::fragment(
+            "TEXT DEFAULT 'semi;hash#-- $$/*'",
+            &navidog_mysql::MysqlDialect
+        )
+        .is_ok()
+    );
+    assert!(
+        super::parse::fragment(
+            "TEXT DEFAULT 1 -- hidden suffix",
+            &navidog_mysql::MysqlDialect
+        )
+        .is_err()
+    );
 }
 #[test]
 fn sqlite_backup_name_uses_the_date_then_a_suffix() {
@@ -55,7 +73,7 @@ fn sqlite_backup_name_uses_the_date_then_a_suffix() {
 #[test]
 fn sqlite_rebuild_renames_the_old_table_and_leaves_it() {
     let sql = "CREATE TABLE \"test\" (\"id\" INTEGER NOT NULL, \"name\" TEXT, \"detail\" TEXT, PRIMARY KEY (\"id\"))";
-    let design = super::parse::create(sql, "test", Dialect::Sqlite).unwrap();
+    let design = super::parse::create(sql, "test", &navidog_sqlite::SqliteDialect).unwrap();
     let before = TableSnapshot {
         design: design.clone(),
         ddl: sql.into(),
@@ -70,7 +88,7 @@ fn sqlite_rebuild_renames_the_old_table_and_leaves_it() {
         .indexes
         .push("CREATE INDEX ix_t ON test(name)".into());
     let statements = super::plan::plan_on(
-        Dialect::Sqlite,
+        &navidog_sqlite::SqliteDialect,
         &scope(),
         Some(&indexed),
         &added,
@@ -96,7 +114,7 @@ fn sqlite_rebuild_renames_the_old_table_and_leaves_it() {
     let mut dropped = design;
     dropped.columns.retain(|c| c.name != "detail");
     let statements = super::plan::plan_on(
-        Dialect::Sqlite,
+        &navidog_sqlite::SqliteDialect,
         &scope(),
         Some(&before),
         &dropped,
@@ -119,7 +137,7 @@ fn sqlite_rebuild_renames_the_old_table_and_leaves_it() {
 #[test]
 fn sqlite_rebuild_preserves_rows_indexes_triggers_and_rolls_back() {
     navidog_db::runtime::runtime().block_on(async {
-        let mut session=navidog_db::connect(Arc::new(navidog_db::sqlite::SqliteDriver::default()),navidog_db::ConnectParams {file:Some(":memory:".into()),create_new:true,..Default::default()}).await.unwrap();
+        let mut session=navidog_db::connect(Arc::new(navidog_sqlite::SqliteDriver::default()),navidog_db::ConnectParams {file:Some(":memory:".into()),create_new:true,..Default::default()}).await.unwrap();
         let r=session.relational().unwrap(); let scope=Scope::new("test","main",None);
         r.execute("PRAGMA foreign_keys=ON; CREATE TABLE p(id INTEGER PRIMARY KEY); INSERT INTO p VALUES(1); CREATE TABLE t(id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT NOT NULL, parent INTEGER REFERENCES p(id), CHECK(length(value)>0)); CREATE INDEX ix_t ON t(value); CREATE TABLE audit(v TEXT); CREATE TRIGGER audit_t AFTER INSERT ON t BEGIN INSERT INTO audit VALUES(new.value); END; INSERT INTO t(value,parent) VALUES('before',1)").await.unwrap();
         let old=load(r,&scope,"t").await.unwrap();assert_eq!(old.triggers.len(),1);assert_eq!(old.design.indexes.len(),1);
@@ -152,7 +170,7 @@ fn sqlite_rebuild_preserves_rows_indexes_triggers_and_rolls_back() {
 #[test]
 fn sqlite_rebuild_keeps_inbound_references_views_sequence_and_rowid() {
     navidog_db::runtime::runtime().block_on(async {
-        let mut session=navidog_db::connect(Arc::new(navidog_db::sqlite::SqliteDriver::default()),navidog_db::ConnectParams {file:Some(":memory:".into()),create_new:true,..Default::default()}).await.unwrap();
+        let mut session=navidog_db::connect(Arc::new(navidog_sqlite::SqliteDriver::default()),navidog_db::ConnectParams {file:Some(":memory:".into()),create_new:true,..Default::default()}).await.unwrap();
         let r=session.relational().unwrap(); let scope=Scope::new("test","main",None);
         r.execute("PRAGMA foreign_keys=ON; CREATE TABLE t(id INTEGER PRIMARY KEY AUTOINCREMENT,v TEXT); INSERT INTO t VALUES(1,'one'); UPDATE sqlite_sequence SET seq=100 WHERE name='t'; CREATE TABLE child(id INTEGER REFERENCES t(id)); INSERT INTO child VALUES(1); CREATE VIEW visible AS SELECT v FROM t").await.unwrap();
         let old=load(r,&scope,"t").await.unwrap();let mut draft=old.design.clone();draft.columns.push(DesignColumn::new(9,"new_field","TEXT"));
@@ -171,7 +189,7 @@ fn sqlite_rebuild_keeps_inbound_references_views_sequence_and_rowid() {
         r.execute("CREATE TABLE generated_table(v INTEGER, doubled INTEGER GENERATED ALWAYS AS(v*2) STORED); INSERT INTO generated_table(v) VALUES(4)").await.unwrap();
         let original=load(r,&scope,"generated_table").await.unwrap();
         let mut draft=original.design.clone();draft.indexes.push("CREATE INDEX generated_idx ON generated_table(doubled)".into());
-        let statements=plan(Dialect::Sqlite,&scope,Some(&original),&draft).unwrap();assert_eq!(statements.len(),1);
+        let statements=plan(&navidog_sqlite::SqliteDialect,&scope,Some(&original),&draft).unwrap();assert_eq!(statements.len(),1);
         apply(r,&scope,Some(&original),&draft).await.unwrap();
         assert_eq!(r.execute("SELECT doubled FROM generated_table").await.unwrap()[0].rows[0][0].as_deref(),Some("8"));
         session.close().await.unwrap();
@@ -186,19 +204,19 @@ fn live_table_design_create_alter_rename_and_constraints() {
     navidog_db::runtime::runtime().block_on(async {
         for (driver, port, db, user) in [
             (
-                Arc::new(navidog_db::mysql::MySqlDriver::mysql()) as Arc<dyn navidog_db::Driver>,
+                Arc::new(navidog_mysql::MySqlDriver::mysql()) as Arc<dyn navidog_db::Driver>,
                 13306,
                 "sakila",
                 "root",
             ),
             (
-                Arc::new(navidog_db::mysql::MySqlDriver::mariadb()) as Arc<dyn navidog_db::Driver>,
+                Arc::new(navidog_mysql::MySqlDriver::mariadb()) as Arc<dyn navidog_db::Driver>,
                 13307,
                 "sakila",
                 "root",
             ),
             (
-                Arc::new(navidog_db::postgres::PostgresDriver::default())
+                Arc::new(navidog_postgres::PostgresDriver::default())
                     as Arc<dyn navidog_db::Driver>,
                 15432,
                 "pagila",
@@ -220,6 +238,7 @@ fn live_table_design_create_alter_rename_and_constraints() {
             .unwrap();
             let r = session.relational().unwrap();
             let d = r.dialect();
+            let d = d.as_ref();
             let scope = Scope::new("test", db, Some("public".into()));
             let name = format!("navidog_design_{}", std::process::id());
             let table = d.qualified(&scope, &name);
@@ -261,7 +280,7 @@ fn live_table_design_create_alter_rename_and_constraints() {
             r.execute(&format!("INSERT INTO {table} (id) VALUES(1)"))
                 .await
                 .unwrap();
-            if d == Dialect::MySql {
+            if d.id() == "mysql" {
                 let name = format!("ix_standalone_{}", std::process::id());
                 r.execute(&format!(
                     "CREATE INDEX {} ON {table} (value)",
@@ -342,18 +361,27 @@ fn foreign_key_requires_matching_nonempty_field_lists() {
     e.fields = "\"local,a\", b".into();
     e.reference_table = "parent".into();
     e.reference_fields = "a".into();
-    assert!(e.sql(Dialect::Sqlite, &scope, "child", false).is_err());
+    assert!(
+        e.sql(&navidog_sqlite::SqliteDialect, &scope, "child", false)
+            .is_err()
+    );
     e.reference_fields = "a, b".into();
-    assert!(e.sql(Dialect::Sqlite, &scope, "child", false).is_ok());
+    assert!(
+        e.sql(&navidog_sqlite::SqliteDialect, &scope, "child", false)
+            .is_ok()
+    );
     e.reference_table.clear();
-    assert!(e.sql(Dialect::Sqlite, &scope, "child", false).is_err());
+    assert!(
+        e.sql(&navidog_sqlite::SqliteDialect, &scope, "child", false)
+            .is_err()
+    );
 }
 
 #[test]
 fn sqlite_strict_rebuild_preserves_data_and_rejects_rowid_conversion() {
     navidog_db::runtime::runtime().block_on(async {
         let mut session = navidog_db::connect(
-            Arc::new(navidog_db::sqlite::SqliteDriver::default()),
+            Arc::new(navidog_sqlite::SqliteDriver::default()),
             navidog_db::ConnectParams {
                 file: Some(":memory:".into()),
                 create_new: true,
@@ -371,10 +399,21 @@ fn sqlite_strict_rebuild_preserves_data_and_rejects_rowid_conversion() {
         .unwrap();
         let old = load(r, &scope, "t").await.unwrap();
         let mut next = old.design.clone();
-        next.options = edit_table_option(&next.options, "strict", "true", Dialect::Sqlite).unwrap();
+        next.options = edit_table_option(
+            &next.options,
+            "strict",
+            "true",
+            &navidog_sqlite::SqliteDialect,
+        )
+        .unwrap();
         let strict = apply(r, &scope, Some(&old), &next).await.unwrap();
         assert_eq!(
-            table_option(&strict.design.options, "strict", Dialect::Sqlite).unwrap(),
+            table_option(
+                &strict.design.options,
+                "strict",
+                &navidog_sqlite::SqliteDialect
+            )
+            .unwrap(),
             "true"
         );
         assert_eq!(
@@ -382,10 +421,15 @@ fn sqlite_strict_rebuild_preserves_data_and_rejects_rowid_conversion() {
             Some("8")
         );
         let mut next = strict.design.clone();
-        next.options =
-            edit_table_option(&next.options, "without_rowid", "true", Dialect::Sqlite).unwrap();
+        next.options = edit_table_option(
+            &next.options,
+            "without_rowid",
+            "true",
+            &navidog_sqlite::SqliteDialect,
+        )
+        .unwrap();
         assert!(
-            plan(Dialect::Sqlite, &scope, Some(&strict), &next)
+            plan(&navidog_sqlite::SqliteDialect, &scope, Some(&strict), &next)
                 .unwrap_err()
                 .message
                 .contains("row identity")
@@ -413,19 +457,19 @@ fn live_table_options_and_dialect_attributes() {
     navidog_db::runtime::runtime().block_on(async {
         for (driver, port, db, user) in [
             (
-                Arc::new(navidog_db::mysql::MySqlDriver::mysql()) as Arc<dyn navidog_db::Driver>,
+                Arc::new(navidog_mysql::MySqlDriver::mysql()) as Arc<dyn navidog_db::Driver>,
                 13306,
                 "sakila",
                 "root",
             ),
             (
-                Arc::new(navidog_db::mysql::MySqlDriver::mariadb()) as Arc<dyn navidog_db::Driver>,
+                Arc::new(navidog_mysql::MySqlDriver::mariadb()) as Arc<dyn navidog_db::Driver>,
                 13307,
                 "sakila",
                 "root",
             ),
             (
-                Arc::new(navidog_db::postgres::PostgresDriver::default())
+                Arc::new(navidog_postgres::PostgresDriver::default())
                     as Arc<dyn navidog_db::Driver>,
                 15432,
                 "pagila",
@@ -447,6 +491,7 @@ fn live_table_options_and_dialect_attributes() {
             .unwrap();
             let r = session.relational().unwrap();
             let d = r.dialect();
+            let d = d.as_ref();
             let scope = Scope::new("test", db, Some("public".into()));
             let name = format!("navidog_options_{}", std::process::id());
             let table = d.qualified(&scope, &name);
@@ -458,7 +503,7 @@ fn live_table_options_and_dialect_attributes() {
                 .unwrap();
             let mut draft = TableDesign::new();
             draft.name = name;
-            if d == Dialect::MySql {
+            if d.id() == "mysql" {
                 draft.columns[0].definition = "INTEGER NOT NULL AUTO_INCREMENT".into();
                 for (key, value) in [
                     ("engine", "InnoDB"),
@@ -499,7 +544,7 @@ fn live_table_options_and_dialect_attributes() {
             apply(r, &scope, None, &draft).await.unwrap();
             r.execute(&format!("INSERT INTO {table} DEFAULT VALUES").replace(
                 " DEFAULT VALUES",
-                if d == Dialect::MySql {
+                if d.id() == "mysql" {
                     " () VALUES ()"
                 } else {
                     " DEFAULT VALUES"
@@ -509,7 +554,7 @@ fn live_table_options_and_dialect_attributes() {
             .unwrap();
             let old = load(r, &scope, &draft.name).await.unwrap();
             let mut next = old.design.clone();
-            if d == Dialect::MySql {
+            if d.id() == "mysql" {
                 assert_eq!(
                     table_option(&next.options, "table_comment", d).unwrap(),
                     "O'Brien"
@@ -556,7 +601,7 @@ fn live_table_options_and_dialect_attributes() {
                     .as_deref(),
                 Some("1")
             );
-            if d == Dialect::Postgres {
+            if d.id() == "postgres" {
                 assert!(!saved.design.unlogged);
                 assert_eq!(saved.design.owner, role);
                 assert_eq!(
@@ -599,7 +644,7 @@ fn live_table_options_and_dialect_attributes() {
                 );
             }
             r.execute(&format!("DROP TABLE {table}")).await.unwrap();
-            if d == Dialect::Postgres {
+            if d.id() == "postgres" {
                 r.execute(&format!(
                     "DROP TABLE {parent}; DROP ROLE {}",
                     d.quote_ident(&role)
@@ -619,7 +664,7 @@ fn live_postgres_comments_round_trip_rename_rollback_and_concurrency() {
     }
     navidog_db::runtime::runtime().block_on(async {
         let mut session = navidog_db::connect(
-            Arc::new(navidog_db::postgres::PostgresDriver::default()),
+            Arc::new(navidog_postgres::PostgresDriver::default()),
             navidog_db::ConnectParams {
                 host: "127.0.0.1".into(),
                 port: 15432,
@@ -632,7 +677,7 @@ fn live_postgres_comments_round_trip_rename_rollback_and_concurrency() {
         .await
         .unwrap();
         let r = session.relational().unwrap();
-        let d = Dialect::Postgres;
+        let d = &navidog_postgres::PostgresDialect;
         let scope = Scope::new("test", "pagila", Some("public".into()));
         let mut draft = TableDesign::new();
         draft.name = format!("navidog_comments_{}_表", std::process::id());
@@ -762,7 +807,7 @@ fn mysql_standalone_index_removal_names_its_table() {
     };
     design.indexes.clear();
     assert_eq!(
-        plan(Dialect::MySql, &scope(), Some(&old), &design).unwrap(),
+        plan(&navidog_mysql::MysqlDialect, &scope(), Some(&old), &design).unwrap(),
         vec!["ALTER TABLE `main`.`t` DROP INDEX `ix`"]
     );
 }

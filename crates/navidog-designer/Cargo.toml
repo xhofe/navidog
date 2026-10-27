@@ -12,6 +12,7 @@ navidog-session = { path = "../navidog-session" }
 navidog-ui.workspace = true
 navidog-util.workspace = true
 navidog-model.workspace = true
+navidog-sql = { path = "../navidog-sql" }
 navidog-app-state.workspace = true
 navidog-db.workspace = true
 navidog-schema = { path = "../navidog-schema" }
@@ -21,4 +22,6 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+navidog-postgres = { path = "../navidog-postgres" }
+navidog-sqlite = { path = "../navidog-sqlite" }
 gpui-kit = { workspace = true, features = ["test-support", "tree-sitter-sql"] }

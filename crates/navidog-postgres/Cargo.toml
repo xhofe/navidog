@@ -1,0 +1,20 @@
+[package]
+name = "navidog-postgres"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PostgreSQL driver and SQL dialect for navidog."
+
+[dependencies]
+navidog-model.workspace = true
+navidog-sql = { path = "../navidog-sql" }
+navidog-db = { path = "../navidog-db" }
+navidog-util.workspace = true
+tokio.workspace = true
+futures.workspace = true
+tracing.workspace = true
+tokio-postgres = "0.7"
+postgres-native-tls = "0.5"
+native-tls = "0.2"

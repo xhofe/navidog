@@ -11,7 +11,7 @@ use gpui_kit::{
 };
 use navidog_app_state::settings::Settings;
 use navidog_app_state::store::ConnectionStore;
-use navidog_db::{ConnectParams, Secrets, connect, runtime, sqlite::SqliteDriver};
+use navidog_db::{ConnectParams, Secrets, connect, runtime};
 use navidog_grid::TableViewer;
 use navidog_model::connection::Connection;
 use navidog_model::crypto::Key;
@@ -19,6 +19,7 @@ use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_navigator::DdlPanel;
 use navidog_query::{QueryEditor, Target};
 use navidog_session::sessions::Sessions;
+use navidog_sqlite::SqliteDriver;
 use navidog_ui::tokens;
 
 fn wait(cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {

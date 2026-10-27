@@ -14,7 +14,6 @@ use gpui_kit::{
 };
 use navidog_app_state::actions::InsertText;
 use navidog_app_state::workspace::Workspace;
-use navidog_db::dialect::Dialect;
 use navidog_session::outline::{OutlineCache, OutlineState};
 use navidog_session::sessions::Sessions;
 use navidog_ui::assets::lucide;
@@ -81,8 +80,7 @@ impl InfoPanel {
             .and_then(|c| c.scope());
         let dialect = scope
             .as_ref()
-            .and_then(|s| Sessions::global(cx).read(cx).dialect(&s.connection))
-            .unwrap_or(Dialect::MySql);
+            .and_then(|s| Sessions::global(cx).read(cx).dialect(&s.connection));
         let needle = self.identifiers.search.read(cx).value().to_lowercase();
         let state = scope
             .as_ref()
@@ -137,7 +135,11 @@ impl InfoPanel {
                                 (name.clone(), true, "columns-3", Some(ty.clone()), None)
                             }
                         };
-                        let typed: SharedString = dialect.typed_name(&name).into();
+                        let typed: SharedString = dialect
+                            .as_ref()
+                            .map(|d| d.typed_name(&name))
+                            .unwrap_or_else(|| name.clone())
+                            .into();
                         let insert = InsertText {
                             text: typed.clone(),
                             snippet: false,

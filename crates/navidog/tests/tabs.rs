@@ -27,6 +27,15 @@ fn close_tabs(cx: &mut TestAppContext) {
     // SAFETY: this test binary has a single test; nothing else reads the environment concurrently
     unsafe { std::env::set_var("NAVIDOG_HOME", &home) };
     cx.update(navidog::init);
+    cx.update(|cx| {
+        use navidog_app_state::store::ConnectionStore;
+        use navidog_model::connection::Connection;
+        ConnectionStore::global(cx).update(cx, |store, cx| {
+            let mut conn = Connection::new("sqlite");
+            conn.id = "c".into();
+            store.upsert(conn, &[], cx).unwrap();
+        });
+    });
     let (handle, main) = cx.update(|cx| {
         let mut options = navidog::main_window_options(&AppState::default(), cx);
         options.show = false;

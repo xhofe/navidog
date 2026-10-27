@@ -35,6 +35,7 @@ mimalloc = { version = "0.1", optional = true }
 mimalloc = ["dep:mimalloc"]
 
 [dev-dependencies]
+navidog-sqlite = { path = "../navidog-sqlite" }
 navidog-test-support = { path = "../navidog-test-support" }
 gpui-kit = { workspace = true, features = ["test-support"] }
 
