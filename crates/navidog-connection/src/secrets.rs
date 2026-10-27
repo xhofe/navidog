@@ -49,7 +49,11 @@ fn resolve_inner(id: String, then: Then, window: &mut Window, cx: &mut App) {
                 Ok(v) => v,
                 Err(StoreError::Locked) => {
                     if store.read(cx).unlock_failures < MAX_UNLOCK_FAILURES {
-                        open_unlock(id, then, window, cx);
+                        let id = id.clone();
+                        let then = then.clone();
+                        request_unlock(window, cx, move |_ok, window, cx| {
+                            resolve_inner(id, then, window, cx);
+                        });
                         return;
                     }
                     missing.push(field);
@@ -226,17 +230,37 @@ pub(crate) fn footer(
     navidog_ui::skin::dialog_footer(t!("conn.cancel").to_string(), ok, on_ok)
 }
 
-struct Unlock {
-    id: String,
-    input: Entity<InputState>,
-    error: Option<SharedString>,
-    then: Then,
+type UnlockThen = Rc<RefCell<Option<Box<dyn FnOnce(bool, &mut Window, &mut App)>>>>;
+
+/// Runs `then` when a secret can be read. An unlocked store, or a machine key, calls `then(true)`
+/// immediately. Cancel drops the callback. Three wrong passwords call `then(false)`.
+pub fn request_unlock(
+    window: &mut Window,
+    cx: &mut App,
+    then: impl FnOnce(bool, &mut Window, &mut App) + 'static,
+) {
+    let store = ConnectionStore::global(cx);
+    if !store.read(cx).is_locked() {
+        then(true, window, cx);
+        return;
+    }
+    if store.read(cx).unlock_failures >= MAX_UNLOCK_FAILURES {
+        then(false, window, cx);
+        return;
+    }
+    let then: UnlockThen = Rc::new(RefCell::new(Some(Box::new(then))));
+    open_unlock(then, window, cx);
 }
 
-fn open_unlock(id: String, then: Then, window: &mut Window, cx: &mut App) {
+struct Unlock {
+    input: Entity<InputState>,
+    error: Option<SharedString>,
+    then: UnlockThen,
+}
+
+fn open_unlock(then: UnlockThen, window: &mut Window, cx: &mut App) {
     let input = cx.new(|cx| InputState::new(window, cx).masked(true));
     let view = cx.new(|_| Unlock {
-        id,
         input: input.clone(),
         error: None,
         then,
@@ -258,19 +282,23 @@ fn field(input: &Entity<InputState>) -> impl IntoElement {
     Input::new(input).w_full().min_w_0()
 }
 
+fn finish(unlock: &mut Unlock, ok: bool, window: &mut Window, cx: &mut Context<Unlock>) {
+    let then = unlock.then.clone();
+    window.close_dialog(cx);
+    if let Some(done) = then.borrow_mut().take() {
+        done(ok, window, cx);
+    }
+}
+
 impl Unlock {
     fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let password = self.input.read(cx).value().to_string();
         let store = ConnectionStore::global(cx);
         match store.update(cx, |s, _| s.unlock(&password)) {
-            Ok(()) => {
-                window.close_dialog(cx);
-                resolve_inner(self.id.clone(), self.then.clone(), window, cx);
-            }
+            Ok(()) => finish(self, true, window, cx),
             Err(_) => {
                 if store.read(cx).unlock_failures >= MAX_UNLOCK_FAILURES {
-                    window.close_dialog(cx);
-                    resolve_inner(self.id.clone(), self.then.clone(), window, cx);
+                    finish(self, false, window, cx);
                     return;
                 }
                 self.error = Some(t!("conn.unlock_failed").to_string().into());
@@ -375,8 +403,14 @@ mod tests {
         }
     }
 
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[gpui_kit::test]
     fn failed_password_save_still_uses_credentials_once(cx: &mut TestAppContext) {
+        let _guard = env_lock();
         let home =
             std::env::temp_dir().join(format!("navidog-password-save-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
@@ -489,6 +523,82 @@ mod tests {
                 block_writes(&path, false);
             }
         }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A locked store asks for the master password before a save, not only when opening a connection.
+    #[gpui_kit::test]
+    fn a_locked_save_asks_for_the_master_password(cx: &mut TestAppContext) {
+        let _guard = env_lock();
+        let home = std::env::temp_dir().join(format!("navidog-unlock-save-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        unsafe { std::env::set_var("NAVIDOG_HOME", &home) };
+        let file = ConnectionsFile {
+            crypto: crypto::new_master("fixture-master").unwrap().0,
+            ..Default::default()
+        };
+        std::fs::write(
+            home.join("connections.json"),
+            serde_json::to_vec(&file).unwrap(),
+        )
+        .unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            navidog_ui::theme::init(cx);
+            cx.set_reduce_motion(true);
+            navidog_app_state::init(cx);
+            assert!(ConnectionStore::global(cx).read(cx).is_locked());
+        });
+        let (handle, _) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Default::default(),
+                        size(px(800.), px(600.)), // raw-px: headless test window size
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |_, cx| cx.new(|_| Host),
+            )
+            .unwrap()
+        });
+        let saved = Rc::new(Cell::new(false));
+        let flag = saved.clone();
+        cx.update_window(handle, |_, window, cx| {
+            request_unlock(window, cx, move |ok, _, cx| {
+                assert!(ok);
+                let mut conn = navidog_model::connection::Connection::new("sqlite");
+                conn.name = "saved".into();
+                conn.general.save_password = true;
+                ConnectionStore::global(cx)
+                    .update(cx, |store, cx| {
+                        store.upsert(
+                            conn,
+                            &[(
+                                navidog_model::connection::SecretField::Password,
+                                Some("pw".into()),
+                            )],
+                            cx,
+                        )
+                    })
+                    .unwrap();
+                flag.set(true);
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.has_active_dialog(cx));
+            window.input("fixture-master", cx);
+            window.click("ok", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(saved.get(), "unlock lets the save run");
+        cx.update(|cx| assert!(!ConnectionStore::global(cx).read(cx).is_locked()));
         let _ = std::fs::remove_dir_all(&home);
     }
 }

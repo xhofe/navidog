@@ -1,8 +1,8 @@
 _version: 2
 app_state:
   store_locked:
-    en: Navidog is locked. Open a connection with a saved password and enter the master password first.
-    zh-CN: 需要先解锁：打开一个保存了密码的连接，输入主密码。
+    en: Navidog is locked. Enter the master password to continue.
+    zh-CN: 需要先输入主密码才能继续。
   not_found:
     en: The connection or group could not be found.
     zh-CN: 找不到这个连接或组。

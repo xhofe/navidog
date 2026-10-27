@@ -132,9 +132,15 @@ conn:
   test_cancel:
     en: Cancel test
     zh-CN: 取消测试
+  test_in_progress:
+    en: Testing connection...
+    zh-CN: 测试连接...
   test_ok:
     en: Connection Successful
     zh-CN: 连接成功
+  test_ok_version:
+    en: "Connection successful. Server version: %{version}"
+    zh-CN: "连接成功 服务器版本: %{version}"
   test_failed:
     en: Connection Failed
     zh-CN: 连接失败

@@ -26,7 +26,8 @@ use navidog_app_state::workspace::{Selection, Workspace};
 use navidog_model::connection::{
     Connection, HostPreference, Member, SecretField, SshAuth, SslMode,
 };
-use navidog_ui::skin::confirm_with;
+use navidog_ui::assets::lucide;
+use navidog_ui::skin::{confirm_with, truncated};
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
 
@@ -66,14 +67,19 @@ pub fn open_from_uri(uri: navidog_app_state::uri::DatabaseUri, window: &mut Wind
 }
 
 pub fn open_edit(id: String, window: &mut Window, cx: &mut App) {
-    let store = ConnectionStore::global(cx);
-    let Some(conn) = store.read(cx).get(&id).cloned() else {
-        return;
-    };
-    // Editing fills in the saved secrets; when locked they stay empty and saving keeps the old values
-    let secrets =
-        SecretField::ALL.map(|f| store.update(cx, |s, _| s.reveal(&id, f)).ok().flatten());
-    open(conn, Some(secrets), window, cx);
+    crate::request_unlock(window, cx, move |ok, window, cx| {
+        let store = ConnectionStore::global(cx);
+        let Some(conn) = store.read(cx).get(&id).cloned() else {
+            return;
+        };
+        // A failed unlock leaves the fields empty; saving then keeps the stored ciphertext.
+        let secrets = if ok {
+            SecretField::ALL.map(|f| store.update(cx, |s, _| s.reveal(&id, f)).ok().flatten())
+        } else {
+            [None, None, None]
+        };
+        open(conn, Some(secrets), window, cx);
+    });
 }
 
 fn open(conn: Connection, secrets: Option<[Option<String>; 3]>, window: &mut Window, cx: &mut App) {
@@ -173,6 +179,7 @@ struct ConnectionForm {
     ssh_passphrase: Text,
     remark: Entity<TextareaState>,
     testing: Option<test_connection::ConnectionTest>,
+    test_outcome: Option<test_connection::TestOutcome>,
     error: Option<SharedString>,
 }
 
@@ -364,6 +371,7 @@ impl ConnectionForm {
                 cx.new(|cx| TextareaState::new(window, cx).default_value(value))
             },
             testing: None,
+            test_outcome: None,
             error: None,
             draft: conn,
         }
@@ -446,6 +454,34 @@ fn depth(groups: &[navidog_model::connection::Group], id: &str) -> usize {
     d
 }
 
+fn test_status_bar(
+    bg: gpui_kit::Hsla,
+    fg: gpui_kit::Hsla,
+    mark: AnyElement,
+    text: String,
+    action: impl IntoElement,
+) -> impl IntoElement {
+    h_flex()
+        .w_full()
+        .h(tokens::form::ROW_HEIGHT.rems())
+        .px_2()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .bg(bg)
+        .text_color(fg)
+        .child(
+            h_flex()
+                .flex_1()
+                .min_w_0()
+                .items_center()
+                .gap_1()
+                .child(mark)
+                .child(truncated("test-status", text).min_w_0()),
+        )
+        .child(action)
+}
+
 impl Render for ConnectionForm {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _ = window;
@@ -478,6 +514,8 @@ impl Render for ConnectionForm {
             ],
         };
         let testing = self.testing.is_some();
+        let outcome = self.test_outcome.clone();
+        let p = palette(cx);
         v_flex()
             .gap_3()
             .child(navidog_ui::skin::heading(title))
@@ -501,28 +539,41 @@ impl Render for ConnectionForm {
                     .children(body),
             )
             .when_some(self.error.clone(), |this, e| {
-                this.child(div().text_color(palette(cx).danger).child(e))
+                this.child(div().text_color(p.danger).child(e))
+            })
+            .when(testing, |this| {
+                this.child(test_status_bar(
+                    p.accent,
+                    p.selection_text,
+                    Spinner::new().small().into_any_element(),
+                    t!("conn.test_in_progress").to_string(),
+                    Button::new("test-cancel")
+                        .label(t!("conn.cancel").to_string())
+                        .on_click(cx.listener(|this, _, _, cx| this.cancel_test(cx))),
+                ))
+            })
+            .when_some(outcome.filter(|_| !testing), |this, outcome| {
+                let (bg, icon, text) = match outcome {
+                    test_connection::TestOutcome::Ok(text) => (p.success, "circle-check", text),
+                    test_connection::TestOutcome::Failed(text) => (p.danger, "circle-x", text),
+                };
+                this.child(test_status_bar(
+                    bg,
+                    p.selection_text,
+                    lucide(icon).into_any_element(),
+                    text.to_string(),
+                    Button::new("test-dismiss")
+                        .icon(lucide("x"))
+                        .accessibility_label(t!("conn.cancel").to_string())
+                        .on_click(cx.listener(|this, _, _, cx| this.dismiss_test_outcome(cx))),
+                ))
             })
             .child(
                 h_flex()
                     .justify_between()
                     .child(
                         Button::new("test")
-                            .accessibility_label(
-                                if testing {
-                                    t!("conn.test_cancel")
-                                } else {
-                                    t!("conn.test")
-                                }
-                                .to_string(),
-                            )
-                            .child(
-                                h_flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .when(testing, |row| row.child(Spinner::new().small()))
-                                    .child(t!("conn.test").to_string()),
-                            )
+                            .label(t!("conn.test").to_string())
                             .on_click(cx.listener(|this, _, window, cx| this.test(window, cx))),
                     )
                     .child(

@@ -45,6 +45,24 @@ impl ConnectionForm {
         ];
         let id = conn.id.clone();
         let was_open = Sessions::global(cx).read(cx).state(&id).is_open();
+        if ConnectionStore::global(cx).read(cx).is_locked() {
+            let form = cx.entity().downgrade();
+            crate::request_unlock(window, cx, move |ok, window, cx| {
+                let _ = form.update(cx, |form, cx| {
+                    if ok {
+                        form.save(window, cx);
+                    } else {
+                        form.error = Some(
+                            navidog_app_state::store::StoreError::Locked
+                                .localized_message()
+                                .into(),
+                        );
+                        cx.notify();
+                    }
+                });
+            });
+            return;
+        }
         let store = ConnectionStore::global(cx);
         if let Err(e) = store.update(cx, |s, cx| s.upsert(conn, &secrets, cx)) {
             self.error = Some(e.localized_message().into());
