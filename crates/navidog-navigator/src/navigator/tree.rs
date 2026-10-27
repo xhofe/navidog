@@ -125,12 +125,20 @@ impl TreeBuilder<'_> {
             .expanded(expanded)
     }
 
-    /// An empty `label` is still loading (the row draws a skeleton). Any other label is an error.
+    /// An empty `label` is still loading: three bars, so one row does not look like a glitch.
+    /// Any other label is an error and stays a single row.
     pub(super) fn placeholder(parent: &Node, label: String) -> Vec<TreeItem> {
-        vec![TreeItem::new(
-            Node::Placeholder(parent.id().to_string()).id(),
-            label,
-        )]
+        let rows = if label.is_empty() { 3 } else { 1 };
+        (0..rows)
+            .map(|i| {
+                let key = if label.is_empty() {
+                    format!("{}#{i}", parent.id())
+                } else {
+                    parent.id().to_string()
+                };
+                TreeItem::new(Node::Placeholder(key).id(), label.clone())
+            })
+            .collect()
     }
 
     pub(super) fn groups(&self, parent: Option<&str>) -> Vec<TreeItem> {
@@ -278,5 +286,28 @@ impl TreeBuilder<'_> {
                 Some(self.item(node, kind_label(kind), children))
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_loading_folder_shows_three_bars_and_an_error_stays_one_row() {
+        let parent = Node::Connection("c".into());
+        let loading = TreeBuilder::placeholder(&parent, String::new());
+        assert_eq!(
+            loading
+                .iter()
+                .map(|item| item.id.to_string())
+                .collect::<Vec<_>>(),
+            ["p:c:c#0", "p:c:c#1", "p:c:c#2"]
+        );
+        assert!(loading.iter().all(|item| item.label.is_empty()));
+        let error = TreeBuilder::placeholder(&parent, "down".into());
+        assert_eq!(error.len(), 1);
+        assert_eq!(error[0].id.as_ref(), "p:c:c");
+        assert_eq!(error[0].label.as_ref(), "down");
     }
 }
