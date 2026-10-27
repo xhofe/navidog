@@ -37,6 +37,13 @@ impl Render for Host {
     }
 }
 
+struct DockHost(Entity<gpui_kit::component::dock::DockArea>);
+impl Render for DockHost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui_kit::div().size_full().child(self.0.clone())
+    }
+}
+
 #[gpui_kit::test]
 fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
     let (_guard, _) = isolate_home("draft");
@@ -1027,4 +1034,116 @@ fn reload_while_previewing_replaces_stale_sql(cx: &mut TestAppContext) {
         })
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn missing_connection_confirms_before_discarding_a_dirty_draft(cx: &mut TestAppContext) {
+    use gpui_kit::component::dock::PanelId;
+    use gpui_kit::component::dock::{
+        BasePanel as _, DockLayout, DockPlacement, DockSkin, PanelInfo, PanelState, panel_handle,
+    };
+    use navidog_schema::table_design::{TableDesign, TableSnapshot};
+    use navidog_ui::tabs::{self, Close};
+
+    let (_guard, _) = isolate_home("missing-close");
+    cx.update(|cx| cx.set_reduce_motion(true));
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_app_state::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_ui::tabs::init(cx);
+        navidog_session::init(cx);
+        crate::init(cx);
+    });
+    let state_of = |draft: TableDesign, baseline: Option<TableSnapshot>| PanelState {
+        panel_name: "TableDesigner".into(),
+        children: Vec::new(),
+        info: PanelInfo::panel(
+            serde_json::to_value(super::Saved {
+                object: None,
+                scope: Scope::new("gone", "main", None),
+                draft,
+                baseline,
+                property_height: None,
+            })
+            .unwrap(),
+        ),
+    };
+    cx.update(|cx| {
+        let clean = super::MissingConnection::open(state_of(TableDesign::new(), None), cx);
+        assert!(clean.read(cx).closable(cx));
+        let mut same = TableDesign::new();
+        same.name = "people".into();
+        let baseline = serde_json::from_value::<TableSnapshot>(serde_json::json!({
+            "design": same.clone(),
+            "ddl": "",
+            "triggers": []
+        }))
+        .unwrap();
+        let unchanged =
+            super::MissingConnection::open(state_of(same.clone(), Some(baseline.clone())), cx);
+        assert!(unchanged.read(cx).closable(cx));
+        let mut edited = same;
+        edited.name = "changed".into();
+        let changed = super::MissingConnection::open(state_of(edited, Some(baseline)), cx);
+        assert!(!changed.read(cx).closable(cx));
+    });
+
+    let (handle, area, panel_id) = cx.update(|cx| {
+        let mut draft = TableDesign::new();
+        draft.name = "people".into();
+        let mut area = None;
+        let mut panel_id = None;
+        let window = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+            let panel = super::MissingConnection::open(state_of(draft, None), cx);
+            assert!(!panel.read(cx).closable(cx));
+            panel_id = Some(PanelId::from(panel.entity_id()));
+            // The dock will not close its last panel, so a clean tab stays behind.
+            let clean = super::MissingConnection::open(state_of(TableDesign::new(), None), cx);
+            let (dock, _) = DockSkin::dock_area("designer-dock", None, window, cx);
+            let layout = DockLayout::tabs()
+                .panel_view(panel_handle(panel), cx)
+                .panel_view(panel_handle(clean), cx);
+            dock.update(cx, |dock, cx| dock.set_center(layout, window, cx));
+            area = Some(dock.clone());
+            cx.new(|_| DockHost(dock))
+        })
+        .unwrap();
+        (window.0, area.unwrap(), panel_id.unwrap())
+    });
+    let close_this = move || tabs::CloseTabs {
+        panel: Some(panel_id),
+        which: Close::This,
+    };
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(!area.read(cx).is_empty(DockPlacement::Center, cx));
+        window.dispatch_action(Box::new(close_this()), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("designer-close-discard").is_some());
+        window.click("designer-close-cancel", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| assert!(area.read(cx).panel(panel_id).is_some()));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.dispatch_action(Box::new(close_this()), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("designer-close-discard", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(area.read(cx).panel(panel_id).is_none());
+        assert!(!area.read(cx).is_empty(DockPlacement::Center, cx));
+    });
 }

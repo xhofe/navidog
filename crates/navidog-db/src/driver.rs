@@ -77,7 +77,7 @@ pub enum Family {
     KeyValue,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DriverInfo {
     /// Registry key, also the `driver` field in connections.json
     pub id: String,
@@ -206,7 +206,7 @@ pub struct ForeignKey {
 #[macro_export]
 macro_rules! recovering_ping {
     ($self:ident, $probe:expr) => {
-        fn ping(&mut $self) -> futures::future::BoxFuture<'_, $crate::DbResult<()>> {
+        fn ping(&mut $self) -> $crate::BoxFuture<'_, $crate::DbResult<()>> {
             async move {
                 let first = $probe.await;
                 let result = match first {
@@ -237,7 +237,7 @@ macro_rules! recovering_execute {
         fn execute<'a>(
             &'a mut self,
             sql: &'a str,
-        ) -> futures::future::BoxFuture<'a, $crate::DbResult<Vec<$crate::ResultSet>>> {
+        ) -> $crate::BoxFuture<'a, $crate::DbResult<Vec<$crate::ResultSet>>> {
             async move {
                 self.recovery.observe(sql);
                 let result = self.attempt(sql).await.map_err(|e| {
@@ -259,7 +259,7 @@ macro_rules! recovering_execute {
         fn execute_read<'a>(
             &'a mut self,
             sql: &'a str,
-        ) -> futures::future::BoxFuture<'a, $crate::DbResult<Vec<$crate::ResultSet>>> {
+        ) -> $crate::BoxFuture<'a, $crate::DbResult<Vec<$crate::ResultSet>>> {
             async move {
                 let result = match self.attempt(sql).await {
                     Err(e) if self.lost(&e) && self.recovery.can_reconnect() => {

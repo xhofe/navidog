@@ -29,7 +29,7 @@ navidog 是用 gpui-kit 复刻 Navicat Premium 17（macOS）的数据库管理�
 | 会话 | `Session` | 一条已建立的数据库连接（含 SSH 隧道等传输层）。一个连接可同时拥有多个会话，例如每个查询编辑器一个。 |
 | 驱动 | `Driver` | 某一类数据库的实现，负责创建会话、声明能力。内置驱动用 Rust 实现，插件驱动用 JS 实现。 |
 | 数据库类别 | `Family` | 驱动所属的数据模型：`Relational`（MySQL、PostgreSQL、SQLite 等）、`Document`（MongoDB）、`KeyValue`（Redis）。 |
-| 方言 | `Dialect` | 关系型数据库的 SQL 差异，是 trait 而不是枚举。每种数据库在自己的 crate 里实现：标识符引用、字面量、词法标志、对象种类、系统库、变更 SQL 和表设计需要的能力。界面只问这些方法或 `DriverInfo` 上的标志，不按产品名分支。 |
+| 方言 | `Dialect` | 关系型数据库的 SQL 差异，是 trait 而不是枚举。每种数据库在自己的 crate 里实现：标识符引用、字面量、词法标志、对象种类、系统库、变更 SQL 和表设计需要的能力。目标是界面只问这些方法或 `DriverInfo` 上的标志。目前 designer、query、grid、schema 里仍有按 `Dialect::id()` 的产品名比较，接入新库时要一起改。 |
 | 模式 | schema | PostgreSQL 等数据库中数据库之下的命名空间。MySQL 中数据库与模式等同。 |
 | 对象 | `DbObject` | 数据库中的表、视图、函数、事件、触发器、索引等。 |
 | 结果网格 | `ResultGrid` | 显示表数据和查询结果的虚拟化网格，支持区域选择、编辑和事务提交。 |

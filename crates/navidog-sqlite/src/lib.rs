@@ -6,5 +6,5 @@ mod driver;
 mod metadata;
 mod words;
 
-pub use dialect::{SqliteDialect, dialect};
+pub use dialect::SqliteDialect;
 pub use driver::SqliteDriver;

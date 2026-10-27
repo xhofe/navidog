@@ -1,15 +1,10 @@
 //! PostgreSQL SQL dialect.
 
-use std::sync::Arc;
-
 use navidog_model::object::{ObjectKind, Scope};
 use navidog_sql::{ContextSelection, Dialect, Lex};
 
+#[derive(Debug)]
 pub struct PostgresDialect;
-
-pub fn dialect() -> Arc<dyn Dialect> {
-    Arc::new(PostgresDialect)
-}
 
 impl Dialect for PostgresDialect {
     fn id(&self) -> &'static str {

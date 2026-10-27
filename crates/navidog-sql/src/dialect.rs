@@ -17,7 +17,7 @@ pub enum ContextSelection {
 }
 
 /// One database product's SQL rules. Implementations live in the per-database crates.
-pub trait Dialect: Send + Sync {
+pub trait Dialect: std::fmt::Debug + Send + Sync {
     fn id(&self) -> &'static str;
     fn lex(&self) -> Lex;
     fn quote_ident(&self, name: &str) -> String;

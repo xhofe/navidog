@@ -20,7 +20,7 @@ pub mod ssh;
 use std::sync::Arc;
 
 use futures::FutureExt as _;
-use futures::future::BoxFuture;
+pub use futures::future::BoxFuture;
 
 pub use driver::*;
 pub use metadata::referenced_values_sql;

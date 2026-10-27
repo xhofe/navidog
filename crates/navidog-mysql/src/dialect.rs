@@ -1,15 +1,10 @@
 //! MySQL and MariaDB SQL dialect. Both drivers share this implementation.
 
-use std::sync::Arc;
-
 use navidog_model::object::{ObjectKind, Scope};
 use navidog_sql::{ContextSelection, Dialect, Lex};
 
+#[derive(Debug)]
 pub struct MysqlDialect;
-
-pub fn dialect() -> Arc<dyn Dialect> {
-    Arc::new(MysqlDialect)
-}
 
 impl Dialect for MysqlDialect {
     fn id(&self) -> &'static str {

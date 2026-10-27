@@ -1,15 +1,10 @@
 //! SQLite SQL dialect.
 
-use std::sync::Arc;
-
 use navidog_model::object::{ObjectKind, Scope};
 use navidog_sql::{ContextSelection, Dialect, Lex, rename_create_table};
 
+#[derive(Debug)]
 pub struct SqliteDialect;
-
-pub fn dialect() -> Arc<dyn Dialect> {
-    Arc::new(SqliteDialect)
-}
 
 impl Dialect for SqliteDialect {
     fn id(&self) -> &'static str {
@@ -131,7 +126,6 @@ const LEX: Lex = Lex {
 mod tests {
     use super::*;
     use navidog_model::object::Scope;
-    use navidog_sql::dialect::ChangeSet;
 
     #[test]
     fn quotes_rowid_and_rewrites_create_table() {
@@ -155,6 +149,5 @@ mod tests {
             SqliteDialect.select_page(&scope, "t", "", "", None, 0, true),
             "SELECT *, rowid AS \"_rowid\" FROM \"app\".\"t\""
         );
-        let _ = ChangeSet::default();
     }
 }

@@ -84,7 +84,7 @@ pub(crate) fn init(cx: &mut App) {
             property_height: None,
         });
         // A layout can still name a connection that was deleted. Restoring that panel must
-        // not panic; the draft stays in the dumped state until the tab is closed.
+        // not panic; a dirty draft stays in the dumped state and asks before the tab closes.
         if connection_dialect(cx, &saved.scope.connection).is_none() {
             return panel_handle(MissingConnection::open(ctx.state().clone(), cx));
         }
@@ -96,6 +96,7 @@ pub(crate) fn init(cx: &mut App) {
 struct MissingConnection {
     focus: FocusHandle,
     state: PanelState,
+    close_approved: bool,
 }
 
 impl MissingConnection {
@@ -103,7 +104,40 @@ impl MissingConnection {
         cx.new(|cx| Self {
             focus: cx.focus_handle().tab_stop(true),
             state,
+            close_approved: false,
         })
+    }
+
+    /// Same comparison as `TableDesigner::dirty`, read from the dumped design.
+    fn dirty(&self) -> bool {
+        let PanelInfo::Panel(value) = &self.state.info else {
+            return false;
+        };
+        let Ok(saved) = serde_json::from_value::<Saved>(value.clone()) else {
+            return false;
+        };
+        saved.baseline.as_ref().map_or_else(
+            || saved.draft != TableDesign::new(),
+            |old| old.design != saved.draft,
+        )
+    }
+
+    fn ask_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let weak = cx.entity().downgrade();
+        confirm_discard(window, cx, move |window, cx| {
+            if let Ok(id) = weak.update(cx, |this, cx| {
+                this.close_approved = true;
+                PanelId::from(cx.entity_id())
+            }) {
+                window.dispatch_action(
+                    Box::new(tabs::CloseTabs {
+                        panel: Some(id),
+                        which: tabs::Close::This,
+                    }),
+                    cx,
+                );
+            }
+        });
     }
 }
 
@@ -118,13 +152,31 @@ impl BasePanel for MissingConnection {
         PANEL
     }
     fn closable(&self, _: &App) -> bool {
-        true
+        self.close_approved || !self.dirty()
     }
     fn dump(&self, _: &App) -> PanelState {
         self.state.clone()
     }
-    fn on_added_to(&mut self, group: WeakEntity<TabGroup>, _: &mut Window, cx: &mut Context<Self>) {
-        tabs::added(PanelId::from(cx.entity_id()), group, cx);
+    fn on_added_to(
+        &mut self,
+        group: WeakEntity<TabGroup>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = PanelId::from(cx.entity_id());
+        tabs::added(id, group, cx);
+        let weak = cx.entity().downgrade();
+        let home = window.window_handle();
+        tabs::set_close_guard(
+            id,
+            Rc::new(move |cx| {
+                let weak = weak.clone();
+                let _ = home.update(cx, |_, window, cx| {
+                    let _ = weak.update(cx, |this, cx| this.ask_close(window, cx));
+                });
+            }),
+            cx,
+        );
     }
     fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
         tabs::set_active(PanelId::from(cx.entity_id()), active, cx);
@@ -135,12 +187,13 @@ impl BasePanel for MissingConnection {
 }
 impl Panel for MissingConnection {
     fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let dirty = self.dirty();
         tabs::title(
             PanelId::from(cx.entity_id()),
             Some(lucide("table")),
             t!("designer.missing_connection").to_string(),
             None,
-            false,
+            dirty,
         )
     }
 }
@@ -883,9 +936,9 @@ impl TableDesigner {
                                 "This connection is not a relational database.",
                             )
                         })?;
-                        if r.dialect().id() == "mysql" {
-                            r.execute(&format!("USE {}", r.dialect().quote_ident(&scope.database)))
-                                .await?;
+                        let dialect = r.dialect();
+                        if let Some(sql) = dialect.prepare_database_sql(&scope.database) {
+                            r.execute(&sql).await?;
                         }
                         if save {
                             table_design::apply(r, &scope, baseline.as_ref(), &draft).await
@@ -988,42 +1041,54 @@ impl TableDesigner {
             return;
         }
         let weak = cx.entity().downgrade();
-        window.open_dialog(cx, move |dialog, _, _| {
-            let weak = weak.clone();
-            dialog
-                .title(t!("designer.close_title").to_string())
-                .child(t!("designer.close_body").to_string())
-                .footer(
-                    h_flex()
-                        .justify_end()
-                        .gap_2()
-                        .child(
-                            Button::new("designer-close-cancel")
-                                .label(t!("designer.cancel").to_string())
-                                .on_click(|_, w, cx| w.close_dialog(cx)),
-                        )
-                        .child(
-                            Button::new("designer-close-discard")
-                                .label(t!("designer.discard").to_string())
-                                .on_click(move |_, w, cx| {
-                                    w.close_dialog(cx);
-                                    if let Ok(id) = weak.update(cx, |this, cx| {
-                                        this.close_approved = true;
-                                        PanelId::from(cx.entity_id())
-                                    }) {
-                                        w.dispatch_action(
-                                            Box::new(tabs::CloseTabs {
-                                                panel: Some(id),
-                                                which: tabs::Close::This,
-                                            }),
-                                            cx,
-                                        );
-                                    }
-                                }),
-                        ),
-                )
+        confirm_discard(window, cx, move |window, cx| {
+            if let Ok(id) = weak.update(cx, |this, cx| {
+                this.close_approved = true;
+                PanelId::from(cx.entity_id())
+            }) {
+                window.dispatch_action(
+                    Box::new(tabs::CloseTabs {
+                        panel: Some(id),
+                        which: tabs::Close::This,
+                    }),
+                    cx,
+                );
+            }
         });
     }
+}
+
+fn confirm_discard(
+    window: &mut Window,
+    cx: &mut App,
+    on_discard: impl Fn(&mut Window, &mut App) + 'static,
+) {
+    // The dialog builder can run again when the layer rebuilds, so the callback stays shared.
+    let on_discard = Rc::new(on_discard);
+    window.open_dialog(cx, move |dialog, _, _| {
+        let on_discard = on_discard.clone();
+        dialog
+            .title(t!("designer.close_title").to_string())
+            .child(t!("designer.close_body").to_string())
+            .footer(
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("designer-close-cancel")
+                            .label(t!("designer.cancel").to_string())
+                            .on_click(|_, w, cx| w.close_dialog(cx)),
+                    )
+                    .child(
+                        Button::new("designer-close-discard")
+                            .label(t!("designer.discard").to_string())
+                            .on_click(move |_, w, cx| {
+                                w.close_dialog(cx);
+                                on_discard(w, cx);
+                            }),
+                    ),
+            )
+    });
 }
 mod grid;
 mod options;

@@ -3,5 +3,5 @@ mod driver;
 mod metadata;
 mod words;
 
-pub use dialect::{MysqlDialect, dialect};
+pub use dialect::MysqlDialect;
 pub use driver::MySqlDriver;
