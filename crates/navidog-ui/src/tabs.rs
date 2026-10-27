@@ -69,6 +69,8 @@ struct Tabs {
     /// Panels leaving the dock for a window of their own; they keep their state
     detaching: HashSet<PanelId>,
     guards: HashMap<PanelId, CloseGuard>,
+    /// Dirty tabs still to ask about, in tab order, during Close Others / Right / All.
+    pending_dirty_closes: Vec<PanelId>,
 }
 
 impl Global for Tabs {}
@@ -109,7 +111,35 @@ pub fn removed(panel: PanelId, cx: &mut App) -> bool {
     if !moving {
         tabs.guards.remove(&panel);
     }
+    let advance = tabs.pending_dirty_closes.first() == Some(&panel);
+    tabs.pending_dirty_closes.retain(|id| *id != panel);
+    if advance && !moving {
+        prompt_pending(cx);
+    }
     moving
+}
+
+/// Drops a Close Others / Right / All queue. Cancel uses this so later dirty tabs are not asked.
+pub fn abort_pending_dirty_closes(cx: &mut App) {
+    if cx.has_global::<Tabs>() {
+        cx.global_mut::<Tabs>().pending_dirty_closes.clear();
+    }
+}
+
+/// Asks about the next dirty tab in the queue. Tabs that lost their guard are skipped.
+fn prompt_pending(cx: &mut App) {
+    let guard = loop {
+        let Some(id) = cx.global::<Tabs>().pending_dirty_closes.first().copied() else {
+            return;
+        };
+        if let Some(guard) = cx.global::<Tabs>().guards.get(&id).cloned() {
+            break guard;
+        }
+        cx.global_mut::<Tabs>().pending_dirty_closes.remove(0);
+    };
+    // Deferred: a close command runs while its window is busy dispatching, and the guard needs
+    // that window to open its prompt.
+    cx.defer(move |cx| guard(cx));
 }
 
 /// Call from `Panel::on_added_to` for a panel that must ask before closing; see `CloseGuard`.
@@ -260,27 +290,33 @@ fn close(panel: Option<PanelId>, which: Close, cx: &mut App) {
             .iter()
             .any(|p| p.panel_id(cx) == id && p.closable(cx))
     };
-    // A guarded panel that refuses asks instead; the first one asks, the others stay open
-    let mut ask = None;
-    let mut close = Vec::new();
+    // Guarded tabs that refuse are asked one at a time. Others / Right / All remember the rest
+    // and continue after each save or discard; Cancel clears that queue.
+    let bulk = matches!(which, Close::Others | Close::Right | Close::All);
+    let mut dirty = Vec::new();
+    let mut close_now = Vec::new();
     for id in targets(&ids, panel, which) {
-        match cx.global::<Tabs>().guards.get(&id) {
-            Some(guard) if refuses(id, cx) => {
-                if ask.is_none() {
-                    ask = Some(guard.clone());
-                }
-            }
-            _ => close.push(id),
+        let guarded = cx.global::<Tabs>().guards.contains_key(&id);
+        if guarded && refuses(id, cx) {
+            dirty.push(id);
+        } else {
+            close_now.push(id);
         }
     }
+    if bulk {
+        cx.global_mut::<Tabs>().pending_dirty_closes = dirty.clone();
+    }
     group.update(cx, |g, cx| {
-        for id in close {
+        for id in close_now {
             g.close_panel(id, cx);
         }
     });
-    // Deferred: a close command runs while its window is busy dispatching, and the guard needs
-    // that window to open its prompt
-    if let Some(guard) = ask {
+    if bulk {
+        prompt_pending(cx);
+    } else if let Some(guard) = dirty
+        .first()
+        .and_then(|id| cx.global::<Tabs>().guards.get(id).cloned())
+    {
         cx.defer(move |cx| guard(cx));
     }
 }

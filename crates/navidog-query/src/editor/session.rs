@@ -196,12 +196,19 @@ impl QueryEditor {
                     enter.update(cx, |e, cx| e.save_and_close(window, cx));
                     true
                 })
+                .on_cancel(|_, _, cx| {
+                    tabs::abort_pending_dirty_closes(cx);
+                    true
+                })
                 .footer(navidog_ui::skin::close_prompt_footer(
                     "query-close",
                     t!("query.cancel").to_string(),
                     t!("query.dont_save").to_string(),
                     t!("query.save").to_string(),
-                    |_, window, cx| window.close_dialog(cx),
+                    |_, window, cx| {
+                        tabs::abort_pending_dirty_closes(cx);
+                        window.close_dialog(cx);
+                    },
                     move |_, window, cx| {
                         window.close_dialog(cx);
                         discard.update(cx, |e, cx| {

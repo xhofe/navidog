@@ -462,12 +462,19 @@ impl TableViewer {
                     enter.update(cx, |v, cx| v.commit_and_close(window, cx));
                     true
                 })
+                .on_cancel(|_, _, cx| {
+                    tabs::abort_pending_dirty_closes(cx);
+                    true
+                })
                 .footer(navidog_ui::skin::close_prompt_footer(
                     "close",
                     t!("grid.cancel").to_string(),
                     t!("viewer.discard").to_string(),
                     t!("viewer.commit").to_string(),
-                    |_, window, cx| window.close_dialog(cx),
+                    |_, window, cx| {
+                        tabs::abort_pending_dirty_closes(cx);
+                        window.close_dialog(cx);
+                    },
                     move |_, window, cx| {
                         window.close_dialog(cx);
                         discard.update(cx, |v, cx| {

@@ -1110,6 +1110,10 @@ fn confirm_discard(
         let on_discard = on_discard.clone();
         dialog
             .title(t!("designer.close_title").to_string())
+            .on_cancel(|_, _, cx| {
+                tabs::abort_pending_dirty_closes(cx);
+                true
+            })
             .child(t!("designer.close_body").to_string())
             .footer(
                 h_flex()
@@ -1118,7 +1122,10 @@ fn confirm_discard(
                     .child(
                         Button::new("designer-close-cancel")
                             .label(t!("designer.cancel").to_string())
-                            .on_click(|_, w, cx| w.close_dialog(cx)),
+                            .on_click(|_, w, cx| {
+                                tabs::abort_pending_dirty_closes(cx);
+                                w.close_dialog(cx);
+                            }),
                     )
                     .child(
                         Button::new("designer-close-discard")
