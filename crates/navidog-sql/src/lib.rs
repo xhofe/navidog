@@ -9,7 +9,7 @@ pub mod keywords;
 pub mod span;
 
 pub use dialect::{
-    ConstraintKind, ContextSelection, Dialect, DialectFeatures, ExplainStyle, TableOptionStyle,
-    rename_create_table,
+    ColumnType, ConstraintKind, ContextSelection, Dialect, DialectFeatures, ExplainStyle,
+    TableOptionStyle, TypeArgs, rename_create_table,
 };
 pub use span::Lex;

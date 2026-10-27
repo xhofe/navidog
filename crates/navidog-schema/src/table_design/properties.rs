@@ -1,5 +1,6 @@
 //! Structured edits replace only the requested SQL clause; unrecognized attributes survive.
 use super::*;
+use navidog_sql::dialect::TypeArgs;
 use navidog_sql::span::{self as sql_span};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -278,30 +279,53 @@ pub fn edit_column(
     ) {
         match property {
             ColumnProperty::Type => {
-                p.data_type = input.trim().into();
-                if [
-                    "TEXT",
-                    "BLOB",
-                    "BYTEA",
-                    "JSON",
-                    "JSONB",
-                    "BOOLEAN",
-                    "DATE",
-                    "INTEGER",
-                    "BIGINT",
-                    "SMALLINT",
-                    "REAL",
-                    "DOUBLE PRECISION",
-                ]
-                .iter()
-                .any(|t| p.data_type.eq_ignore_ascii_case(t))
-                {
-                    p.length.clear();
-                    p.scale.clear();
+                let typed = input.trim();
+                if let Some(ty) = d.column_type(typed) {
+                    // The server spelling is already stored, so a display width such as
+                    // MariaDB `int(11)` stays. Rewriting a synonym still drops arguments.
+                    let already = p.data_type == ty.name;
+                    p.data_type = ty.name.to_string();
+                    // MySQL prints BOOL/BOOLEAN back as `tinyint(1)`, the one integer
+                    // display width it still keeps.
+                    let mysql_boolean = ty.name == "tinyint"
+                        && (typed.eq_ignore_ascii_case("bool")
+                            || typed.eq_ignore_ascii_case("boolean"));
+                    if mysql_boolean {
+                        p.length = "1".into();
+                        p.scale.clear();
+                    } else if !already {
+                        match ty.args {
+                            TypeArgs::None => {
+                                p.length.clear();
+                                p.scale.clear();
+                            }
+                            TypeArgs::Length => p.scale.clear(),
+                            TypeArgs::LengthAndScale => {}
+                        }
+                    }
+                } else {
+                    p.data_type = typed.to_string();
                 }
             }
-            ColumnProperty::Length => p.length = input.trim().into(),
-            _ => p.scale = input.trim().into(),
+            ColumnProperty::Length => {
+                // A known type that stores no length keeps an existing display width, such as
+                // MariaDB `int(11)`, until the type itself changes.
+                if d.column_type(&p.data_type)
+                    .is_some_and(|ty| ty.args == TypeArgs::None)
+                {
+                    return Ok(s.to_string());
+                }
+                p.length = input.trim().into();
+            }
+            ColumnProperty::Scale => {
+                if d.column_type(&p.data_type)
+                    .is_some_and(|ty| ty.args != TypeArgs::LengthAndScale)
+                {
+                    return Ok(s.to_string());
+                }
+                p.scale = input.trim().into();
+            }
+            _ => unreachable!("only type, length and scale reach this match"),
         }
         if p.data_type.is_empty() {
             return Err(DbError::msg("A field needs a type."));
@@ -662,6 +686,149 @@ mod tests {
             column_properties("ENUM('a,b','c') NOT NULL", &navidog_mysql::MysqlDialect).length,
             "'a,b','c'"
         );
+    }
+
+    #[test]
+    fn chosen_types_use_the_spelling_the_server_prints_back() {
+        let mysql = navidog_mysql::MysqlDialect;
+        assert_eq!(
+            edit_column(
+                "INTEGER(11) NOT NULL",
+                ColumnProperty::Type,
+                "INTEGER",
+                &mysql
+            )
+            .unwrap(),
+            "int NOT NULL"
+        );
+        assert_eq!(
+            edit_column("int(11) NOT NULL", ColumnProperty::Type, "INTEGER", &mysql).unwrap(),
+            "int(11) NOT NULL"
+        );
+        assert_eq!(
+            edit_column(
+                "VARCHAR(20) NOT NULL",
+                ColumnProperty::Type,
+                "INTEGER",
+                &mysql
+            )
+            .unwrap(),
+            "int NOT NULL"
+        );
+        assert_eq!(
+            edit_column("int NOT NULL", ColumnProperty::Length, "11", &mysql).unwrap(),
+            "int NOT NULL"
+        );
+        assert_eq!(
+            edit_column("int(11) NOT NULL", ColumnProperty::Length, "20", &mysql).unwrap(),
+            "int(11) NOT NULL"
+        );
+        assert_eq!(
+            edit_column("int(11) NOT NULL", ColumnProperty::NotNull, "false", &mysql).unwrap(),
+            "int(11)"
+        );
+        assert_eq!(
+            edit_column("CHAR(20) NOT NULL", ColumnProperty::Type, "VARCHAR", &mysql).unwrap(),
+            "varchar(20) NOT NULL"
+        );
+        assert_eq!(
+            edit_column("BOOLEAN NOT NULL", ColumnProperty::Type, "BOOLEAN", &mysql).unwrap(),
+            "tinyint(1) NOT NULL"
+        );
+        assert_eq!(
+            edit_column("REAL(10,2) NOT NULL", ColumnProperty::Type, "REAL", &mysql).unwrap(),
+            "double NOT NULL"
+        );
+        assert_eq!(
+            edit_column("FLOAT NOT NULL", ColumnProperty::Type, "REAL", &mysql).unwrap(),
+            "double NOT NULL"
+        );
+        assert_eq!(
+            edit_column(
+                "DECIMAL(10,2) NOT NULL",
+                ColumnProperty::Type,
+                "VARCHAR",
+                &mysql
+            )
+            .unwrap(),
+            "varchar(10) NOT NULL"
+        );
+        assert_eq!(
+            edit_column("int NOT NULL", ColumnProperty::Type, "geometry", &mysql).unwrap(),
+            "geometry NOT NULL"
+        );
+
+        let postgres = navidog_postgres::PostgresDialect;
+        assert_eq!(
+            edit_column(
+                "varchar(40) NOT NULL",
+                ColumnProperty::Type,
+                "VARCHAR",
+                &postgres
+            )
+            .unwrap(),
+            "character varying(40) NOT NULL"
+        );
+        assert_eq!(
+            edit_column(
+                "INTEGER NOT NULL",
+                ColumnProperty::Type,
+                "TIMESTAMP",
+                &postgres
+            )
+            .unwrap(),
+            "timestamp without time zone NOT NULL"
+        );
+        assert_eq!(
+            edit_column(
+                "timestamp(6) with time zone NOT NULL",
+                ColumnProperty::Scale,
+                "2",
+                &postgres
+            )
+            .unwrap(),
+            "timestamp(6) with time zone NOT NULL"
+        );
+        assert_eq!(
+            edit_column(
+                "text NOT NULL",
+                ColumnProperty::Type,
+                "TIMESTAMPTZ",
+                &postgres
+            )
+            .unwrap(),
+            "timestamp with time zone NOT NULL"
+        );
+
+        let sqlite = navidog_sqlite::SqliteDialect;
+        assert_eq!(
+            edit_column("int(11) NOT NULL", ColumnProperty::Type, "int", &sqlite).unwrap(),
+            "INTEGER NOT NULL"
+        );
+        assert_eq!(
+            edit_column("INTEGER NOT NULL", ColumnProperty::Length, "11", &sqlite).unwrap(),
+            "INTEGER NOT NULL"
+        );
+        assert_eq!(
+            edit_column("VARCHAR NOT NULL", ColumnProperty::Length, "80", &sqlite).unwrap(),
+            "VARCHAR(80) NOT NULL"
+        );
+
+        assert_eq!(
+            TableDesign::blank(&mysql).columns[0].definition,
+            "int NOT NULL"
+        );
+        assert!(TableDesign::blank(&mysql).is_blank());
+        assert!(TableDesign::blank(&postgres).is_blank());
+        assert_eq!(
+            TableDesign::blank(&postgres).columns[0].definition,
+            "integer NOT NULL"
+        );
+        assert!(TableDesign::new().is_blank());
+        assert!(TableDesign::blank(&sqlite).is_blank());
+        let mut edited = TableDesign::blank(&sqlite);
+        edited.columns[0].definition = "int NOT NULL".into();
+        assert!(edited != TableDesign::blank(&sqlite));
     }
 }
 

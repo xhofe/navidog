@@ -114,32 +114,20 @@ impl TableDelegate for DesignerGrid {
                         .flex_1(),
                 )
                 .when(col == structured::FIELD_TYPE, |row| {
+                    let types = self
+                        .owner
+                        .read_with(cx, |this, _| {
+                            this.dialect
+                                .column_types()
+                                .iter()
+                                .map(|ty| ty.name.to_string())
+                                .collect()
+                        })
+                        .unwrap_or_default();
                     row.child(super::view::choices(
                         self.owner.clone(),
                         0,
-                        vec![
-                            "INTEGER",
-                            "BIGINT",
-                            "SMALLINT",
-                            "VARCHAR",
-                            "CHAR",
-                            "TEXT",
-                            "DECIMAL",
-                            "NUMERIC",
-                            "REAL",
-                            "DOUBLE PRECISION",
-                            "BOOLEAN",
-                            "DATE",
-                            "TIME",
-                            "TIMESTAMP",
-                            self.owner
-                                .read_with(cx, |this, _| this.dialect.binary_type())
-                                .unwrap_or("BLOB"),
-                            "JSON",
-                        ]
-                        .into_iter()
-                        .map(String::from)
-                        .collect(),
+                        types,
                         self.disabled,
                     ))
                 })

@@ -123,10 +123,10 @@ impl MissingConnection {
         let Some(saved) = self.saved() else {
             return false;
         };
-        saved.baseline.as_ref().map_or_else(
-            || saved.draft != TableDesign::new(),
-            |old| old.design != saved.draft,
-        )
+        saved
+            .baseline
+            .as_ref()
+            .map_or_else(|| !saved.draft.is_blank(), |old| old.design != saved.draft)
     }
 
     fn ask_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -399,7 +399,7 @@ impl TableDesigner {
             Saved {
                 object: None,
                 scope,
-                draft: TableDesign::new(),
+                draft: TableDesign::blank(dialect.as_ref()),
                 baseline: None,
                 property_height: None,
             },
@@ -629,7 +629,7 @@ impl TableDesigner {
     fn dirty(&self) -> bool {
         !self.invalid_inputs.is_empty()
             || self.baseline.as_ref().map_or_else(
-                || self.loaded && self.draft != TableDesign::new(),
+                || self.loaded && self.draft != TableDesign::blank(self.dialect.as_ref()),
                 |old| old.design != self.draft,
             )
     }
@@ -734,9 +734,9 @@ impl TableDesigner {
                 .iter()
                 .find(|c| Some(c.id) == self.selected)
                 .map(|c| c.definition.clone())
-                .unwrap_or_else(|| "TEXT".into())
+                .unwrap_or_else(|| self.dialect.added_column_type().into())
         } else {
-            "TEXT".into()
+            self.dialect.added_column_type().into()
         };
         let id = self.next_id;
         self.next_id += 1;
