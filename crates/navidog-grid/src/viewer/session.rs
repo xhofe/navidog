@@ -1,7 +1,6 @@
 use super::*;
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use gpui_kit::{App, Context, SharedString};
 use navidog_app_state::settings::Settings;
@@ -196,7 +195,7 @@ impl TableViewer {
         self.busy = busy;
         self.view.grid.update(cx, |g, cx| g.set_locked(busy, cx));
         if busy {
-            self.view.spin_until = Some(Instant::now() + REFRESH_SPIN);
+            self.view.spin.begin();
             return;
         }
         if self.external_refresh_pending {
@@ -209,30 +208,11 @@ impl TableViewer {
                 });
             });
         }
-        let Some(until) = self.view.spin_until else {
-            return;
-        };
-        let left = until.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            self.view.spin_until = None;
-            return;
-        }
-        // The load can finish before half a turn; wake the view when that half ends.
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(left).await;
-            let _ = this.update(cx, |this, cx| {
-                if this.busy || this.view.spin_until.is_some_and(|t| Instant::now() < t) {
-                    return;
-                }
-                this.view.spin_until = None;
-                cx.notify();
-            });
-        })
-        .detach();
+        self.view.spin.settle(cx, |this| &mut this.view.spin);
     }
 
     pub(crate) fn spinning(&self) -> bool {
-        refresh_spinning(self.busy, self.view.spin_until, Instant::now())
+        self.view.spin.spinning(self.busy)
     }
 
     pub(crate) fn generation_matches(&self, generation: u64, cx: &App) -> bool {

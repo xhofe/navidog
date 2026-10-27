@@ -19,7 +19,7 @@ use navidog_db::ColumnInfo;
 use navidog_model::object::{ObjectKind, ObjectRef};
 use navidog_session::sessions::{ConnState, Sessions};
 use navidog_ui::assets::lucide;
-use navidog_ui::skin::{heading, truncated};
+use navidog_ui::skin::{heading, skeleton_rows, truncated};
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
 
@@ -502,7 +502,14 @@ impl InfoPanel {
                     .into_any_element()
             }
             Some(Load::Failed(e)) => self.message(e.to_string(), cx),
-            _ => self.message(t!("nav.loading").to_string(), cx),
+            _ => div()
+                .p(tokens::info::INSET.rems())
+                .child(skeleton_rows(
+                    6,
+                    tokens::font::LINE_BODY.rems(),
+                    Some(tokens::font::LINE_SMALL.rems()),
+                ))
+                .into_any_element(),
         }
     }
 
@@ -560,11 +567,28 @@ impl Render for InfoPanel {
         }
         let body = match self.page {
             Page::General => self.render_general(cx),
-            Page::Ddl => div()
-                .flex_1()
-                .min_h_0()
-                .child(Editor::new(&self.ddl).bordered(false).size_full())
-                .into_any_element(),
+            Page::Ddl => {
+                let loading = selected_object(cx).is_some_and(|object| {
+                    !matches!(
+                        Catalog::global(cx).read(cx).ddl(&object),
+                        Some(Load::Ready(_)) | Some(Load::Failed(_))
+                    )
+                });
+                if loading {
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .p(tokens::info::INSET.rems())
+                        .child(skeleton_rows(6, tokens::font::LINE_BODY.rems(), None))
+                        .into_any_element()
+                } else {
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .child(Editor::new(&self.ddl).bordered(false).size_full())
+                        .into_any_element()
+                }
+            }
             Page::Fields => self.render_fields(cx),
             Page::Preview => div()
                 .flex_1()

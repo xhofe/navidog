@@ -24,6 +24,7 @@ use navidog_schema::table_design::{
 };
 use navidog_session::sessions::Sessions;
 use navidog_sql::dialect::Dialect;
+use navidog_ui::refresh_spin::HalfSpin;
 use navidog_ui::{
     assets::lucide,
     palette,
@@ -287,6 +288,10 @@ pub struct TableDesigner {
     page: Page,
     dialect: Arc<dyn Dialect>,
     busy: bool,
+    /// Set only for `request(false)`. Save and the preview name lookup set `busy` without this,
+    /// so the refresh icon does not turn for those.
+    reloading: bool,
+    reload_spin: HalfSpin,
     loaded: bool,
     needs_reload: bool,
     error: Option<String>,
@@ -603,6 +608,8 @@ impl TableDesigner {
                 page: Page::Fields,
                 dialect,
                 busy: false,
+                reloading: false,
+                reload_spin: HalfSpin::default(),
                 loaded: true,
                 needs_reload: false,
                 error: migration_error,
@@ -945,6 +952,11 @@ impl TableDesigner {
             return;
         };
         self.busy = true;
+        let reloading = !save;
+        if reloading {
+            self.reloading = true;
+            self.reload_spin.begin();
+        }
         self.refresh_grid(cx);
         self.error = None;
         let scope = self.scope.clone();
@@ -980,6 +992,10 @@ impl TableDesigner {
             .await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.busy = false;
+                if reloading {
+                    this.reloading = false;
+                    this.reload_spin.settle(cx, |this| &mut this.reload_spin);
+                }
                 match result {
                     Ok(snapshot) => {
                         this.accept_snapshot(snapshot, window, cx);

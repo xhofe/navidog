@@ -129,9 +129,9 @@ conn:
   test:
     en: Test Connection
     zh-CN: 测试连接
-  testing:
-    en: Testing…
-    zh-CN: 正在测试…
+  test_cancel:
+    en: Cancel test
+    zh-CN: 取消测试
   test_ok:
     en: Connection Successful
     zh-CN: 连接成功

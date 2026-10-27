@@ -77,6 +77,16 @@ mod macos {
                 println!("saved {}", out.join(name).display());
             };
         let shot = |cx: &mut HeadlessAppContext, name: &str| shot_of(cx, handle, name);
+        // One frame, before async loads park. `shot` waits long enough for SQLite to finish.
+        let shot_now = |cx: &mut HeadlessAppContext, name: &str| {
+            cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+                .unwrap();
+            let image = cx
+                .capture_screenshot(handle)
+                .expect("needs the Metal renderer");
+            image.save(out.join(name)).unwrap();
+            println!("saved {}", out.join(name).display());
+        };
         for (mode, name) in [
             (ThemeMode::Dark, "main-dark.png"),
             (ThemeMode::Light, "main-light.png"),
@@ -111,7 +121,18 @@ mod macos {
         let original_connections =
             cx.update(|cx| ConnectionStore::global(cx).read(cx).file().clone());
         let original_bytes = std::fs::read(home.join("connections.json")).unwrap();
-        std::fs::create_dir(home.join("connections.tmp")).unwrap();
+        // `write_atomic` uses a unique temp name, so a `connections.tmp` directory no longer
+        // blocks it. Removing write permission on the home directory does.
+        let writable = std::fs::metadata(&home).unwrap().permissions();
+        let mut locked = writable.clone();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            locked.set_mode(locked.mode() & !0o222);
+        }
+        #[cfg(not(unix))]
+        locked.set_readonly(true);
+        std::fs::set_permissions(&home, locked).unwrap();
         dispatch(
             &mut cx,
             Box::new(NewConnectionOf {
@@ -156,7 +177,7 @@ mod macos {
             cx.update(|cx| Theme::change(mode, None, cx));
             shot(&mut cx, name);
         }
-        std::fs::remove_dir(home.join("connections.tmp")).unwrap();
+        std::fs::set_permissions(&home, writable).unwrap();
         cx.update_window(handle, |_, window, cx| window.close_all_dialogs(cx))
             .unwrap();
         cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
@@ -187,6 +208,10 @@ mod macos {
                 w.select(Selection::Category(scope.clone(), ObjectKind::Table), cx)
             })
         });
+        shot_now(&mut cx, "objects-loading.png");
+        cx.update(|cx| Theme::change(ThemeMode::Dark, None, cx));
+        shot_now(&mut cx, "objects-loading-dark.png");
+        cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
         wait(&mut cx, |cx| {
             matches!(
                 navidog_navigator::catalog::Catalog::global(cx)
@@ -469,6 +494,10 @@ mod macos {
                 object: Some(actor_ref.clone()),
             }),
         );
+        shot_now(&mut cx, "designer-loading.png");
+        cx.update(|cx| Theme::change(ThemeMode::Dark, None, cx));
+        shot_now(&mut cx, "designer-loading-dark.png");
+        cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
         wait(&mut cx, |_| false);
         shot(&mut cx, "designer.png");
         cx.update(|cx| Theme::change(ThemeMode::Dark, None, cx));

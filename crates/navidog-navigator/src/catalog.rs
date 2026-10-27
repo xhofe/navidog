@@ -635,7 +635,7 @@ pub(crate) fn init(cx: &mut App) {
                 false
             };
             // Opening dropped the entries already; restart what the panes show so they do not
-            // stay on "Loading…" waiting for an event that will not come again.
+            // stay on skeleton rows waiting for an event that will not come again.
             if open {
                 this.require_selection(cx);
             }

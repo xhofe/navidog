@@ -1,6 +1,7 @@
 use super::structured::{REFERENCE_FIELDS, REFERENCE_SCHEMA, REFERENCE_TABLE};
 use super::*;
 use navidog_model::object::ObjectKind;
+use navidog_ui::refresh_spin::HalfSpin;
 
 #[derive(Default)]
 pub(super) struct ReferenceChoices {
@@ -8,6 +9,7 @@ pub(super) struct ReferenceChoices {
     pub tables: Vec<String>,
     pub fields: Vec<String>,
     pub loading: bool,
+    pub spin: HalfSpin,
     pub error: Option<String>,
     generation: u64,
 }
@@ -136,6 +138,7 @@ impl TableDesigner {
             return;
         };
         self.references.loading = true;
+        self.references.spin.begin();
         self.reference_task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = job
                 .await
@@ -145,6 +148,9 @@ impl TableDesigner {
                 if !this.references.finish(generation, result) {
                     return;
                 }
+                this.references
+                    .spin
+                    .settle(cx, |this| &mut this.references.spin);
                 cx.notify();
             });
         }));

@@ -1,14 +1,24 @@
 use super::*;
 
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::{Context, SharedString, Window};
+use gpui_kit::{Context, SharedString, Task, Window};
 use navidog_db::{ConnectParams, runtime};
 use navidog_session::DriverRegistry;
 use rust_i18n::t;
 
+/// The UI waiter plus a handle that actually stops the database probe.
+/// Dropping the waiter only detaches the Tokio task.
+pub(super) struct ConnectionTest {
+    /// Dropping this cancels the waiter. The database probe is stopped separately.
+    #[allow(dead_code)]
+    task: Task<()>,
+    abort: runtime::AbortHandle,
+}
+
 impl ConnectionForm {
     pub(crate) fn test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.testing.take().is_some() {
+        if let Some(running) = self.testing.take() {
+            running.abort.abort();
             cx.notify();
             return;
         }
@@ -25,7 +35,8 @@ impl ConnectionForm {
         };
         let params = ConnectParams::from_connection(&conn, self.secrets(cx), driver.info());
         let job = runtime::spawn(navidog_db::test_connection(driver, params));
-        self.testing = Some(cx.spawn_in(window, async move |this, cx| {
+        let abort = job.abort_handle();
+        let task = cx.spawn_in(window, async move |this, cx| {
             let result = job
                 .await
                 .map_err(|e| e.to_string())
@@ -44,7 +55,8 @@ impl ConnectionForm {
                         .ok_text(t!("conn.ok").to_string())
                 });
             });
-        }));
+        });
+        self.testing = Some(ConnectionTest { task, abort });
         cx.notify();
     }
 }

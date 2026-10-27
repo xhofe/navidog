@@ -1,5 +1,8 @@
 //! One tree row (icon, label, disclosure, drag and drop) and the search and quick filter bar.
 
+use gpui_kit::component::skeleton::Skeleton;
+use gpui_kit::relative;
+
 use super::*;
 
 impl NavigatorPanel {
@@ -135,6 +138,28 @@ impl NavigatorPanel {
         };
         let label = match &self.renaming {
             Some(r) if renaming => Input::new(&r.input).xsmall().into_any_element(),
+            _ if placeholder && entry.item().label.is_empty() => {
+                let n = match &node {
+                    Some(Node::Placeholder(key)) => key
+                        .rsplit_once('#')
+                        .and_then(|(_, n)| n.parse::<usize>().ok())
+                        .unwrap_or(0),
+                    _ => 0,
+                };
+                let fraction = [0.72, 0.55, 0.42][n % 3];
+                div()
+                    .flex()
+                    .items_center()
+                    .h(tokens::navigator::ROW_HEIGHT.rems())
+                    .w_full()
+                    .child(
+                        Skeleton::new()
+                            .h(tokens::font::LINE_BODY.rems())
+                            .w(relative(fraction))
+                            .rounded_sm(),
+                    )
+                    .into_any_element()
+            }
             _ => truncated(
                 SharedString::from(format!("{id}-label")),
                 entry.item().label.clone(),

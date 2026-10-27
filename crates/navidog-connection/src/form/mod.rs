@@ -9,15 +9,17 @@ mod validation;
 #[cfg(test)]
 mod tests;
 
+use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputState, Textarea, TextareaState};
 use gpui_kit::component::select::SelectState;
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{IndexPath, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Task, Window, div,
+    SharedString, Styled as _, Window, div,
 };
 use navidog_app_state::store::ConnectionStore;
 use navidog_app_state::workspace::{Selection, Workspace};
@@ -170,7 +172,7 @@ struct ConnectionForm {
     ssh_key: Text,
     ssh_passphrase: Text,
     remark: Entity<TextareaState>,
-    testing: Option<Task<()>>,
+    testing: Option<test_connection::ConnectionTest>,
     error: Option<SharedString>,
 }
 
@@ -506,15 +508,21 @@ impl Render for ConnectionForm {
                     .justify_between()
                     .child(
                         Button::new("test")
-                            .label(
+                            .accessibility_label(
                                 if testing {
-                                    t!("conn.testing")
+                                    t!("conn.test_cancel")
                                 } else {
                                     t!("conn.test")
                                 }
                                 .to_string(),
                             )
-                            .loading(testing)
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .when(testing, |row| row.child(Spinner::new().small()))
+                                    .child(t!("conn.test").to_string()),
+                            )
                             .on_click(cx.listener(|this, _, window, cx| this.test(window, cx))),
                     )
                     .child(

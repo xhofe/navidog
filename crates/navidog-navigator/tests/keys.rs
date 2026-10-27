@@ -183,12 +183,12 @@ fn arrow_keys_walk_through_the_rows_under_a_table(cx: &mut TestAppContext) {
     assert!(reached, "↓ walks past the rows under t1 to t2");
 
     // Search matches names and opens ancestors only. t1 was expanded by the user;
-    // t2 must stay collapsed, with no "Loading…" row under it.
+    // t2 must stay collapsed, with no placeholder row under it.
     let sep = "\u{1f}";
     let scope = format!("{id}{sep}main{sep}");
     let table_row = |name: &str| format!("o:{scope}{sep}table{sep}{name}");
     let folder = |name: &str, child: &str| format!("t:{scope}{sep}{name}{sep}{child}");
-    let loading = |name: &str, child: &str| format!("p:{}", folder(name, child));
+    let loading = |name: &str, child: &str| format!("p:{}#0", folder(name, child));
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("nav-search", cx);

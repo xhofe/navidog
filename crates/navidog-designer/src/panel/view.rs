@@ -1,6 +1,8 @@
 use super::*;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::resizable::{resizable_panel, v_resizable};
+use gpui_kit::component::skeleton::Skeleton;
+use gpui_kit::relative;
 use structured::{ENTRY_KEYS, PROPERTIES, PROPERTY_IDS};
 
 /// Choice-menu id space of the identity row; see `render_property_row`.
@@ -129,15 +131,23 @@ impl TableDesigner {
                 )
             })
             .when(self.baseline.is_some() || self.needs_reload, |bar| {
+                let spinning = self.reload_spin.spinning(self.reloading);
                 bar.child(
-                    Button::new("designer-reload-toolbar")
-                        .ghost()
-                        .small()
-                        .icon(lucide("refresh-cw"))
-                        .tooltip(t!("designer.reload").to_string())
-                        .accessibility_label(t!("designer.reload").to_string())
-                        .disabled(self.busy)
-                        .on_click(cx.listener(|this, _, w, cx| this.reload(w, cx))),
+                    navidog_ui::refresh_spin::refresh_button(
+                        "designer-reload-toolbar",
+                        spinning,
+                        gpui_kit::component::Size::Small,
+                    )
+                    .ghost()
+                    .tooltip(t!("designer.reload").to_string())
+                    .accessibility_label(t!("designer.reload").to_string())
+                    .disabled(self.busy && !spinning)
+                    .on_click(cx.listener(|this, _, w, cx| {
+                        if this.reload_spin.spinning(this.reloading) {
+                            return;
+                        }
+                        this.reload(w, cx);
+                    })),
                 )
             })
     }
@@ -396,17 +406,23 @@ impl TableDesigner {
                 },
             )
             .when(self.page == Page::ForeignKeys, |v| {
+                let spinning = self.references.spin.spinning(self.references.loading);
                 v.child(
-                    Button::new("designer-reference-refresh")
-                        .ghost()
-                        .small()
-                        .label(t!("designer.refresh_references").to_string())
-                        .disabled(disabled || self.references.loading)
-                        .on_click(cx.listener(|this, _, w, cx| this.load_references(w, cx))),
+                    navidog_ui::refresh_spin::refresh_button(
+                        "designer-reference-refresh",
+                        spinning,
+                        gpui_kit::component::Size::Small,
+                    )
+                    .ghost()
+                    .label(t!("designer.refresh_references").to_string())
+                    .disabled(disabled && !spinning)
+                    .on_click(cx.listener(|this, _, w, cx| {
+                        if this.references.spin.spinning(this.references.loading) {
+                            return;
+                        }
+                        this.load_references(w, cx);
+                    })),
                 )
-                .when(self.references.loading, |v| {
-                    v.child(t!("designer.loading_references").to_string())
-                })
                 .when_some(self.references.error.clone(), |v, error| {
                     v.child(gpui_kit::div().text_color(palette(cx).danger).child(error))
                 })
@@ -531,13 +547,6 @@ impl Render for TableDesigner {
                         }),
                     ),
             )
-            .when(self.busy, |v| {
-                v.child(
-                    gpui_kit::div()
-                        .px_2()
-                        .child(t!("designer.loading").to_string()),
-                )
-            })
             .when_some(self.error.clone(), |v, error| {
                 v.child(gpui_kit::div().px_2().text_color(p.danger).child(error))
             })
@@ -578,20 +587,28 @@ impl Render for TableDesigner {
                 )
             })
             .when(self.needs_reload || !self.loaded, |v| {
+                let spinning = self.reload_spin.spinning(self.reloading);
                 v.child(
-                    Button::new("designer-reload")
-                        .label(t!("designer.reload").to_string())
-                        .disabled(self.busy)
-                        .on_click(cx.listener(|this, _, w, cx| this.load(w, cx))),
+                    navidog_ui::refresh_spin::refresh_button(
+                        "designer-reload",
+                        spinning,
+                        gpui_kit::component::Size::Medium,
+                    )
+                    .label(t!("designer.reload").to_string())
+                    .disabled(self.busy && !spinning)
+                    .on_click(cx.listener(|this, _, w, cx| {
+                        if this.reload_spin.spinning(this.reloading) {
+                            return;
+                        }
+                        this.reload(w, cx);
+                    })),
                 )
             })
-            .child(
-                gpui_kit::div()
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .w_full()
-                    .child(match self.page {
+            .child(gpui_kit::div().flex_1().min_h_0().min_w_0().w_full().child(
+                if self.busy && !self.loaded {
+                    loading_grid().into_any_element()
+                } else {
+                    match self.page {
                         Page::Fields | Page::Indexes | Page::ForeignKeys | Page::Checks => {
                             self.render_grid_page(window, cx).into_any_element()
                         }
@@ -645,9 +662,42 @@ impl Render for TableDesigner {
                                     .min_h_0(),
                             )
                             .into_any_element(),
-                    }),
-            )
+                    }
+                },
+            ))
     }
+}
+
+/// Column-shaped bars shown until the first table snapshot arrives.
+fn loading_grid() -> gpui_kit::AnyElement {
+    const COLS: [(tokens::Pt, f32); 3] = [
+        (tokens::designer::NAME_WIDTH, 0.72),
+        (tokens::designer::TYPE_WIDTH, 0.55),
+        (tokens::designer::ARG_WIDTH, 0.6),
+    ];
+    v_flex()
+        .size_full()
+        .children((0..8).map(|row| {
+            h_flex()
+                .h(tokens::designer::ROW_HEIGHT.rems())
+                .px_2()
+                .gap_2()
+                .items_center()
+                .children(
+                    COLS.into_iter()
+                        .enumerate()
+                        .map(|(col, (width, fraction))| {
+                            let fraction = (fraction - ((row + col) % 3) as f32 * 0.08).max(0.35);
+                            div().w(width.rems()).flex_none().child(
+                                Skeleton::new()
+                                    .h(tokens::font::LINE_BODY.rems())
+                                    .w(relative(fraction))
+                                    .rounded_sm(),
+                            )
+                        }),
+                )
+        }))
+        .into_any_element()
 }
 
 pub(super) fn choices(
