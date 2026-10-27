@@ -100,7 +100,11 @@ impl TableDelegate for DesignerGrid {
                 .child(
                     Input::new(input)
                         .id(*id)
-                        .small()
+                        // xsmall fits the row; text_size puts the body size back, matching the data grid.
+                        .xsmall()
+                        .appearance(false)
+                        .size_full()
+                        .text_size(tokens::font::SIZE_BODY.rems())
                         .disabled(
                             self.disabled
                                 || (col == structured::FIELD_COMMENT
@@ -110,8 +114,7 @@ impl TableDelegate for DesignerGrid {
                                             !this.dialect.features().supports_column_comments
                                         })
                                         .unwrap_or(true)),
-                        )
-                        .flex_1(),
+                        ),
                 )
                 .when(col == structured::FIELD_TYPE, |row| {
                     let types = self
