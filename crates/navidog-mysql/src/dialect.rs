@@ -2,7 +2,8 @@
 
 use navidog_model::object::{ObjectKind, Scope};
 use navidog_sql::{
-    ConstraintKind, ContextSelection, Dialect, DialectFeatures, ExplainStyle, Lex, TableOptionStyle,
+    ColumnType, ConstraintKind, ContextSelection, Dialect, DialectFeatures, ExplainStyle, Lex,
+    TableOptionStyle, TypeArgs,
 };
 
 #[derive(Debug)]
@@ -100,6 +101,15 @@ impl Dialect for MysqlDialect {
     fn explain_style(&self) -> ExplainStyle {
         ExplainStyle::TableAndJson
     }
+    fn column_types(&self) -> &'static [ColumnType] {
+        COLUMN_TYPES
+    }
+    fn default_column_type(&self) -> &'static str {
+        "int"
+    }
+    fn added_column_type(&self) -> &'static str {
+        "text"
+    }
     fn index_methods(&self) -> &'static [&'static str] {
         &["BTREE", "HASH"]
     }
@@ -150,3 +160,77 @@ impl Dialect for MysqlDialect {
 }
 
 const LEX: Lex = Lex::MYSQL;
+
+// Names are what MySQL 8.4 prints in SHOW CREATE TABLE. Synonyms collapse onto those names.
+const COLUMN_TYPES: &[ColumnType] = &[
+    ColumnType {
+        name: "int",
+        synonyms: &["INTEGER", "INT"],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "bigint",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "smallint",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "tinyint",
+        synonyms: &["BOOLEAN", "BOOL"],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "varchar",
+        synonyms: &[],
+        args: TypeArgs::Length,
+    },
+    ColumnType {
+        name: "char",
+        synonyms: &[],
+        args: TypeArgs::Length,
+    },
+    ColumnType {
+        name: "text",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "decimal",
+        synonyms: &["NUMERIC"],
+        args: TypeArgs::LengthAndScale,
+    },
+    ColumnType {
+        name: "double",
+        synonyms: &["DOUBLE PRECISION", "REAL"],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "date",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "time",
+        synonyms: &[],
+        args: TypeArgs::Length,
+    },
+    ColumnType {
+        name: "timestamp",
+        synonyms: &[],
+        args: TypeArgs::Length,
+    },
+    ColumnType {
+        name: "blob",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "json",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+];

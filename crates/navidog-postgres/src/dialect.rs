@@ -2,7 +2,8 @@
 
 use navidog_model::object::{ObjectKind, Scope};
 use navidog_sql::{
-    ContextSelection, Dialect, DialectFeatures, ExplainStyle, Lex, TableOptionStyle,
+    ColumnType, ContextSelection, Dialect, DialectFeatures, ExplainStyle, Lex, TableOptionStyle,
+    TypeArgs,
 };
 
 #[derive(Debug)]
@@ -94,8 +95,14 @@ impl Dialect for PostgresDialect {
     fn explain_style(&self) -> ExplainStyle {
         ExplainStyle::JsonNodes
     }
-    fn binary_type(&self) -> &'static str {
-        "BYTEA"
+    fn column_types(&self) -> &'static [ColumnType] {
+        COLUMN_TYPES
+    }
+    fn default_column_type(&self) -> &'static str {
+        "integer"
+    }
+    fn added_column_type(&self) -> &'static str {
+        "text"
     }
     fn index_methods(&self) -> &'static [&'static str] {
         &["BTREE", "HASH", "GIN", "GIST", "BRIN"]
@@ -158,3 +165,82 @@ impl Dialect for PostgresDialect {
 }
 
 const LEX: Lex = Lex::POSTGRES;
+
+// Names are what PostgreSQL `format_type` prints. Synonyms collapse onto those names.
+const COLUMN_TYPES: &[ColumnType] = &[
+    ColumnType {
+        name: "integer",
+        synonyms: &["INT", "INT4"],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "bigint",
+        synonyms: &["INT8"],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "smallint",
+        synonyms: &["INT2"],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "character varying",
+        synonyms: &["VARCHAR"],
+        args: TypeArgs::Length,
+    },
+    ColumnType {
+        name: "character",
+        synonyms: &["CHAR"],
+        args: TypeArgs::Length,
+    },
+    ColumnType {
+        name: "text",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "numeric",
+        synonyms: &["DECIMAL"],
+        args: TypeArgs::LengthAndScale,
+    },
+    ColumnType {
+        name: "real",
+        synonyms: &["FLOAT4"],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "double precision",
+        synonyms: &["FLOAT8"],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "boolean",
+        synonyms: &["BOOL"],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "date",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "time without time zone",
+        synonyms: &["TIME"],
+        args: TypeArgs::Length,
+    },
+    ColumnType {
+        name: "timestamp without time zone",
+        synonyms: &["TIMESTAMP"],
+        args: TypeArgs::Length,
+    },
+    ColumnType {
+        name: "bytea",
+        synonyms: &["BLOB"],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "json",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+];

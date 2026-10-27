@@ -2,8 +2,8 @@
 
 use navidog_model::object::{ObjectKind, Scope};
 use navidog_sql::{
-    ContextSelection, Dialect, DialectFeatures, ExplainStyle, Lex, TableOptionStyle,
-    rename_create_table,
+    ColumnType, ContextSelection, Dialect, DialectFeatures, ExplainStyle, Lex, TableOptionStyle,
+    TypeArgs, rename_create_table,
 };
 
 #[derive(Debug)]
@@ -77,6 +77,9 @@ impl Dialect for SqliteDialect {
     fn explain_style(&self) -> ExplainStyle {
         ExplainStyle::QueryPlanRows
     }
+    fn column_types(&self) -> &'static [ColumnType] {
+        COLUMN_TYPES
+    }
     fn table_rebuild_catalog(&self) -> Option<&'static str> {
         Some("main")
     }
@@ -122,3 +125,88 @@ impl Dialect for SqliteDialect {
 }
 
 const LEX: Lex = Lex::SQLITE;
+
+// SQLite stores the declared type text, so these spellings come back unchanged.
+// `int` becomes `INTEGER` because only that exact name aliases rowid.
+const COLUMN_TYPES: &[ColumnType] = &[
+    ColumnType {
+        name: "INTEGER",
+        synonyms: &["INT"],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "BIGINT",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "SMALLINT",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "VARCHAR",
+        synonyms: &[],
+        args: TypeArgs::Length,
+    },
+    ColumnType {
+        name: "CHAR",
+        synonyms: &[],
+        args: TypeArgs::Length,
+    },
+    ColumnType {
+        name: "TEXT",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "DECIMAL",
+        synonyms: &[],
+        args: TypeArgs::LengthAndScale,
+    },
+    ColumnType {
+        name: "NUMERIC",
+        synonyms: &[],
+        args: TypeArgs::LengthAndScale,
+    },
+    ColumnType {
+        name: "REAL",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "DOUBLE PRECISION",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "BOOLEAN",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "DATE",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "TIME",
+        synonyms: &[],
+        args: TypeArgs::Length,
+    },
+    ColumnType {
+        name: "TIMESTAMP",
+        synonyms: &[],
+        args: TypeArgs::Length,
+    },
+    ColumnType {
+        name: "BLOB",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+    ColumnType {
+        name: "JSON",
+        synonyms: &[],
+        args: TypeArgs::None,
+    },
+];

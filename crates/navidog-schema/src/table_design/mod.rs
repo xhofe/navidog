@@ -62,6 +62,39 @@ impl TableDesign {
             ..Default::default()
         }
     }
+    /// A new, unmodified table for this dialect. The `id` column uses the type the server
+    /// prints back, so saving and reloading does not rewrite it.
+    pub fn blank(dialect: &dyn Dialect) -> Self {
+        Self {
+            columns: vec![DesignColumn::new(
+                1,
+                "id",
+                format!("{} NOT NULL", dialect.default_column_type()),
+            )],
+            constraints: vec!["PRIMARY KEY (id)".into()],
+            ..Default::default()
+        }
+    }
+    /// An untouched new table: empty name, one default `id` column and its primary key.
+    pub fn is_blank(&self) -> bool {
+        self.name.is_empty()
+            && self.indexes.is_empty()
+            && self.options.is_empty()
+            && self.comment.is_empty()
+            && self.owner.is_empty()
+            && !self.unlogged
+            && self.constraints.len() == 1
+            && self.constraints[0] == "PRIMARY KEY (id)"
+            && self.columns.len() == 1
+            && self.columns[0].id == 1
+            && self.columns[0].original.is_none()
+            && self.columns[0].name == "id"
+            && self.columns[0].comment.is_empty()
+            && matches!(
+                self.columns[0].definition.as_str(),
+                "int NOT NULL" | "integer NOT NULL" | "INTEGER NOT NULL"
+            )
+    }
     pub fn create_sql(&self, dialect: &dyn Dialect, scope: &Scope, name: &str) -> DbResult<String> {
         self.validate(dialect)?;
         let mut parts: Vec<_> = self

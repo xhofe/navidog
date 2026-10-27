@@ -41,6 +41,23 @@ pub enum TableOptionStyle {
     TableFlags,
 }
 
+/// How many parenthesized arguments a designer type stores.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TypeArgs {
+    /// The server drops a length, so the designer does not edit one.
+    None,
+    Length,
+    LengthAndScale,
+}
+
+/// One type in the table designer menu, spelled as the server prints it back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ColumnType {
+    pub name: &'static str,
+    pub synonyms: &'static [&'static str],
+    pub args: TypeArgs,
+}
+
 /// Which plan a product's `EXPLAIN` returns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExplainStyle {
@@ -275,9 +292,29 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
     }
     /// Which `EXPLAIN` form [`crate::Dialect`] consumers should use.
     fn explain_style(&self) -> ExplainStyle;
-    /// Type name offered for binary data.
-    fn binary_type(&self) -> &'static str {
-        "BLOB"
+    /// Types offered in the table designer, in menu order. Each name is the spelling this
+    /// product prints back after `CREATE TABLE`.
+    fn column_types(&self) -> &'static [ColumnType] {
+        &[]
+    }
+    /// The menu entry named by `name`, including a case-insensitive synonym.
+    fn column_type(&self, name: &str) -> Option<&'static ColumnType> {
+        let name = name.trim();
+        self.column_types().iter().find(|ty| {
+            ty.name.eq_ignore_ascii_case(name)
+                || ty
+                    .synonyms
+                    .iter()
+                    .any(|synonym| synonym.eq_ignore_ascii_case(name))
+        })
+    }
+    /// Type of a new table's `id` column.
+    fn default_column_type(&self) -> &'static str {
+        "INTEGER"
+    }
+    /// Type of a field added to an existing design.
+    fn added_column_type(&self) -> &'static str {
+        "TEXT"
     }
     /// `USING` methods offered for an index.
     fn index_methods(&self) -> &'static [&'static str] {

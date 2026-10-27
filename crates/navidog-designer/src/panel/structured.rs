@@ -1,4 +1,5 @@
 use super::*;
+use navidog_sql::dialect::TypeArgs;
 
 pub(super) const PROPERTIES: [ColumnProperty; 11] = [
     ColumnProperty::Type,
@@ -244,6 +245,19 @@ impl TableDesigner {
             t.refresh(cx);
         });
     }
+    /// Length and scale open only when this dialect stores that argument for the column's type.
+    /// An unrecognized type stays editable.
+    fn argument_editable(&self, id: u64, col: usize) -> bool {
+        let Some(column) = self.draft.columns.iter().find(|c| c.id == id) else {
+            return false;
+        };
+        let name = column_properties(&column.definition, self.dialect.as_ref()).data_type;
+        match self.dialect.column_type(&name).map(|ty| ty.args) {
+            Some(TypeArgs::None) => false,
+            Some(TypeArgs::Length) => col == FIELD_LENGTH,
+            Some(TypeArgs::LengthAndScale) | None => true,
+        }
+    }
     pub(super) fn select_cell(
         &mut self,
         row: usize,
@@ -264,6 +278,12 @@ impl TableDesigner {
             };
             // Clicking the active editor must not reset its value or caret.
             if self.selected == Some(id) && self.active_cell == Some(col) {
+                return;
+            }
+            if matches!(col, FIELD_LENGTH | FIELD_SCALE) && !self.argument_editable(id, col) {
+                self.active_cell = None;
+                self.select(id, window, cx);
+                cx.notify();
                 return;
             }
             self.select(id, window, cx);
