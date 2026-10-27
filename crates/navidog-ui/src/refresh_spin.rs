@@ -78,6 +78,18 @@ pub fn refresh_button(id: impl Into<ElementId>, spinning: bool, size: Size) -> B
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui_kit::AppContext as _;
+    use gpui_kit::{IntoElement, Render, TestAppContext, Window, div};
+
+    struct SpinHost {
+        spin: HalfSpin,
+    }
+
+    impl Render for SpinHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
 
     #[test]
     fn refresh_keeps_spinning_for_half_a_turn_after_the_load() {
@@ -91,5 +103,47 @@ mod tests {
         ));
         assert!(!spinning_until(false, Some(until), start + HALF_TURN));
         assert!(!spinning_until(false, None, start));
+    }
+
+    #[test]
+    fn begin_keeps_turning_after_the_work_returns() {
+        let mut spin = HalfSpin::default();
+        assert!(!spin.spinning(false));
+        spin.begin();
+        assert!(spin.spinning(false));
+        assert!(spin.spinning(true));
+    }
+
+    #[gpui_kit::test]
+    fn settle_clears_a_finished_turn_and_keeps_a_newer_one(cx: &mut TestAppContext) {
+        let host = cx.new(|_| SpinHost {
+            spin: HalfSpin::default(),
+        });
+        host.update(cx, |this, cx| {
+            this.spin.until = Some(Instant::now() - Duration::from_millis(1));
+            this.spin.settle(cx, |this| &mut this.spin);
+            assert!(this.spin.until.is_none());
+        });
+
+        host.update(cx, |this, cx| {
+            this.spin.begin();
+            this.spin.settle(cx, |this| &mut this.spin);
+            // The scheduled timer still belongs to the first deadline.
+            this.spin.until = Some(Instant::now() + Duration::from_secs(30));
+        });
+        cx.executor().advance_clock(HALF_TURN + Duration::from_millis(50));
+        cx.run_until_parked();
+        host.update(cx, |this, _| {
+            assert!(this.spin.until.is_some());
+            assert!(this.spin.spinning(false));
+        });
+
+        host.update(cx, |this, cx| {
+            this.spin.settle(cx, |this| &mut this.spin);
+            this.spin.until = Some(Instant::now() - Duration::from_millis(1));
+        });
+        cx.executor().advance_clock(Duration::from_secs(30));
+        cx.run_until_parked();
+        host.update(cx, |this, _| assert!(this.spin.until.is_none()));
     }
 }

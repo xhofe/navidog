@@ -600,7 +600,7 @@ impl Render for TableDesigner {
                         if this.reload_spin.spinning(this.reloading) {
                             return;
                         }
-                        this.load(w, cx);
+                        this.reload(w, cx);
                     })),
                 )
             })

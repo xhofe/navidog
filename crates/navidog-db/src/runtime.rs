@@ -7,6 +7,8 @@ use std::sync::LazyLock;
 use tokio::runtime::{Builder, Runtime};
 use tokio::task::JoinHandle;
 
+pub use tokio::task::AbortHandle;
+
 static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
     Builder::new_multi_thread()
         .worker_threads(2)

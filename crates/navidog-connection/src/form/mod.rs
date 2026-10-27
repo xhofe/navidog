@@ -19,7 +19,7 @@ use gpui_kit::component::{IndexPath, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Task, Window, div,
+    SharedString, Styled as _, Window, div,
 };
 use navidog_app_state::store::ConnectionStore;
 use navidog_app_state::workspace::{Selection, Workspace};
@@ -172,7 +172,7 @@ struct ConnectionForm {
     ssh_key: Text,
     ssh_passphrase: Text,
     remark: Entity<TextareaState>,
-    testing: Option<Task<()>>,
+    testing: Option<test_connection::ConnectionTest>,
     error: Option<SharedString>,
 }
 
@@ -508,7 +508,14 @@ impl Render for ConnectionForm {
                     .justify_between()
                     .child(
                         Button::new("test")
-                            .accessibility_label(t!("conn.test").to_string())
+                            .accessibility_label(
+                                if testing {
+                                    t!("conn.test_cancel")
+                                } else {
+                                    t!("conn.test")
+                                }
+                                .to_string(),
+                            )
                             .child(
                                 h_flex()
                                     .items_center()

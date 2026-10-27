@@ -59,8 +59,8 @@ impl TreeBuilder<'_> {
                         Some(Load::Ready(cols)) => {
                             Ok(cols.iter().map(|c| c.name.clone()).collect())
                         }
-                        Some(Load::Failed(e)) => Err(e.to_string()),
-                        _ => Err(String::new()),
+                        Some(Load::Failed(e)) => Err(Some(e.to_string())),
+                        _ => Err(None),
                     },
                     _ => match self.catalog.table_children(&table.scope, &table.name) {
                         Some(Load::Ready(c)) => Ok(match child {
@@ -68,8 +68,8 @@ impl TreeBuilder<'_> {
                             Child::ForeignKeys => c.foreign_keys.clone(),
                             _ => c.triggers.clone(),
                         }),
-                        Some(Load::Failed(e)) => Err(e.to_string()),
-                        _ => Err(String::new()),
+                        Some(Load::Failed(e)) => Err(Some(e.to_string())),
+                        _ => Err(None),
                     },
                 };
                 let items = match loaded {
@@ -79,7 +79,7 @@ impl TreeBuilder<'_> {
                             TreeItem::new(Node::TableItem(table.clone(), child, n.clone()).id(), n)
                         })
                         .collect(),
-                    Err(message) => Self::placeholder(&folder, message),
+                    Err(error) => Self::placeholder(&folder, error),
                 };
                 self.item(
                     folder,
@@ -125,20 +125,28 @@ impl TreeBuilder<'_> {
             .expanded(expanded)
     }
 
-    /// An empty `label` is still loading: three bars, so one row does not look like a glitch.
-    /// Any other label is an error and stays a single row.
-    pub(super) fn placeholder(parent: &Node, label: String) -> Vec<TreeItem> {
-        let rows = if label.is_empty() { 3 } else { 1 };
-        (0..rows)
-            .map(|i| {
-                let key = if label.is_empty() {
-                    format!("{}#{i}", parent.id())
-                } else {
-                    parent.id().to_string()
-                };
-                TreeItem::new(Node::Placeholder(key).id(), label.clone())
-            })
-            .collect()
+    /// `None` is still loading: three bars, so one row does not look like a glitch.
+    /// `Some` is a failure, including an empty driver message, and stays a single row.
+    pub(super) fn placeholder(parent: &Node, error: Option<String>) -> Vec<TreeItem> {
+        let Some(message) = error else {
+            return (0..3)
+                .map(|i| {
+                    TreeItem::new(
+                        Node::Placeholder(format!("{}#{i}", parent.id())).id(),
+                        String::new(),
+                    )
+                })
+                .collect();
+        };
+        let message = if message.is_empty() {
+            t!("obj.failed").to_string()
+        } else {
+            message
+        };
+        vec![TreeItem::new(
+            Node::Placeholder(parent.id().to_string()).id(),
+            message,
+        )]
     }
 
     pub(super) fn groups(&self, parent: Option<&str>) -> Vec<TreeItem> {
@@ -218,8 +226,8 @@ impl TreeBuilder<'_> {
                         )
                     })
                     .collect(),
-                Some(Load::Failed(e)) => Self::placeholder(&node, e.to_string()),
-                _ => Self::placeholder(&node, String::new()),
+                Some(Load::Failed(e)) => Self::placeholder(&node, Some(e.to_string())),
+                _ => Self::placeholder(&node, None),
             }
         } else {
             self.categories(&Scope::new(conn, db, None), dialect.as_ref())
@@ -276,9 +284,9 @@ impl TreeBuilder<'_> {
                         );
                         items
                     }
-                    Some(Load::Failed(e)) => Self::placeholder(&node, e.to_string()),
+                    Some(Load::Failed(e)) => Self::placeholder(&node, Some(e.to_string())),
                     _ if self.filtering => return None,
-                    _ => Self::placeholder(&node, String::new()),
+                    _ => Self::placeholder(&node, None),
                 };
                 if self.filtering && children.is_empty() {
                     return None;
@@ -296,7 +304,7 @@ mod tests {
     #[test]
     fn a_loading_folder_shows_three_bars_and_an_error_stays_one_row() {
         let parent = Node::Connection("c".into());
-        let loading = TreeBuilder::placeholder(&parent, String::new());
+        let loading = TreeBuilder::placeholder(&parent, None);
         assert_eq!(
             loading
                 .iter()
@@ -305,9 +313,12 @@ mod tests {
             ["p:c:c#0", "p:c:c#1", "p:c:c#2"]
         );
         assert!(loading.iter().all(|item| item.label.is_empty()));
-        let error = TreeBuilder::placeholder(&parent, "down".into());
+        let error = TreeBuilder::placeholder(&parent, Some("down".into()));
         assert_eq!(error.len(), 1);
         assert_eq!(error[0].id.as_ref(), "p:c:c");
         assert_eq!(error[0].label.as_ref(), "down");
+        let blank = TreeBuilder::placeholder(&parent, Some(String::new()));
+        assert_eq!(blank.len(), 1);
+        assert!(!blank[0].label.is_empty());
     }
 }
