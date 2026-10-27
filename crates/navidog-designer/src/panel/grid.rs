@@ -97,6 +97,8 @@ impl TableDelegate for DesignerGrid {
         {
             return cell
                 .p_0()
+                .border_1()
+                .border_color(p.accent)
                 .child(
                     Input::new(input)
                         .id(*id)

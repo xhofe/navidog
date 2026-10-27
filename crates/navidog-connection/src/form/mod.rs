@@ -66,18 +66,41 @@ pub fn open_from_uri(uri: navidog_app_state::uri::DatabaseUri, window: &mut Wind
     open(conn, Some([uri.password, None, None]), window, cx);
 }
 
+fn has_saved_secret(conn: &Connection) -> bool {
+    SecretField::ALL.into_iter().any(|field| match field {
+        SecretField::Password => conn.general.password.is_some(),
+        SecretField::SshPassword => conn.ssh.password.is_some(),
+        SecretField::SshPassphrase => conn.ssh.passphrase.is_some(),
+    })
+}
+
 pub fn open_edit(id: String, window: &mut Window, cx: &mut App) {
+    let store = ConnectionStore::global(cx);
+    let Some(conn) = store.read(cx).get(&id).cloned() else {
+        return;
+    };
+    // A connection with nothing encrypted can be edited while the store is locked.
+    // One that has saved secrets stays closed if unlocking fails: the form could not
+    // write those fields back.
+    if !store.read(cx).is_locked() || !has_saved_secret(&conn) {
+        let secrets = if store.read(cx).is_locked() {
+            [None, None, None]
+        } else {
+            SecretField::ALL.map(|f| store.update(cx, |s, _| s.reveal(&id, f)).ok().flatten())
+        };
+        open(conn, Some(secrets), window, cx);
+        return;
+    }
     crate::request_unlock(window, cx, move |ok, window, cx| {
+        if !ok {
+            return;
+        }
         let store = ConnectionStore::global(cx);
         let Some(conn) = store.read(cx).get(&id).cloned() else {
             return;
         };
-        // A failed unlock leaves the fields empty; saving then keeps the stored ciphertext.
-        let secrets = if ok {
-            SecretField::ALL.map(|f| store.update(cx, |s, _| s.reveal(&id, f)).ok().flatten())
-        } else {
-            [None, None, None]
-        };
+        let secrets =
+            SecretField::ALL.map(|f| store.update(cx, |s, _| s.reveal(&id, f)).ok().flatten());
         open(conn, Some(secrets), window, cx);
     });
 }
@@ -179,6 +202,8 @@ struct ConnectionForm {
     ssh_passphrase: Text,
     remark: Entity<TextareaState>,
     testing: Option<test_connection::ConnectionTest>,
+    /// Bumped when a test starts or is cancelled, so an older waiter cannot overwrite the status.
+    test_generation: u64,
     test_outcome: Option<test_connection::TestOutcome>,
     error: Option<SharedString>,
 }
@@ -371,6 +396,7 @@ impl ConnectionForm {
                 cx.new(|cx| TextareaState::new(window, cx).default_value(value))
             },
             testing: None,
+            test_generation: 0,
             test_outcome: None,
             error: None,
             draft: conn,

@@ -7,11 +7,11 @@ use gpui_kit::component::radio::{Radio, RadioGroup};
 use gpui_kit::component::select::Select;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
-    TestSupportExt as _, div,
+    AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
 };
 use navidog_model::connection::{AttachedDatabase, DatabaseItem};
-use navidog_ui::skin::{FormRow, form_note};
+use navidog_ui::skin::{FormRow, form_note, truncated};
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
 
@@ -319,10 +319,11 @@ impl ConnectionForm {
         let p = palette(cx);
         let list = |rows: Vec<AnyElement>| {
             v_flex()
+                .id("conn-db-list")
                 .w_full()
                 .min_w_0()
                 .h(tokens::form::LIST_HEIGHT.rems())
-                .overflow_hidden()
+                .overflow_y_scroll()
                 .border_1()
                 .border_color(p.separator)
                 .bg(p.control_bg)
@@ -449,18 +450,14 @@ impl ConnectionForm {
                         .px_2()
                         .gap_2()
                         .child(
-                            div()
+                            truncated(("attach-name", rows.len() as u64), item.name.clone())
                                 .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .child(item.name.clone()),
+                                .min_w_0(),
                         )
                         .child(
-                            div()
+                            truncated(("attach-file", rows.len() as u64), item.file.clone())
                                 .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .child(item.file.clone()),
+                                .min_w_0(),
                         )
                         .into_any_element(),
                 );

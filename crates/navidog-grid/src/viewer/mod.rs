@@ -450,6 +450,7 @@ impl TableViewer {
             return;
         }
         let viewer = cx.entity();
+        let panel = PanelId::from(cx.entity_id());
         let name = self.object.name.clone();
         window.open_alert_dialog(cx, move |alert, _, _| {
             let (commit, discard) = (viewer.clone(), viewer.clone());
@@ -462,8 +463,8 @@ impl TableViewer {
                     enter.update(cx, |v, cx| v.commit_and_close(window, cx));
                     true
                 })
-                .on_cancel(|_, _, cx| {
-                    tabs::abort_pending_dirty_closes(cx);
+                .on_cancel(move |_, _, cx| {
+                    tabs::abort_pending_dirty_closes(panel, cx);
                     true
                 })
                 .footer(navidog_ui::skin::close_prompt_footer(
@@ -471,8 +472,8 @@ impl TableViewer {
                     t!("grid.cancel").to_string(),
                     t!("viewer.discard").to_string(),
                     t!("viewer.commit").to_string(),
-                    |_, window, cx| {
-                        tabs::abort_pending_dirty_closes(cx);
+                    move |_, window, cx| {
+                        tabs::abort_pending_dirty_closes(panel, cx);
                         window.close_dialog(cx);
                     },
                     move |_, window, cx| {

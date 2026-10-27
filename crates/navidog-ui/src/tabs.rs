@@ -119,10 +119,15 @@ pub fn removed(panel: PanelId, cx: &mut App) -> bool {
     moving
 }
 
-/// Drops a Close Others / Right / All queue. Cancel uses this so later dirty tabs are not asked.
-pub fn abort_pending_dirty_closes(cx: &mut App) {
-    if cx.has_global::<Tabs>() {
-        cx.global_mut::<Tabs>().pending_dirty_closes.clear();
+/// Drops the bulk-close queue when `panel` is the tab currently being asked.
+/// A prompt left over from another window does not clear a newer queue.
+pub fn abort_pending_dirty_closes(panel: PanelId, cx: &mut App) {
+    if !cx.has_global::<Tabs>() {
+        return;
+    }
+    let tabs = cx.global_mut::<Tabs>();
+    if tabs.pending_dirty_closes.first() == Some(&panel) {
+        tabs.pending_dirty_closes.clear();
     }
 }
 

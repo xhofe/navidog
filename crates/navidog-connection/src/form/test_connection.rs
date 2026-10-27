@@ -22,10 +22,11 @@ pub(super) struct ConnectionTest {
 
 impl ConnectionForm {
     pub(crate) fn cancel_test(&mut self, cx: &mut Context<Self>) {
+        self.test_generation = self.test_generation.wrapping_add(1);
         if let Some(running) = self.testing.take() {
             running.abort.abort();
-            cx.notify();
         }
+        cx.notify();
     }
 
     pub(crate) fn dismiss_test_outcome(&mut self, cx: &mut Context<Self>) {
@@ -38,6 +39,8 @@ impl ConnectionForm {
             return;
         }
         self.test_outcome = None;
+        self.test_generation = self.test_generation.wrapping_add(1);
+        let generation = self.test_generation;
         let conn = match self.collect(cx) {
             Ok(c) => c,
             Err(e) => {
@@ -58,6 +61,9 @@ impl ConnectionForm {
                 .map_err(|e| e.to_string())
                 .and_then(|r| r.map_err(|e| crate::db_text(&e)));
             let _ = this.update_in(cx, |this, _, cx| {
+                if this.test_generation != generation {
+                    return;
+                }
                 this.testing = None;
                 this.test_outcome = Some(match result {
                     Ok(version) => TestOutcome::Ok(

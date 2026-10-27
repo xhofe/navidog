@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Database client."
+description = "An open-source alternative to Navicat, written in Rust"
 
 [dependencies]
 navidog-session = { path = "../navidog-session" }

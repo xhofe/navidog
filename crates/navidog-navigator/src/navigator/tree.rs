@@ -271,7 +271,13 @@ impl TreeBuilder<'_> {
                                         self.object_item(scope, kind, m)
                                     })
                                     .collect();
-                                if self.filtering && members.is_empty() && !self.matches(&g.name) {
+                                let only_hidden = members.is_empty()
+                                    && g.members.iter().any(|m| {
+                                        list.iter().any(|o| {
+                                            o.name == *m && dialect.is_system_object(&o.name)
+                                        })
+                                    });
+                                if only_hidden && !(self.filtering && self.matches(&g.name)) {
                                     continue;
                                 }
                                 let vg = Node::VGroup(scope.clone(), kind, g.id.clone());

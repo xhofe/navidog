@@ -239,6 +239,20 @@ impl ObjectsPanel {
         };
     }
 
+    /// Recomputes the status-bar count after a setting change that does not move the selection.
+    pub fn refresh_count(cx: &mut App) {
+        let Some(panel) = cx
+            .try_global::<SharedObjects>()
+            .and_then(|shared| shared.0.upgrade())
+        else {
+            return;
+        };
+        panel.update(cx, |this, cx| {
+            this.recount(cx);
+            cx.notify();
+        });
+    }
+
     /// The row count of the last render, or `None` until the panel rendered once.
     pub(crate) fn cached_rows(cx: &App) -> Option<usize> {
         let current = Workspace::global(cx).read(cx).selection().clone();
@@ -322,13 +336,22 @@ impl ObjectsPanel {
                 let visible = |name: &str| !system_object(&scope.connection, name);
                 if grouping {
                     for g in vgroups.groups_for(scope, kind) {
-                        rows.push(row(RowIcon::Folder, g.name.clone(), Selection::None));
-                        for o in g
+                        let members: Vec<_> = g
                             .members
                             .iter()
                             .filter(|m| visible(m))
                             .filter_map(|m| list.iter().find(|o| &o.name == m))
-                        {
+                            .collect();
+                        let only_hidden = members.is_empty()
+                            && g.members.iter().any(|m| {
+                                list.iter()
+                                    .any(|o| &o.name == m && system_object(&scope.connection, m))
+                            });
+                        if only_hidden {
+                            continue;
+                        }
+                        rows.push(row(RowIcon::Folder, g.name.clone(), Selection::None));
+                        for o in members {
                             grouped.insert(o.name.as_str());
                             rows.push(object_row(o, 1));
                         }
@@ -381,6 +404,14 @@ impl ObjectsPanel {
                 ),
                 _ => Content::Empty,
             },
+            Selection::Database(c, d)
+                if !show_system
+                    && sessions
+                        .dialect(c)
+                        .is_some_and(|dialect| dialect.is_system_database(d)) =>
+            {
+                Content::Empty
+            }
             Selection::Database(c, d) => match sessions.dialect(c) {
                 Some(dialect) if dialect.features().has_schemas => match catalog.schemas(c, d) {
                     Some(Load::Ready(list)) => Content::Rows(
@@ -402,6 +433,16 @@ impl ObjectsPanel {
                 },
                 _ => objects(&Scope::new(c.clone(), d.clone(), None), ObjectKind::Table),
             },
+            Selection::Schema(scope)
+                if !show_system
+                    && scope.schema.as_deref().is_some_and(|schema| {
+                        sessions
+                            .dialect(&scope.connection)
+                            .is_some_and(|dialect| dialect.is_system_schema(schema))
+                    }) =>
+            {
+                Content::Empty
+            }
             other => match listed_kind(other) {
                 Some((scope, kind)) => objects(&scope, kind),
                 None => Content::Empty,

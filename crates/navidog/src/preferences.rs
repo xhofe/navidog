@@ -411,6 +411,7 @@ impl Preferences {
                         let v = *v;
                         Settings::update(cx, |s| s.show_system_objects = v);
                         crate::menus::set_menus(cx);
+                        navidog_navigator::ObjectsPanel::refresh_count(cx);
                         cx.refresh_windows();
                     }),
             )
