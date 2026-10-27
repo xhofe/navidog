@@ -404,6 +404,17 @@ impl Preferences {
                     }),
             )
             .child(
+                Checkbox::new("show-system-objects")
+                    .label(t!("prefs.show_system_objects").to_string())
+                    .checked(s.show_system_objects)
+                    .on_click(|v: &bool, _, cx| {
+                        let v = *v;
+                        Settings::update(cx, |s| s.show_system_objects = v);
+                        crate::menus::set_menus(cx);
+                        cx.refresh_windows();
+                    }),
+            )
+            .child(
                 Checkbox::new("auto-connect")
                     .label(t!("prefs.auto_connect").to_string())
                     .checked(s.auto_connect_on_startup)
@@ -483,15 +494,7 @@ impl Preferences {
                             Button::new("master-clear")
                                 .label(t!("prefs.master_clear").to_string())
                                 .on_click(|_, window, cx| {
-                                    let store = ConnectionStore::global(cx);
-                                    match store.update(cx, |s, cx| s.set_master_password(None, cx))
-                                    {
-                                        Ok(dropped) => notify_dropped(&dropped, window, cx),
-                                        Err(e) => {
-                                            let message = e.localized_message();
-                                            window.push_notification(message, cx);
-                                        }
-                                    }
+                                    clear_master_password(window, cx);
                                 }),
                         )
                     }),
@@ -618,17 +621,66 @@ impl MasterDialog {
             cx.notify();
             return;
         }
-        let store = ConnectionStore::global(cx);
-        match store.update(cx, |s, cx| s.set_master_password(Some(&a), cx)) {
-            Ok(dropped) => {
-                window.close_dialog(cx);
-                notify_dropped(&dropped, window, cx);
+        let password = a.clone();
+        let dialog = cx.entity().downgrade();
+        let report = dialog.clone();
+        let apply = move |password: String, window: &mut Window, cx: &mut App| {
+            let store = ConnectionStore::global(cx);
+            match store.update(cx, |s, cx| s.set_master_password(Some(&password), cx)) {
+                Ok(dropped) => {
+                    window.close_dialog(cx);
+                    notify_dropped(&dropped, window, cx);
+                }
+                Err(e) => {
+                    let _ = report.update(cx, |dialog, cx| {
+                        dialog.error = Some(e.localized_message().into());
+                        cx.notify();
+                    });
+                }
             }
-            Err(e) => {
-                self.error = Some(e.localized_message().into());
-                cx.notify();
-            }
+        };
+        if ConnectionStore::global(cx).read(cx).is_locked() {
+            navidog_connection::request_unlock(window, cx, move |ok, window, cx| {
+                if ok {
+                    apply(password, window, cx);
+                } else {
+                    let _ = dialog.update(cx, |dialog, cx| {
+                        dialog.error = Some(
+                            navidog_app_state::store::StoreError::Locked
+                                .localized_message()
+                                .into(),
+                        );
+                        cx.notify();
+                    });
+                }
+            });
+            return;
         }
+        apply(password, window, cx);
+    }
+}
+
+fn clear_master_password(window: &mut Window, cx: &mut App) {
+    let clear = |window: &mut Window, cx: &mut App| {
+        let store = ConnectionStore::global(cx);
+        match store.update(cx, |s, cx| s.set_master_password(None, cx)) {
+            Ok(dropped) => notify_dropped(&dropped, window, cx),
+            Err(e) => window.push_notification(e.localized_message(), cx),
+        }
+    };
+    if ConnectionStore::global(cx).read(cx).is_locked() {
+        navidog_connection::request_unlock(window, cx, move |ok, window, cx| {
+            if ok {
+                clear(window, cx);
+            } else {
+                window.push_notification(
+                    navidog_app_state::store::StoreError::Locked.localized_message(),
+                    cx,
+                );
+            }
+        });
+    } else {
+        clear(window, cx);
     }
 }
 

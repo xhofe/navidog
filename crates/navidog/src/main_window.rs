@@ -789,8 +789,12 @@ impl Render for MainWindow {
             .on_action(cx.listener(|this, _: &ToggleOnlyActive, window, cx| {
                 this.toggle(|s| s.view.only_active = !s.view.only_active, window, cx)
             }))
-            .on_action(cx.listener(|this, _: &ToggleShowHidden, window, cx| {
-                this.toggle(|s| s.view.show_hidden = !s.view.show_hidden, window, cx)
+            .on_action(cx.listener(|_, _: &ToggleShowHidden, _, cx| {
+                navidog_app_state::settings::Settings::update(cx, |s| {
+                    s.show_system_objects = !s.show_system_objects
+                });
+                crate::menus::set_menus(cx);
+                cx.refresh_windows();
             }))
             .on_action(cx.listener(|this, _: &ToggleHideObjectGroups, window, cx| {
                 this.toggle(

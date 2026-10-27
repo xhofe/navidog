@@ -833,7 +833,7 @@ fn row_shade(cx: &App) -> RowShade {
     if cx.has_global::<Settings>() {
         Settings::global(cx).row_shade
     } else {
-        RowShade::Alternate
+        RowShade::None
     }
 }
 

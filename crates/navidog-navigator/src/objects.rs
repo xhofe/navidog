@@ -116,10 +116,18 @@ pub(crate) fn join_profile(parts: &[(String, String)]) -> String {
         .join(" · ")
 }
 
+fn displayed_property(key: &str, value: &str) -> String {
+    if key == "data_length" {
+        navidog_util::format::format_bytes(value)
+    } else {
+        value.to_string()
+    }
+}
+
 fn profile_line(properties: &[(String, String)]) -> String {
     let parts = properties
         .iter()
-        .map(|(k, v)| (t!(format!("col.{k}")).to_string(), v.clone()))
+        .map(|(k, v)| (t!(format!("col.{k}")).to_string(), displayed_property(k, v)))
         .collect::<Vec<_>>();
     join_profile(&parts)
 }
@@ -192,7 +200,7 @@ impl ObjectsPanel {
             ];
             Self {
                 focus_handle: cx.focus_handle(),
-                view: ViewMode::List,
+                view: ViewMode::Detail,
                 sort: None,
                 scroll: UniformListScrollHandle::new(),
                 last_rows: None,
@@ -260,6 +268,13 @@ impl ObjectsPanel {
         };
         let vgroups = VirtualGroups::global(cx).read(cx);
         let grouping = !crate::navigator::view_options(cx).hide_object_groups;
+        let show_system = Settings::global(cx).show_system_objects;
+        let system_object = |connection: &str, name: &str| {
+            !show_system
+                && sessions
+                    .dialect(connection)
+                    .is_some_and(|dialect| dialect.is_system_object(name))
+        };
 
         let connections = |group: Option<&str>| {
             if store.connections().is_empty() {
@@ -304,12 +319,14 @@ impl ObjectsPanel {
                 };
                 let mut rows = Vec::new();
                 let mut grouped = std::collections::HashSet::new();
+                let visible = |name: &str| !system_object(&scope.connection, name);
                 if grouping {
                     for g in vgroups.groups_for(scope, kind) {
                         rows.push(row(RowIcon::Folder, g.name.clone(), Selection::None));
                         for o in g
                             .members
                             .iter()
+                            .filter(|m| visible(m))
                             .filter_map(|m| list.iter().find(|o| &o.name == m))
                         {
                             grouped.insert(o.name.as_str());
@@ -319,7 +336,7 @@ impl ObjectsPanel {
                 }
                 rows.extend(
                     list.iter()
-                        .filter(|o| !grouped.contains(o.name.as_str()))
+                        .filter(|o| visible(&o.name) && !grouped.contains(o.name.as_str()))
                         .map(|o| object_row(o, 0)),
                 );
                 Content::Rows(rows, Some((scope.clone(), kind)))
@@ -346,6 +363,12 @@ impl ObjectsPanel {
                 ConnState::Open { databases, .. } => Content::Rows(
                     databases
                         .iter()
+                        .filter(|d| {
+                            show_system
+                                || !sessions
+                                    .dialect(c)
+                                    .is_some_and(|dialect| dialect.is_system_database(d))
+                        })
                         .map(|d| {
                             row(
                                 RowIcon::Lucide("database"),
@@ -362,6 +385,7 @@ impl ObjectsPanel {
                 Some(dialect) if dialect.features().has_schemas => match catalog.schemas(c, d) {
                     Some(Load::Ready(list)) => Content::Rows(
                         list.iter()
+                            .filter(|s| show_system || !dialect.is_system_schema(s))
                             .map(|s| {
                                 let scope = Scope::new(c.clone(), d.clone(), Some(s.clone()));
                                 row(
@@ -748,7 +772,7 @@ impl ObjectsPanel {
                                     .properties
                                     .iter()
                                     .find(|(k, _)| k == c)
-                                    .map(|(_, v)| v.clone())
+                                    .map(|(_, v)| displayed_property(c, v))
                                     .unwrap_or_default();
                                 let id = SharedString::from(format!("obj-prop-{ix}-{ci}"));
                                 line = line.child(

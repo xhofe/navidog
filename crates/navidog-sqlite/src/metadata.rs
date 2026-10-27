@@ -45,7 +45,7 @@ fn object_sql(
     Ok((
         format!(
             "SELECT name, tbl_name FROM {}.sqlite_schema \
-             WHERE type = '{ty}' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND sql IS NOT NULL ORDER BY name",
+             WHERE type = '{ty}' AND sql IS NOT NULL ORDER BY name",
             d.quote_ident(&scope.database)
         ),
         &["table"],

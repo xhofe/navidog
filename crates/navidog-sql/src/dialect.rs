@@ -217,6 +217,10 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
     fn begin_transaction(&self) -> &'static str;
     fn is_system_database(&self, name: &str) -> bool;
     fn is_system_schema(&self, name: &str) -> bool;
+    /// A catalog object the product ships with, such as SQLite's `sqlite_stat1`.
+    fn is_system_object(&self, _name: &str) -> bool {
+        false
+    }
     fn extra_keywords(&self) -> &'static [&'static str];
     fn extra_functions(&self) -> &'static [&'static str];
     fn rename_object(

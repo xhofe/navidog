@@ -42,6 +42,9 @@ impl Dialect for SqliteDialect {
     fn is_system_schema(&self, _: &str) -> bool {
         false
     }
+    fn is_system_object(&self, name: &str) -> bool {
+        name.starts_with("sqlite_")
+    }
     fn extra_keywords(&self) -> &'static [&'static str] {
         crate::words::KEYWORDS
     }

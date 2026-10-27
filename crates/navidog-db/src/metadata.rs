@@ -41,12 +41,12 @@ pub fn objects(rows: &[Vec<Option<String>>], kind: ObjectKind, props: &[&str]) -
                 .iter()
                 .enumerate()
                 .map(|(i, k)| (k.to_string(), cell(row, i + 1)))
-                .filter(|(_, v)| !v.is_empty())
                 .collect::<Vec<_>>();
             let comment = properties
                 .iter()
                 .find(|(k, _)| k == "comment")
-                .map(|(_, v)| v.clone());
+                .map(|(_, v)| v.clone())
+                .filter(|v| !v.is_empty());
             ObjectInfo {
                 name: cell(row, 0),
                 kind,
