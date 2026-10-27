@@ -9,11 +9,12 @@ mod validation;
 #[cfg(test)]
 mod tests;
 
+use gpui_kit::component::Disableable as _;
 use gpui_kit::component::Sizable as _;
+use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputState, Textarea, TextareaState};
 use gpui_kit::component::select::SelectState;
-use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{IndexPath, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -26,8 +27,7 @@ use navidog_app_state::workspace::{Selection, Workspace};
 use navidog_model::connection::{
     Connection, HostPreference, Member, SecretField, SshAuth, SslMode,
 };
-use navidog_ui::assets::lucide;
-use navidog_ui::skin::{confirm_with, truncated};
+use navidog_ui::skin::confirm_with;
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
 
@@ -454,34 +454,6 @@ fn depth(groups: &[navidog_model::connection::Group], id: &str) -> usize {
     d
 }
 
-fn test_status_bar(
-    bg: gpui_kit::Hsla,
-    fg: gpui_kit::Hsla,
-    mark: AnyElement,
-    text: String,
-    action: impl IntoElement,
-) -> impl IntoElement {
-    h_flex()
-        .w_full()
-        .h(tokens::form::ROW_HEIGHT.rems())
-        .px_2()
-        .items_center()
-        .justify_between()
-        .gap_2()
-        .bg(bg)
-        .text_color(fg)
-        .child(
-            h_flex()
-                .flex_1()
-                .min_w_0()
-                .items_center()
-                .gap_1()
-                .child(mark)
-                .child(truncated("test-status", text).min_w_0()),
-        )
-        .child(action)
-}
-
 impl Render for ConnectionForm {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _ = window;
@@ -515,8 +487,11 @@ impl Render for ConnectionForm {
         };
         let testing = self.testing.is_some();
         let outcome = self.test_outcome.clone();
+        let form = cx.entity().downgrade();
         let p = palette(cx);
         v_flex()
+            .w_full()
+            .min_w_0()
             .gap_3()
             .child(navidog_ui::skin::heading(title))
             .child(
@@ -533,47 +508,66 @@ impl Render for ConnectionForm {
             )
             .child(
                 v_flex()
+                    .w_full()
+                    .min_w_0()
                     .min_h(tokens::conn_form::BODY_HEIGHT.rems())
                     .px(tokens::form::MARGIN.rems())
                     .gap(tokens::form::ROW_GAP.rems())
                     .children(body),
             )
             .when_some(self.error.clone(), |this, e| {
-                this.child(div().text_color(p.danger).child(e))
+                this.child(
+                    div()
+                        .px(tokens::form::MARGIN.rems())
+                        .text_color(p.danger)
+                        .child(e),
+                )
             })
             .when(testing, |this| {
-                this.child(test_status_bar(
-                    p.accent,
-                    p.selection_text,
-                    Spinner::new().small().into_any_element(),
-                    t!("conn.test_in_progress").to_string(),
-                    Button::new("test-cancel")
-                        .label(t!("conn.cancel").to_string())
-                        .on_click(cx.listener(|this, _, _, cx| this.cancel_test(cx))),
-                ))
+                let form = form.clone();
+                this.child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .px(tokens::form::MARGIN.rems())
+                        .child(
+                            Alert::info("test-status", t!("conn.test_in_progress").to_string())
+                                .small()
+                                .on_close(move |_, _, cx| {
+                                    let _ = form.update(cx, |this, cx| this.cancel_test(cx));
+                                }),
+                        ),
+                )
             })
             .when_some(outcome.filter(|_| !testing), |this, outcome| {
-                let (bg, icon, text) = match outcome {
-                    test_connection::TestOutcome::Ok(text) => (p.success, "circle-check", text),
-                    test_connection::TestOutcome::Failed(text) => (p.danger, "circle-x", text),
+                let form = form.clone();
+                let alert = match outcome {
+                    test_connection::TestOutcome::Ok(text) => {
+                        Alert::success("test-status", text.to_string())
+                    }
+                    test_connection::TestOutcome::Failed(text) => {
+                        Alert::error("test-status", text.to_string())
+                    }
                 };
-                this.child(test_status_bar(
-                    bg,
-                    p.selection_text,
-                    lucide(icon).into_any_element(),
-                    text.to_string(),
-                    Button::new("test-dismiss")
-                        .icon(lucide("x"))
-                        .accessibility_label(t!("conn.cancel").to_string())
-                        .on_click(cx.listener(|this, _, _, cx| this.dismiss_test_outcome(cx))),
-                ))
+                this.child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .px(tokens::form::MARGIN.rems())
+                        .child(alert.small().on_close(move |_, _, cx| {
+                            let _ = form.update(cx, |this, cx| this.dismiss_test_outcome(cx));
+                        })),
+                )
             })
             .child(
                 h_flex()
+                    .w_full()
+                    .min_w_0()
                     .justify_between()
                     .child(
                         Button::new("test")
                             .label(t!("conn.test").to_string())
+                            .disabled(testing)
                             .on_click(cx.listener(|this, _, window, cx| this.test(window, cx))),
                     )
                     .child(
