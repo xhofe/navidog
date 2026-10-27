@@ -3,9 +3,9 @@
 //! comma, `AND`, a `#` or a parameter marker.
 
 use super::parse_where;
-use navidog_db::dialect::Dialect;
 use navidog_db::sql::split_statements;
 use navidog_schema::table_design::{column_properties, split_field_list};
+use navidog_sql::dialect::Dialect;
 use navidog_util::sql_format::{Token, tokens};
 use navidog_util::sql_text::find_params;
 
@@ -75,10 +75,8 @@ fn a_join_inside_a_string_does_not_split_a_filter() {
 #[test]
 fn the_format_menu_keeps_a_string_whole() {
     for dialect in dialects() {
-        let mysql = dialect.id() == "mysql";
-        // The editor's format menu only knows the MySQL flag; PostgreSQL and SQLite share the
-        // generic rules, which also protect dollar bodies.
-        let found = tokens(&format!("SELECT {QUOTED}"), mysql);
+        // The format menu reads the dialect's own lexical rules.
+        let found = tokens(&format!("SELECT {QUOTED}"), dialect.lex());
         let quoted = found
             .iter()
             .filter_map(|t| match t {

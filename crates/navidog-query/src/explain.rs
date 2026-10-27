@@ -8,9 +8,10 @@ use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
     SharedString, Styled as _, Window, div,
 };
-use navidog_db::dialect::Dialect;
 use navidog_db::{Column, DbResult, Relational, ResultSet};
 use navidog_grid::{GridColumn, ResultGrid};
+use navidog_sql::ExplainStyle;
+use navidog_sql::dialect::Dialect;
 use navidog_ui::skin::truncated;
 use navidog_ui::{palette, tokens};
 use navidog_util::explain::{self as plan, PlanNode};
@@ -48,8 +49,8 @@ pub(crate) async fn fetch_plan(
     sql: &str,
 ) -> DbResult<Plan> {
     let mut p = Plan::default();
-    match dialect.id() {
-        "mysql" => {
+    match dialect.explain_style() {
+        ExplainStyle::TableAndJson => {
             let grid = rel.execute(&format!("EXPLAIN {sql}")).await?;
             p.grid = grid.into_iter().find(|s| !s.columns.is_empty());
             p.json = rel
@@ -70,7 +71,7 @@ pub(crate) async fn fetch_plan(
             };
             p.tree = p.json.as_deref().and_then(plan::parse_mysql);
         }
-        "postgres" => {
+        ExplainStyle::JsonNodes => {
             let json = rel.execute(&format!("EXPLAIN (FORMAT JSON) {sql}")).await?;
             p.json = Some(first_text(&json));
             p.text = rel
@@ -81,7 +82,7 @@ pub(crate) async fn fetch_plan(
             p.tree = p.json.as_deref().and_then(plan::parse_postgres);
             p.grid = p.tree.as_ref().map(postgres_grid);
         }
-        "sqlite" => {
+        ExplainStyle::QueryPlanRows => {
             let rows = rel.execute(&format!("EXPLAIN QUERY PLAN {sql}")).await?;
             let set = rows
                 .into_iter()
@@ -109,7 +110,6 @@ pub(crate) async fn fetch_plan(
             p.tree = Some(plan::parse_sqlite(&items));
             p.grid = Some(set);
         }
-        _ => {}
     }
     Ok(p)
 }

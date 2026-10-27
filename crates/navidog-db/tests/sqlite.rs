@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use navidog_db::dialect::Dialect;
 use navidog_db::{ConnectParams, Driver, connect, runtime};
+use navidog_sql::dialect::Dialect;
 use navidog_sqlite::SqliteDriver;
 
 #[test]
@@ -72,8 +72,8 @@ fn sqlite_create_attach_execute_and_error_codes() {
 
 #[test]
 fn sqlite_metadata_and_change_sets() {
-    use navidog_db::dialect::{ChangeSet, RowKey, RowUpdate, Written};
     use navidog_model::object::{ObjectKind, Scope};
+    use navidog_sql::dialect::{ChangeSet, RowKey, RowUpdate, Written};
 
     let dir = tempfile::tempdir().unwrap();
     let params = ConnectParams {

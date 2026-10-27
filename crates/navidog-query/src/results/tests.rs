@@ -8,7 +8,7 @@ use std::time::Duration;
 use navidog_db::Column;
 use navidog_db::ColumnOrigin;
 use navidog_db::ResultSet;
-use navidog_db::dialect::{ChangeSet, RowKey, RowUpdate, Written};
+use navidog_sql::dialect::{ChangeSet, RowKey, RowUpdate, Written};
 use rust_i18n::t;
 
 use super::editing::{rename_changes, single_table};

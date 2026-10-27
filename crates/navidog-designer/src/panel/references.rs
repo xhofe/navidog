@@ -63,7 +63,11 @@ impl TableDesigner {
         scope.is_empty()
             || scope
                 == if self.dialect.has_schemas() {
-                    self.scope.schema.as_deref().unwrap_or("public")
+                    self.scope
+                        .schema
+                        .as_deref()
+                        .or(self.dialect.default_schema())
+                        .unwrap_or_default()
                 } else {
                     &self.scope.database
                 }
@@ -89,11 +93,11 @@ impl TableDesigner {
             .to_string();
         if !selected_scope.is_empty() {
             match self.dialect.context_selection() {
-                navidog_db::dialect::ContextSelection::Database => scope.database = selected_scope,
-                navidog_db::dialect::ContextSelection::Schema => {
+                navidog_sql::dialect::ContextSelection::Database => scope.database = selected_scope,
+                navidog_sql::dialect::ContextSelection::Schema => {
                     scope.schema = Some(selected_scope)
                 }
-                navidog_db::dialect::ContextSelection::File => {}
+                navidog_sql::dialect::ContextSelection::File => {}
             }
         }
         let Some(job) = Sessions::global(cx).read(cx).run_rel(
@@ -102,11 +106,11 @@ impl TableDesigner {
             move |r| {
                 Box::pin(async move {
                     let scopes = match r.dialect().context_selection() {
-                        navidog_db::dialect::ContextSelection::Schema => r.list_schemas().await?,
-                        navidog_db::dialect::ContextSelection::Database => {
+                        navidog_sql::dialect::ContextSelection::Schema => r.list_schemas().await?,
+                        navidog_sql::dialect::ContextSelection::Database => {
                             r.list_databases().await?
                         }
-                        navidog_db::dialect::ContextSelection::File => Vec::new(),
+                        navidog_sql::dialect::ContextSelection::File => Vec::new(),
                     };
                     let tables: Vec<_> = r
                         .list_objects(&scope, ObjectKind::Table)

@@ -2,10 +2,10 @@
 
 use navidog_model::object::ObjectKind;
 
-use crate::dialect::Dialect;
 use crate::driver::{
     DbError, DbResult, ForeignKey, ObjectInfo, Relational, ResultSet, TableChildren,
 };
+use navidog_sql::dialect::Dialect;
 
 pub async fn query<R: Relational + ?Sized>(r: &mut R, sql: &str) -> DbResult<ResultSet> {
     let mut sets = r.execute_read(sql).await?;

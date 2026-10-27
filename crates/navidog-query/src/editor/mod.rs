@@ -466,7 +466,7 @@ impl Render for QueryEditor {
                 Settings::update(cx, |s| s.show_after_run = ShowAfterRun::Summary)
             })
             .on_action(cx.listener(|this, _: &ToggleProfile, _, cx| {
-                if this.dialect(cx).is_some_and(|d| d.id() == "mysql") {
+                if this.dialect(cx).is_some_and(|d| d.supports_profile()) {
                     Settings::update(cx, |s| s.show_profile = !s.show_profile);
                 }
             }))

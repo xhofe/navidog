@@ -8,5 +8,5 @@ pub mod dialect;
 pub mod keywords;
 pub mod span;
 
-pub use dialect::{ContextSelection, Dialect, rename_create_table};
+pub use dialect::{ContextSelection, Dialect, ExplainStyle, TableOptionStyle, rename_create_table};
 pub use span::Lex;

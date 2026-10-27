@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use gpui_kit::SharedString;
-use navidog_db::dialect::{RowKey, RowUpdate, Written};
+use navidog_sql::dialect::{RowKey, RowUpdate, Written};
 
 use super::*;
 

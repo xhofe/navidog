@@ -11,6 +11,7 @@ description = "SQL query editor for navidog."
 navidog-session = { path = "../navidog-session" }
 navidog-ui.workspace = true
 navidog-model.workspace = true
+navidog-sql = { path = "../navidog-sql" }
 navidog-app-state.workspace = true
 navidog-util.workspace = true
 navidog-db.workspace = true

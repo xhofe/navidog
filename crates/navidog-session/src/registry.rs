@@ -5,7 +5,7 @@ use std::sync::Arc;
 use gpui_kit::{App, Global};
 use navidog_app_state::registry::Registry;
 use navidog_db::Driver;
-use navidog_db::dialect::Dialect;
+use navidog_sql::dialect::Dialect;
 
 #[derive(Default)]
 pub struct DriverRegistry(pub Registry<Arc<dyn Driver>>);

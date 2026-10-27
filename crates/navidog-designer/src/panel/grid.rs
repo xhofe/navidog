@@ -106,7 +106,9 @@ impl TableDelegate for DesignerGrid {
                                 || (col == 7
                                     && self
                                         .owner
-                                        .read_with(cx, |this, _| this.dialect.id() == "sqlite")
+                                        .read_with(cx, |this, _| {
+                                            !this.dialect.supports_column_comments()
+                                        })
                                         .unwrap_or(true)),
                         )
                         .flex_1(),
@@ -130,15 +132,9 @@ impl TableDelegate for DesignerGrid {
                             "DATE",
                             "TIME",
                             "TIMESTAMP",
-                            if self
-                                .owner
-                                .read_with(cx, |this, _| this.dialect.id() == "postgres")
-                                .unwrap_or(false)
-                            {
-                                "BYTEA"
-                            } else {
-                                "BLOB"
-                            },
+                            self.owner
+                                .read_with(cx, |this, _| this.dialect.binary_type())
+                                .unwrap_or("BLOB"),
                             "JSON",
                         ]
                         .into_iter()

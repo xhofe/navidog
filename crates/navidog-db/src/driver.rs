@@ -8,8 +8,8 @@ use std::sync::Arc;
 use futures::future::BoxFuture;
 use navidog_model::object::{ObjectKind, Scope};
 
-use crate::dialect::Dialect;
 use crate::params::ConnectParams;
+use navidog_sql::dialect::Dialect;
 
 /// Driver error. `code` keeps the database's original error code, displayed in Navicat's
 /// "1045 - Access denied …" format.
@@ -102,6 +102,35 @@ pub struct DriverInfo {
     /// A session can access only one database (PostgreSQL); browsing another database needs
     /// a separate session
     pub per_database_sessions: bool,
+}
+
+impl DriverInfo {
+    /// Baseline for a relational driver. Every capability starts off, so a driver opts in to
+    /// the network, SSL, SSH and the rest explicitly, and a new field does not break drivers
+    /// that use struct update syntax.
+    pub fn relational(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        dialect: Arc<dyn Dialect>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            family: Family::Relational,
+            default_port: None,
+            icon: "",
+            dialect,
+            file_based: false,
+            multi_host: false,
+            supports_network: false,
+            supports_ssl: false,
+            chooses_ssl_mode: false,
+            protocol_timeouts: false,
+            connection_params: false,
+            supports_ssh: false,
+            per_database_sessions: false,
+        }
+    }
 }
 
 pub trait Driver: Send + Sync + 'static {

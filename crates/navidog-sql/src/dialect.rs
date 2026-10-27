@@ -3,7 +3,8 @@
 
 use navidog_model::object::{ObjectKind, Scope};
 
-use crate::span::Lex;
+use crate::keywords::Words;
+use crate::span::{Lex, Span, SpanKind};
 
 /// How a session's current namespace is chosen. Feature code branches on this, not on a product name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,8 +17,35 @@ pub enum ContextSelection {
     File,
 }
 
+/// How a product writes the clauses that follow a table's column definitions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TableOptionStyle {
+    /// `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4` clauses (MySQL).
+    Clauses,
+    /// `WITH (fillfactor=70)` storage parameters, plus separate `TABLESPACE` / `INHERITS`
+    /// (PostgreSQL).
+    StorageParameters,
+    /// Flags after the closing parenthesis, such as `STRICT` / `WITHOUT ROWID` (SQLite).
+    TableFlags,
+}
+
+/// Which plan a product's `EXPLAIN` returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExplainStyle {
+    /// `EXPLAIN` fills a table and `EXPLAIN FORMAT=JSON` returns a nested plan (MySQL, MariaDB).
+    TableAndJson,
+    /// `EXPLAIN (FORMAT JSON)` returns plan nodes with costs (PostgreSQL).
+    JsonNodes,
+    /// `EXPLAIN QUERY PLAN` returns `(id, parent, detail)` rows (SQLite).
+    QueryPlanRows,
+}
+
 /// One database product's SQL rules. Implementations live in the per-database crates.
+///
+/// Feature code asks these methods; it must not compare [`Dialect::id`], which would lose the
+/// exhaustiveness check a capability method has. `scripts/check-dialect-branches.sh` enforces it.
 pub trait Dialect: std::fmt::Debug + Send + Sync {
+    /// Registry-style identifier, for logs and diagnostics. Never branch on it.
     fn id(&self) -> &'static str;
     fn lex(&self) -> Lex;
     fn quote_ident(&self, name: &str) -> String;
@@ -159,6 +187,103 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
         false
     }
 
+    /// How the table designer's option form maps onto this product's `CREATE TABLE` tail.
+    fn table_option_style(&self) -> TableOptionStyle;
+    /// Keys of the table-option form, in display order.
+    fn table_option_keys(&self) -> &'static [&'static str] {
+        &[]
+    }
+    /// Keys the option form edits as checkboxes rather than text inputs.
+    fn bool_table_options(&self) -> &'static [&'static str] {
+        &[]
+    }
+    /// Which `EXPLAIN` form [`crate::Dialect`] consumers should use.
+    fn explain_style(&self) -> ExplainStyle;
+    /// `SHOW PROFILE`: run again with profiling and show the stage table.
+    fn supports_profile(&self) -> bool {
+        false
+    }
+    /// Affected rows of an `UPDATE` count only rows whose value changed (MySQL), so a no-op
+    /// write would look like a lost row.
+    fn counts_changed_rows(&self) -> bool {
+        false
+    }
+    /// A session switches its current database with the statement from
+    /// [`prepare_database_sql`](Dialect::prepare_database_sql).
+    fn switches_database(&self) -> bool {
+        false
+    }
+    /// Columns carry a comment at all.
+    fn supports_column_comments(&self) -> bool {
+        true
+    }
+    /// The column comment is a clause of the column definition (MySQL `COMMENT '…'`) rather than
+    /// a separate `COMMENT ON` statement.
+    fn column_comment_inline(&self) -> bool {
+        false
+    }
+    /// `GENERATED … AS IDENTITY`, with `ALWAYS` / `BY DEFAULT`.
+    fn supports_identity(&self) -> bool {
+        false
+    }
+    /// Text values reject `NUL`; the designer validates comments before they reach the server.
+    fn text_rejects_nul(&self) -> bool {
+        false
+    }
+    /// `AUTOINCREMENT` only applies to `INTEGER PRIMARY KEY` columns.
+    fn autoincrement_needs_integer_key(&self) -> bool {
+        false
+    }
+    /// `CREATE INDEX … COMMENT '…'`.
+    fn supports_index_comment(&self) -> bool {
+        false
+    }
+    /// `ILIKE`, so the filter pane can offer case-insensitive contains.
+    fn case_insensitive_like(&self) -> bool {
+        false
+    }
+    /// `GENERATED ALWAYS AS (…) VIRTUAL`; a product with only stored generated columns omits it.
+    fn supports_virtual_generated(&self) -> bool {
+        true
+    }
+    /// Per-column `CHARACTER SET` / `COLLATE`.
+    fn supports_column_charset(&self) -> bool {
+        false
+    }
+    /// `UNSIGNED` on numeric columns.
+    fn supports_unsigned(&self) -> bool {
+        false
+    }
+    /// Type name offered for binary data.
+    fn binary_type(&self) -> &'static str {
+        "BLOB"
+    }
+    /// `USING` methods offered for an index.
+    fn index_methods(&self) -> &'static [&'static str] {
+        &["BTREE", "HASH"]
+    }
+    /// `CREATE INDEX … USING method`.
+    fn supports_index_method(&self) -> bool {
+        true
+    }
+    /// Index entries may be expressions rather than column names.
+    fn supports_index_expression(&self) -> bool {
+        true
+    }
+    /// A foreign key names a schema (or database) besides the table.
+    fn fk_reference_schema(&self) -> bool {
+        true
+    }
+    /// Schema assumed when a scope names none, when the product has one.
+    fn default_schema(&self) -> Option<&'static str> {
+        None
+    }
+    /// The only catalog whose tables the designer can rebuild by copying them; `None` when the
+    /// dialect rebuilds without one.
+    fn table_rebuild_catalog(&self) -> Option<&'static str> {
+        None
+    }
+
     fn literal(&self, value: Option<&str>) -> String {
         match value {
             None => "NULL".into(),
@@ -254,7 +379,7 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
         for key in &changes.deletes {
             out.push(format!(
                 "DELETE FROM {target} WHERE {}{limit}",
-                assignments(self, &key.0, " AND ")
+                assignments(self, &key.0, Assign::Key)
             ));
         }
         for u in &changes.updates {
@@ -264,7 +389,7 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
             out.push(format!(
                 "UPDATE {target} SET {} WHERE {}{limit}",
                 written_list(self, &u.values),
-                assignments(self, &u.key.0, " AND ")
+                assignments(self, &u.key.0, Assign::Key)
             ));
         }
         for row in &changes.inserts {
@@ -320,32 +445,28 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
                 let keys = if keys.is_empty() { sets.clone() } else { keys };
                 format!(
                     "UPDATE {target} SET {} WHERE {};",
-                    assignments(self, &sets, ", "),
-                    assignments(self, &keys, " AND ")
+                    assignments(self, &sets, Assign::Set),
+                    assignments(self, &keys, Assign::Key)
                 )
             })
             .collect::<Vec<_>>()
             .join("\n")
     }
 
-    fn keywords(&self) -> Vec<&'static str> {
+    fn keywords(&self) -> Words {
+        Words::new(crate::keywords::COMMON, self.extra_keywords())
+    }
+
+    fn functions(&self) -> Words {
+        Words::new(crate::keywords::COMMON_FUNCTIONS, self.extra_functions())
+    }
+
+    /// Linear over both lists; no allocation, so completion can call it per candidate.
+    fn is_keyword(&self, word: &str) -> bool {
         crate::keywords::COMMON
             .iter()
             .chain(self.extra_keywords())
-            .copied()
-            .collect()
-    }
-
-    fn functions(&self) -> Vec<&'static str> {
-        crate::keywords::COMMON_FUNCTIONS
-            .iter()
-            .chain(self.extra_functions())
-            .copied()
-            .collect()
-    }
-
-    fn is_keyword(&self, word: &str) -> bool {
-        self.keywords().iter().any(|k| k.eq_ignore_ascii_case(word))
+            .any(|k| k.eq_ignore_ascii_case(word))
     }
 
     fn typed_name(&self, name: &str) -> String {
@@ -381,11 +502,19 @@ fn written_list<D: Dialect + ?Sized>(dialect: &D, values: &Writes) -> String {
         .join(", ")
 }
 
-fn assignments<D: Dialect + ?Sized>(dialect: &D, values: &Values, sep: &str) -> String {
+/// How a [`Values`] list is used: `WHERE` predicates match NULL with `IS NULL`, while assignments
+/// in a `SET` list always compare with `=`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Assign {
+    Set,
+    Key,
+}
+
+fn assignments<D: Dialect + ?Sized>(dialect: &D, values: &Values, assign: Assign) -> String {
     values
         .iter()
-        .map(|(c, v)| match (sep, v) {
-            (" AND ", None) => format!("{} IS NULL", dialect.quote_ident(c)),
+        .map(|(c, v)| match (assign, v) {
+            (Assign::Key, None) => format!("{} IS NULL", dialect.quote_ident(c)),
             _ => format!(
                 "{} = {}",
                 dialect.quote_ident(c),
@@ -393,7 +522,7 @@ fn assignments<D: Dialect + ?Sized>(dialect: &D, values: &Values, sep: &str) -> 
             ),
         })
         .collect::<Vec<_>>()
-        .join(sep)
+        .join(if assign == Assign::Key { " AND " } else { ", " })
 }
 
 /// Values of a row keyed by column name; `None` is NULL.
@@ -446,31 +575,131 @@ impl ChangeSet {
     }
 }
 
-pub fn rename_create_table(ddl: &str, old: &str, new_qualified: &str) -> Option<String> {
-    let head_len = {
-        let upper = ddl.to_ascii_uppercase();
-        let start = upper.find("CREATE TABLE")? + "CREATE TABLE".len();
-        let rest = &upper[start..];
-        let skipped = rest.len() - rest.trim_start().len();
-        let after_if = rest
-            .trim_start()
-            .strip_prefix("IF NOT EXISTS")
-            .map(|r| rest.len() - r.len());
-        let pos = after_if.unwrap_or(skipped);
-        let rest = &upper[start + pos..];
-        start + pos + (rest.len() - rest.trim_start().len())
-    };
-    let tail = &ddl[head_len..];
-    let forms = [
-        format!("\"{old}\""),
-        format!("`{old}`"),
-        format!("[{old}]"),
-        old.to_string(),
-    ];
-    let name = forms.iter().find(|f| tail.starts_with(f.as_str()))?;
-    Some(format!(
-        "{}{new_qualified}{}",
-        &ddl[..head_len],
-        &tail[name.len()..]
-    ))
+/// Replaces the table name in a `CREATE TABLE` statement. The name may be bare or quoted with
+/// `"`, `` ` `` or `[]`, follow `IF NOT EXISTS`, and carry a database prefix. Comments before the
+/// statement and a longer name that starts with `old` (`actor` vs `actor_id`) are handled by
+/// reading the shared span list instead of scanning the text.
+pub fn rename_create_table(ddl: &str, old: &str, new_qualified: &str, lex: Lex) -> Option<String> {
+    let spans = crate::span::spans(ddl, lex);
+    let code: Vec<_> = spans
+        .iter()
+        .filter(|span| span.kind.is_code() && span.kind != SpanKind::StatementEnd)
+        .collect();
+    let word = |span: &&Span| span.kind == SpanKind::Word;
+    let text = |span: &Span| span.text(ddl);
+    let mut i = 0;
+    // CREATE [TEMP|TEMPORARY] TABLE
+    if !code
+        .get(i)
+        .is_some_and(|s| word(s) && text(s).eq_ignore_ascii_case("CREATE"))
+    {
+        return None;
+    }
+    i += 1;
+    if code.get(i).is_some_and(|s| {
+        word(s)
+            && ["TEMP", "TEMPORARY"]
+                .iter()
+                .any(|k| text(s).eq_ignore_ascii_case(k))
+    }) {
+        i += 1;
+    }
+    if !code
+        .get(i)
+        .is_some_and(|s| word(s) && text(s).eq_ignore_ascii_case("TABLE"))
+    {
+        return None;
+    }
+    i += 1;
+    // IF NOT EXISTS
+    if code
+        .get(i)
+        .is_some_and(|s| word(s) && text(s).eq_ignore_ascii_case("IF"))
+    {
+        for expected in ["NOT", "EXISTS"] {
+            i += 1;
+            if !code
+                .get(i)
+                .is_some_and(|s| word(s) && text(s).eq_ignore_ascii_case(expected))
+            {
+                return None;
+            }
+        }
+        i += 1;
+    }
+    // [schema.]name, possibly quoted
+    let first = *code.get(i)?;
+    let start = first.range.start;
+    let mut name = first;
+    let mut end = name.range.end;
+    if code.get(i + 1).is_some_and(|s| text(s) == ".") && code.get(i + 2).is_some() {
+        name = code[i + 2];
+        end = name.range.end;
+    }
+    if !matches!(name.kind, SpanKind::Word | SpanKind::QuotedIdent) {
+        return None;
+    }
+    if !unquote_ident(text(name)).eq_ignore_ascii_case(old) {
+        return None;
+    }
+    Some(format!("{}{new_qualified}{}", &ddl[..start], &ddl[end..]))
+}
+
+/// Identifier text without its quote characters.
+fn unquote_ident(text: &str) -> &str {
+    for (open, close) in [('"', '"'), ('`', '`'), ('[', ']')] {
+        if text.starts_with(open) && text.ends_with(close) && text.len() >= 2 {
+            return &text[1..text.len() - 1];
+        }
+    }
+    text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rename(ddl: &str, old: &str) -> Option<String> {
+        rename_create_table(ddl, old, "\"app\".\"copy\"", Lex::SQLITE)
+    }
+
+    #[test]
+    fn renames_a_quoted_or_prefixed_table_name() {
+        assert_eq!(
+            rename(
+                "CREATE TABLE IF NOT EXISTS \"app\".\"actor\" (id INTEGER PRIMARY KEY)",
+                "actor"
+            )
+            .unwrap(),
+            "CREATE TABLE IF NOT EXISTS \"app\".\"copy\" (id INTEGER PRIMARY KEY)"
+        );
+        assert_eq!(
+            rename("create table [actor](id)", "actor").unwrap(),
+            "create table \"app\".\"copy\"(id)"
+        );
+        assert_eq!(
+            rename("CREATE TEMP TABLE `actor` (id)", "actor").unwrap(),
+            "CREATE TEMP TABLE \"app\".\"copy\" (id)"
+        );
+    }
+
+    #[test]
+    fn ignores_a_comment_before_the_statement() {
+        assert_eq!(
+            rename(
+                "-- CREATE TABLE other\nCREATE TABLE \"actor\" (id)",
+                "actor"
+            )
+            .unwrap(),
+            "-- CREATE TABLE other\nCREATE TABLE \"app\".\"copy\" (id)"
+        );
+    }
+
+    #[test]
+    fn refuses_a_different_or_prefix_name() {
+        assert!(rename("CREATE TABLE \"actor_id\" (id)", "actor").is_none());
+        assert!(rename("CREATE TABLE \"film\" (id)", "actor").is_none());
+        assert!(rename("CREATE VIEW \"actor\" AS SELECT 1", "actor").is_none());
+        assert!(rename("CREATE TABLE (id)", "actor").is_none());
+    }
 }

@@ -176,21 +176,11 @@ mod tests {
     // that `DriverInfo` is a different type from the one compiled with `cfg(test)`.
     fn driver_info(port: Option<u16>, dialect: Arc<dyn navidog_sql::Dialect>) -> crate::DriverInfo {
         crate::DriverInfo {
-            id: String::new(),
-            name: String::new(),
-            family: crate::Family::Relational,
             default_port: port,
-            icon: "",
-            dialect,
-            file_based: false,
-            multi_host: false,
             supports_network: true,
             supports_ssl: true,
-            chooses_ssl_mode: false,
-            protocol_timeouts: false,
-            connection_params: false,
             supports_ssh: true,
-            per_database_sessions: false,
+            ..crate::DriverInfo::relational("", "", dialect)
         }
     }
 

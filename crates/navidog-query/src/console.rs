@@ -17,9 +17,9 @@ use gpui_kit::{
     Subscription, Task, WeakEntity, Window, div,
 };
 use navidog_app_state::store::ConnectionStore;
-use navidog_db::dialect::Dialect;
 use navidog_db::{CancelHandle, DbError, ResultSet};
 use navidog_session::sessions::{Sessions, SessionsEvent, SharedSession, run_on};
+use navidog_sql::dialect::Dialect;
 use navidog_ui::assets::lucide;
 use navidog_ui::{palette, tabs, tokens};
 use navidog_util::console as fmt;
@@ -306,7 +306,7 @@ impl Console {
             let setup = run_on(shared.clone(), move |rel| {
                 Box::pin(async move {
                     match dialect.as_deref().map(|d| d.context_selection()) {
-                        Some(navidog_db::dialect::ContextSelection::Database) => {
+                        Some(navidog_sql::dialect::ContextSelection::Database) => {
                             if let Some(db) = database
                                 && let Some(sql) =
                                     dialect.as_ref().and_then(|d| d.prepare_database_sql(&db))
@@ -315,7 +315,7 @@ impl Console {
                             }
                             Ok(false)
                         }
-                        Some(navidog_db::dialect::ContextSelection::Schema) => {
+                        Some(navidog_sql::dialect::ContextSelection::Schema) => {
                             let sets = rel
                                 .execute(
                                     "SELECT rolsuper FROM pg_roles WHERE rolname = current_user",
@@ -405,7 +405,7 @@ impl Console {
         let Some(dialect) = self.dialect.as_deref() else {
             return true;
         };
-        if dialect.id() == "mysql"
+        if dialect.lex().delimiter_command
             && let Some(rest) = navidog_util::sql_text::strip_keyword(trimmed, "DELIMITER")
         {
             let next = rest.trim();

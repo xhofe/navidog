@@ -1,10 +1,10 @@
 //! Copy As and unkeyed writes. These used to live next to the `Dialect` enum; the per-database
 //! crates cannot be dev-dependencies of `navidog-sql` without a cycle.
 
-use navidog_db::dialect::{ChangeSet, Dialect, RowKey, RowUpdate, Written};
 use navidog_model::object::Scope;
 use navidog_mysql::MysqlDialect;
 use navidog_postgres::PostgresDialect;
+use navidog_sql::dialect::{ChangeSet, Dialect, RowKey, RowUpdate, Written};
 use navidog_sqlite::SqliteDialect;
 
 fn scope(schema: Option<&str>) -> Scope {
@@ -67,4 +67,39 @@ fn mysql_limits_unkeyed_writes_and_renders_nulls() {
     let pg = PostgresDialect.render_changes(&scope(Some("public")), "t", &changes, false);
     assert!(pg[0].ends_with("WHERE \"id\" = '3'"), "{pg:?}");
     assert!(!pg[0].contains("LIMIT"), "{pg:?}");
+}
+
+#[test]
+fn drop_keywords_follow_the_catalog_rules() {
+    use navidog_model::object::ObjectKind;
+    assert_eq!(MysqlDialect.drop_keyword(ObjectKind::Table), Some("TABLE"));
+    assert_eq!(SqliteDialect.drop_keyword(ObjectKind::Index), Some("INDEX"));
+    assert_eq!(
+        SqliteDialect.drop_keyword(ObjectKind::Trigger),
+        Some("TRIGGER")
+    );
+    // MySQL indexes belong to the table, and PostgreSQL functions need their signature.
+    assert_eq!(MysqlDialect.drop_keyword(ObjectKind::Index), None);
+    assert_eq!(PostgresDialect.drop_keyword(ObjectKind::Function), None);
+    assert_eq!(
+        PostgresDialect.drop_keyword(ObjectKind::Sequence),
+        Some("SEQUENCE")
+    );
+}
+
+#[test]
+fn paging_and_count_quote_the_product() {
+    let s = scope(None);
+    assert_eq!(
+        SqliteDialect.select_page(&s, "t", " id > 1 ", "name DESC", Some(1000), 2000, false),
+        "SELECT * FROM \"app\".\"t\" WHERE id > 1 ORDER BY name DESC LIMIT 1000 OFFSET 2000"
+    );
+    assert_eq!(
+        MysqlDialect.select_page(&s, "t", "", "", None, 0, true),
+        "SELECT * FROM `app`.`t`"
+    );
+    assert_eq!(
+        PostgresDialect.count(&scope(Some("public")), "t", "a = 1"),
+        "SELECT COUNT(*) FROM \"public\".\"t\" WHERE a = 1"
+    );
 }

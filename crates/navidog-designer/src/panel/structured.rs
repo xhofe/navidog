@@ -132,7 +132,7 @@ impl TableDesigner {
                         p.not_null.to_string(),
                         p.generated.to_string(),
                         self.is_primary(&c.name).to_string(),
-                        if self.dialect.id() == "postgres" {
+                        if self.dialect.separate_comments() {
                             c.comment.clone()
                         } else {
                             p.comment
@@ -255,7 +255,7 @@ impl TableDesigner {
                 1 => Some(self.properties[0].clone()),
                 2 => Some(self.properties[1].clone()),
                 3 => Some(self.properties[2].clone()),
-                7 if self.dialect.id() != "sqlite" => Some(self.properties[3].clone()),
+                7 if self.dialect.supports_column_comments() => Some(self.properties[3].clone()),
                 _ => None,
             };
             if let Some(input) = input {
@@ -286,7 +286,7 @@ impl TableDesigner {
         else {
             return;
         };
-        if ix == 3 && self.dialect.id() == "postgres" {
+        if ix == 3 && self.dialect.text_rejects_nul() {
             if value.contains('\0') {
                 self.invalid_inputs
                     .insert(ix, t!("designer.invalid_comment").to_string());
@@ -460,7 +460,10 @@ impl TableDesigner {
         if self.busy || !self.loaded {
             return;
         }
-        if property == ColumnProperty::AutoIncrement && checked && self.dialect.id() == "sqlite" {
+        if property == ColumnProperty::AutoIncrement
+            && checked
+            && self.dialect.autoincrement_needs_integer_key()
+        {
             let Some(column) = self
                 .draft
                 .columns
@@ -686,7 +689,7 @@ impl TableDesigner {
         } else {
             String::new()
         };
-        let standalone = kind == EntryKind::Index && self.dialect.id() != "mysql";
+        let standalone = kind == EntryKind::Index && self.dialect.standalone_indexes();
         if let Ok(sql) = e.sql(
             self.dialect.as_ref(),
             &self.scope,

@@ -255,7 +255,13 @@ pub(super) fn plan_on(
             if d.has_schemas() {
                 format!(
                     "{}.",
-                    d.quote_ident(scope.schema.as_deref().unwrap_or("public"))
+                    d.quote_ident(
+                        scope
+                            .schema
+                            .as_deref()
+                            .or(d.default_schema())
+                            .unwrap_or_default()
+                    )
                 )
             } else {
                 String::new()

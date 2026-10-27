@@ -510,16 +510,8 @@ impl TableDelegate for GridDelegate {
             .as_ref()
             .is_some_and(|(query, case)| self.model.cell_matches(r, c, query, *case));
         let shown = self
-            .dialect
-            .as_deref()
-            .map(|d| self.model.shown_text(r, c, self.raw, d))
-            .unwrap_or_else(|| {
-                self.model
-                    .value(r, c)
-                    .and_then(|c| c.as_ref())
-                    .map(|c| c.to_string().into())
-                    .unwrap_or_default()
-            });
+            .model
+            .display_text(r, c, self.raw, self.dialect.as_deref());
         // Unfilled cells of a new row show Navicat's literal "(Default)" and are not written.
         let (text, tone): (SharedString, Option<gpui_kit::Hsla>) = match self.model.value(r, c) {
             // A cell shows one line, like Navicat; the cell editor shows the full value

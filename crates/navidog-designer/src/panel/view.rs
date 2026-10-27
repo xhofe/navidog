@@ -164,7 +164,7 @@ impl TableDesigner {
                         if ix == 10 { 90 } else { ix },
                         if ix == 10 {
                             vec!["".into(), "ALWAYS".into(), "BY DEFAULT".into()]
-                        } else if self.dialect.id() == "postgres" {
+                        } else if !self.dialect.supports_virtual_generated() {
                             vec!["STORED".into()]
                         } else {
                             vec!["VIRTUAL".into(), "STORED".into()]
@@ -201,10 +201,10 @@ impl TableDesigner {
                 cx,
             ))
             .child(self.property_row(5, "collation", disabled, cx))
-            .when(text && self.dialect.id() == "mysql", |v| {
+            .when(text && self.dialect.supports_column_charset(), |v| {
                 v.child(self.property_row(6, "charset", disabled, cx))
             })
-            .when(numeric && self.dialect.id() != "postgres", |v| {
+            .when(numeric && !self.dialect.supports_identity(), |v| {
                 v.child(FormRow::bare(
                     Checkbox::new("designer-auto-increment")
                         .label(t!("designer.auto_increment").to_string())
@@ -215,7 +215,7 @@ impl TableDesigner {
                         })),
                 ))
             })
-            .when(numeric && self.dialect.id() == "mysql", |v| {
+            .when(numeric && self.dialect.supports_unsigned(), |v| {
                 v.child(FormRow::bare(
                     Checkbox::new("designer-unsigned")
                         .label(t!("designer.unsigned").to_string())
@@ -226,7 +226,7 @@ impl TableDesigner {
                         })),
                 ))
             })
-            .when(self.dialect.id() == "mysql" && numeric, |v| {
+            .when(self.dialect.supports_zerofill() && numeric, |v| {
                 v.child(FormRow::bare(
                     Checkbox::new("designer-zerofill")
                         .label(t!("designer.zerofill").to_string())
@@ -238,13 +238,13 @@ impl TableDesigner {
                 ))
             })
             .when(
-                self.dialect.id() == "mysql"
+                self.dialect.supports_on_update()
                     && ["TIMESTAMP", "DATETIME"]
                         .iter()
                         .any(|ty| p.data_type.to_ascii_uppercase().contains(ty)),
                 |v| v.child(self.property_row(9, "on_update_expression", disabled, cx)),
             )
-            .when(self.dialect.id() == "postgres" && numeric, |v| {
+            .when(self.dialect.supports_identity() && numeric, |v| {
                 v.child(self.property_row(10, "identity_mode", disabled || p.generated, cx))
             })
             .when(p.generated, |v| {
@@ -283,16 +283,17 @@ impl TableDesigner {
                             && [2, 3, 9].contains(ix)
                             && entry.as_ref().is_some_and(|e| e.kind != EntryKind::Index))
                             && !(self.page == Page::ForeignKeys
-                                && *ix == 4
-                                && self.dialect.id() == "sqlite")
+                                && ENTRY_KEYS[*ix] == "reference_schema"
+                                && !self.dialect.fk_reference_schema())
                     })
                     .map(|ix| {
+                        let key = ENTRY_KEYS[ix];
                         let control_disabled = disabled
-                            || (ix == 3 && self.dialect.id() != "mysql")
-                            || (ix == 2 && self.dialect.id() == "sqlite")
-                            || (ix == 9
+                            || (key == "comment" && !self.dialect.supports_index_comment())
+                            || (key == "method" && !self.dialect.supports_index_method())
+                            || (key == "expression"
                                 && self.page == Page::Indexes
-                                && self.dialect.id() == "mysql");
+                                && !self.dialect.supports_index_expression());
                         FormRow::new(
                             t!(format!("designer.{}", ENTRY_KEYS[ix])).to_string(),
                             h_flex()
@@ -322,14 +323,12 @@ impl TableDesigner {
                                                 .iter()
                                                 .map(|c| c.name.clone())
                                                 .collect(),
-                                            2 => (if self.dialect.id() == "mysql" {
-                                                vec!["BTREE", "HASH"]
-                                            } else {
-                                                vec!["BTREE", "HASH", "GIN", "GIST", "BRIN"]
-                                            })
-                                            .into_iter()
-                                            .map(String::from)
-                                            .collect(),
+                                            2 => self
+                                                .dialect
+                                                .index_methods()
+                                                .iter()
+                                                .map(|m| String::from(*m))
+                                                .collect(),
                                             _ => vec![
                                                 "NO ACTION",
                                                 "RESTRICT",

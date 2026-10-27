@@ -2,7 +2,7 @@ use std::ops::RangeInclusive;
 use std::sync::Arc;
 
 use gpui_kit::SharedString;
-use navidog_db::dialect::Dialect;
+use navidog_sql::dialect::Dialect;
 use navidog_util::sql_type::TypeKind;
 
 use super::*;
@@ -34,13 +34,21 @@ impl GridModel {
         self.shown_text(r, c, raw_mode, dialect).to_string()
     }
 
-    /// Editor text when the grid is not bound to a connection. Raw mode cannot quote without a
-    /// dialect, so the stored characters are used as typed.
-    pub fn unbound_text(&self, r: usize, c: usize) -> String {
-        self.value(r, c)
-            .and_then(|cell| cell.as_ref())
-            .map(|text| text.to_string())
-            .unwrap_or_default()
+    /// Cell text for painting and editing. Without a bound connection raw mode cannot quote, so
+    /// the stored characters are used as typed; the returned `SharedString` still shares the
+    /// cell's string, so painting a frame does not copy every value.
+    pub fn display_text(
+        &self,
+        r: usize,
+        c: usize,
+        raw_mode: bool,
+        dialect: Option<&dyn Dialect>,
+    ) -> SharedString {
+        match (self.value(r, c), dialect) {
+            (Some(Some(_)), Some(dialect)) => self.shown_text(r, c, raw_mode, dialect),
+            (Some(Some(text)), None) => text.clone(),
+            _ => SharedString::default(),
+        }
     }
 
     /// `raw_text` for painting: shares the cell's string unless raw data mode quotes it, so a

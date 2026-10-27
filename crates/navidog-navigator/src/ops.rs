@@ -13,10 +13,10 @@ use navidog_app_state::actions::{
 };
 use navidog_app_state::workspace::{Selection, Workspace};
 use navidog_db::DbError;
-use navidog_db::dialect::Dialect;
 use navidog_model::object::{ObjectKind, ObjectRef};
 use navidog_model::queries;
 use navidog_session::sessions::{Sessions, prepare_database};
+use navidog_sql::dialect::Dialect;
 use navidog_ui::assets::lucide;
 use rust_i18n::t;
 

@@ -16,13 +16,14 @@ use gpui_kit::{
 };
 use grid::DesignerGrid;
 use navidog_app_state::actions::TableStructureChanged;
-use navidog_db::{DbError, DbResult, dialect::Dialect};
+use navidog_db::{DbError, DbResult};
 use navidog_model::object::{ObjectRef, Scope};
 use navidog_schema::table_design::{
     self, ColumnProperty, DesignColumn, DesignEntry, EntryKind, TableDesign, TableSnapshot,
     column_properties, edit_column, parse_entry, split_field_list,
 };
 use navidog_session::sessions::Sessions;
+use navidog_sql::dialect::Dialect;
 use navidog_ui::{
     assets::lucide,
     palette,
@@ -85,10 +86,10 @@ pub(crate) fn init(cx: &mut App) {
         });
         // A layout can still name a connection that was deleted. Restoring that panel must
         // not panic; a dirty draft stays in the dumped state and asks before the tab closes.
-        if connection_dialect(cx, &saved.scope.connection).is_none() {
+        let Some(dialect) = connection_dialect(cx, &saved.scope.connection) else {
             return panel_handle(MissingConnection::open(ctx.state().clone(), cx));
-        }
-        panel_handle(TableDesigner::restore(saved, window, cx))
+        };
+        panel_handle(TableDesigner::restore(saved, dialect, window, cx))
     });
 }
 
@@ -108,12 +109,17 @@ impl MissingConnection {
         })
     }
 
+    /// The dumped design, when the panel state still parses.
+    fn saved(&self) -> Option<Saved> {
+        let PanelInfo::Panel(value) = &self.state.info else {
+            return None;
+        };
+        serde_json::from_value::<Saved>(value.clone()).ok()
+    }
+
     /// Same comparison as `TableDesigner::dirty`, read from the dumped design.
     fn dirty(&self) -> bool {
-        let PanelInfo::Panel(value) = &self.state.info else {
-            return false;
-        };
-        let Ok(saved) = serde_json::from_value::<Saved>(value.clone()) else {
+        let Some(saved) = self.saved() else {
             return false;
         };
         saved.baseline.as_ref().map_or_else(
@@ -188,10 +194,23 @@ impl BasePanel for MissingConnection {
 impl Panel for MissingConnection {
     fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dirty = self.dirty();
+        // The tab still names the design, so the user knows what closing it would discard.
+        let label = match self
+            .saved()
+            .map(|saved| (saved.draft.name, saved.scope.database))
+        {
+            Some((name, _)) if !name.is_empty() => {
+                format!("{name} — {}", t!("designer.missing_connection"))
+            }
+            Some((_, database)) if !database.is_empty() => {
+                format!("{database} — {}", t!("designer.missing_connection"))
+            }
+            _ => t!("designer.missing_connection").to_string(),
+        };
         tabs::title(
             PanelId::from(cx.entity_id()),
             Some(lucide("table")),
-            t!("designer.missing_connection").to_string(),
+            label,
             None,
             dirty,
         )
@@ -369,6 +388,8 @@ impl Panel for TableDesigner {
 }
 impl TableDesigner {
     pub fn new(scope: Scope, window: &mut Window, cx: &mut App) -> Entity<Self> {
+        let dialect = connection_dialect(cx, &scope.connection)
+            .expect("a table designer opens on a registered connection");
         Self::restore(
             Saved {
                 object: None,
@@ -377,6 +398,7 @@ impl TableDesigner {
                 baseline: None,
                 property_height: None,
             },
+            dialect,
             window,
             cx,
         )
@@ -391,11 +413,14 @@ impl TableDesigner {
         });
         entity
     }
-    fn restore(mut saved: Saved, window: &mut Window, cx: &mut App) -> Entity<Self> {
+    fn restore(
+        mut saved: Saved,
+        dialect: Arc<dyn Dialect>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
-            let dialect = connection_dialect(cx, &saved.scope.connection)
-                .expect("the connection's driver is registered");
-            let migration_error = if dialect.id() == "postgres" {
+            let migration_error = if dialect.separate_comments() {
                 saved
                     .draft
                     .migrate_comments(&saved.scope, dialect.as_ref())
@@ -666,7 +691,7 @@ impl TableDesigner {
             props.data_type,
             props.length,
             props.scale,
-            if self.dialect.id() == "postgres" {
+            if self.dialect.separate_comments() {
                 c.map(|c| c.comment.clone()).unwrap_or_default()
             } else {
                 props.comment
@@ -774,7 +799,7 @@ impl TableDesigner {
             return;
         }
         self.flush(cx);
-        if self.dialect.id() == "sqlite"
+        if self.dialect.rebuilds_tables()
             && self.baseline.is_some()
             && let Some(job) = Sessions::global(cx)
                 .read(cx)
@@ -970,7 +995,7 @@ impl TableDesigner {
                     }
                     Err(e) => {
                         this.error = Some(e.to_string());
-                        if save && this.dialect.id() == "mysql" {
+                        if save && !this.dialect.transactional_ddl() {
                             this.needs_reload = true;
                         }
                     }

@@ -11,9 +11,9 @@ use gpui_kit::{Context, Entity, Window};
 use navidog_app_state::settings::Settings;
 use navidog_db::Column;
 use navidog_db::commit::{Commit, apply};
-use navidog_db::dialect::{ChangeSet, RowKey, Values, Writes};
 use navidog_grid::{GridEvent, GridTarget, ResultGrid};
 use navidog_session::sessions::{Sessions, prepare_database, run_on};
+use navidog_sql::dialect::{ChangeSet, RowKey, Values, Writes};
 use navidog_ui::assets::lucide;
 use navidog_util::sql_text;
 use rust_i18n::t;
@@ -507,7 +507,7 @@ pub(super) fn rename_changes(changes: ChangeSet, names: &BTreeMap<String, String
         updates: changes
             .updates
             .into_iter()
-            .map(|u| navidog_db::dialect::RowUpdate {
+            .map(|u| navidog_sql::dialect::RowUpdate {
                 key: RowKey(values(u.key.0)),
                 values: writes(u.values),
             })

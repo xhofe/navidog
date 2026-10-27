@@ -78,3 +78,30 @@ pub(crate) const FUNCTIONS: &[&str] = &[
     "VERSION",
     "YEAR",
 ];
+
+/// Table options the designer edits as name/value clauses (`ENGINE=InnoDB`).
+pub(crate) const TABLE_OPTIONS: &[&str] = &[
+    "engine",
+    "charset",
+    "collation",
+    "auto_increment",
+    "row_format",
+    "avg_row_length",
+    "max_rows",
+    "min_rows",
+    "key_block_size",
+    "stats_auto_recalc",
+    "stats_persistent",
+    "stats_sample_pages",
+    "checksum",
+    "delay_key_write",
+    "pack_keys",
+    "insert_method",
+    "connection",
+    "data_directory",
+    "index_directory",
+    "tablespace",
+    "compression",
+    "encryption",
+    "table_comment",
+];

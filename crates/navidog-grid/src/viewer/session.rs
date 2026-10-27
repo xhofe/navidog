@@ -5,9 +5,9 @@ use std::time::Instant;
 
 use gpui_kit::{App, Context, SharedString};
 use navidog_app_state::settings::Settings;
-use navidog_db::dialect::Dialect;
 use navidog_db::{CancelHandle, ColumnInfo};
 use navidog_session::sessions::{ConnState, Sessions, SharedSession, run_on};
+use navidog_sql::dialect::Dialect;
 
 use crate::commit::{close_session, error_message};
 use crate::grid::GridTarget;

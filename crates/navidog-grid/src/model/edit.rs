@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use navidog_db::dialect::{ChangeSet, RowKey, RowUpdate, Writes, Written};
+use navidog_sql::dialect::{ChangeSet, RowKey, RowUpdate, Writes, Written};
 use navidog_util::sql_type::{is_string_type, type_kind};
 
 use super::*;

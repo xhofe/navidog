@@ -9,7 +9,7 @@ use rusqlite::{OpenFlags, params};
 use tokio::sync::watch;
 
 use navidog_db::driver::{
-    CancelHandle, Column, ColumnOrigin, DbError, DbResult, Driver, DriverInfo, Family, Relational,
+    CancelHandle, Column, ColumnOrigin, DbError, DbResult, Driver, DriverInfo, Relational,
     ResultSet, Session,
 };
 use navidog_db::log::{Tag, logged};
@@ -18,6 +18,8 @@ use navidog_db::params::ConnectParams;
 use navidog_sql::Dialect as _;
 
 use super::SqliteDialect;
+use crate::metadata;
+use rust_i18n::t;
 
 pub struct SqliteDriver {
     info: DriverInfo,
@@ -27,21 +29,10 @@ impl Default for SqliteDriver {
     fn default() -> Self {
         Self {
             info: DriverInfo {
-                id: "sqlite".into(),
-                name: "SQLite".into(),
-                family: Family::Relational,
                 default_port: navidog_model::connection::driver_defaults("sqlite").port,
                 icon: "icons/db/sqlite.svg",
-                dialect: Arc::new(SqliteDialect),
                 file_based: true,
-                multi_host: false,
-                supports_network: false,
-                supports_ssl: false,
-                chooses_ssl_mode: false,
-                protocol_timeouts: false,
-                connection_params: false,
-                supports_ssh: false,
-                per_database_sessions: false,
+                ..DriverInfo::relational("sqlite", "SQLite", Arc::new(SqliteDialect))
             },
         }
     }
@@ -72,10 +63,10 @@ async fn blocking<T: Send + 'static>(
             let mut guard = conn.lock().unwrap_or_else(|p| p.into_inner());
             let retired = *registration.borrow();
             if retired {
-                Err(DbError::msg(
-                    rust_i18n::t!("database.sqlite_queued_session_closed").to_string(),
+                Err(
+                    DbError::msg(t!("database.sqlite_queued_session_closed").to_string())
+                        .with_session_loss(false),
                 )
-                .with_session_loss(false))
             } else {
                 f(&mut guard)
             }
@@ -199,7 +190,12 @@ impl Session for SqliteSession {
 
 impl Relational for SqliteSession {
     fn dialect(&self) -> std::sync::Arc<dyn navidog_sql::Dialect> {
-        std::sync::Arc::new(SqliteDialect)
+        // The dialect is stateless: one shared Arc, not one per call.
+        static DIALECT: std::sync::OnceLock<std::sync::Arc<dyn navidog_sql::Dialect>> =
+            std::sync::OnceLock::new();
+        DIALECT
+            .get_or_init(|| std::sync::Arc::new(SqliteDialect))
+            .clone()
     }
 
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
@@ -218,55 +214,7 @@ impl Relational for SqliteSession {
         .boxed()
     }
 
-    fn list_databases(&mut self) -> BoxFuture<'_, DbResult<Vec<String>>> {
-        Box::pin(crate::metadata::list_databases(self))
-    }
-    fn list_schemas(&mut self) -> BoxFuture<'_, DbResult<Vec<String>>> {
-        Box::pin(crate::metadata::list_schemas(self))
-    }
-    fn list_objects<'a>(
-        &'a mut self,
-        scope: &'a navidog_model::object::Scope,
-        kind: navidog_model::object::ObjectKind,
-    ) -> BoxFuture<'a, DbResult<Vec<navidog_db::ObjectInfo>>> {
-        Box::pin(crate::metadata::list_objects(self, scope, kind))
-    }
-    fn object_ddl<'a>(
-        &'a mut self,
-        scope: &'a navidog_model::object::Scope,
-        kind: navidog_model::object::ObjectKind,
-        name: &'a str,
-    ) -> BoxFuture<'a, DbResult<String>> {
-        Box::pin(crate::metadata::object_ddl(self, scope, kind, name))
-    }
-    fn table_columns<'a>(
-        &'a mut self,
-        scope: &'a navidog_model::object::Scope,
-        table: &'a str,
-    ) -> BoxFuture<'a, DbResult<Vec<navidog_db::ColumnInfo>>> {
-        Box::pin(crate::metadata::table_columns(self, scope, table))
-    }
-    fn table_children<'a>(
-        &'a mut self,
-        scope: &'a navidog_model::object::Scope,
-        table: &'a str,
-    ) -> BoxFuture<'a, DbResult<navidog_db::TableChildren>> {
-        Box::pin(crate::metadata::table_children(self, scope, table))
-    }
-    fn foreign_keys<'a>(
-        &'a mut self,
-        scope: &'a navidog_model::object::Scope,
-        table: &'a str,
-    ) -> BoxFuture<'a, DbResult<Vec<navidog_db::ForeignKey>>> {
-        Box::pin(crate::metadata::foreign_keys(self, scope, table))
-    }
-    fn outline<'a>(
-        &'a mut self,
-        scope: &'a navidog_model::object::Scope,
-        system: bool,
-    ) -> BoxFuture<'a, DbResult<navidog_db::outline::Outline>> {
-        Box::pin(crate::metadata::outline(self, scope, system))
-    }
+    navidog_db::relational_catalog!(metadata);
 }
 
 /// Runs a multi-statement script one statement at a time; each returns one result set.

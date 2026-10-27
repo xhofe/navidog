@@ -115,9 +115,13 @@ impl TableDesign {
                 .ok_or_else(|| DbError::msg("Missing comment table."))?;
             if table != self.name
                 || names.len() > 1
-                || names
-                    .first()
-                    .is_some_and(|s| s != scope.schema.as_deref().unwrap_or("public"))
+                || names.first().is_some_and(|s| {
+                    s != scope
+                        .schema
+                        .as_deref()
+                        .or(d.default_schema())
+                        .unwrap_or_default()
+                })
             {
                 return Err(DbError::msg(
                     "A legacy comment targets another table; resolve it in Advanced.",

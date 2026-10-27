@@ -136,7 +136,7 @@ impl DesignEntry {
                     sql.push_str(&format!(" WHERE {}", self.expression));
                 }
                 if !self.comment.is_empty() {
-                    if dialect.id() != "mysql" {
+                    if !dialect.supports_index_comment() {
                         return Err(DbError::msg(
                             "Index comments require a separate comment definition on this database.",
                         ));

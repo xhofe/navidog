@@ -6,7 +6,7 @@ use tokio::sync::Semaphore;
 use futures::FutureExt as _;
 
 use super::*;
-use navidog_db::{CancelHandle, DriverInfo, Family, ResultSet};
+use navidog_db::{CancelHandle, DriverInfo, ResultSet};
 
 async fn sessions_with_metadata(
     driver: Arc<dyn Driver>,
@@ -87,21 +87,13 @@ impl CountingDriver {
     fn new(calls: Arc<Calls>) -> Self {
         Self {
             info: DriverInfo {
-                id: "counting".into(),
-                name: "Counting".into(),
-                family: Family::Relational,
-                default_port: None,
                 icon: "icons/db/mysql.svg",
-                dialect: Arc::new(navidog_mysql::MysqlDialect),
-                file_based: false,
-                multi_host: false,
                 supports_network: true,
-                supports_ssl: false,
-                chooses_ssl_mode: false,
-                protocol_timeouts: false,
-                connection_params: false,
-                supports_ssh: false,
-                per_database_sessions: false,
+                ..DriverInfo::relational(
+                    "counting",
+                    "Counting",
+                    Arc::new(navidog_mysql::MysqlDialect),
+                )
             },
             calls,
         }

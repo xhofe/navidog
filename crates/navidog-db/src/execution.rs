@@ -1,4 +1,10 @@
-//! Conservative physical-session affinity and cancellation across safe reconnects.
+//! Session machinery a driver implementation needs: whether a physical session may be
+//! reconnected, and the handle that cancels the statement in flight.
+//!
+//! [`RecoveryState::observe`] must see every statement the driver sends: arbitrary SQL can open a
+//! transaction or create a temporary object, and inferring "stateless" from a `SELECT` prefix
+//! would let a reconnect drop that state. [`interrupted`] is public only because the
+//! `recovering_*!` macros name it.
 
 use std::sync::{Arc, Mutex};
 
@@ -11,7 +17,7 @@ pub struct RecoveryState {
 }
 
 impl RecoveryState {
-    pub fn new(initial_queries: &str, dialect: &dyn crate::dialect::Dialect) -> Self {
+    pub fn new(initial_queries: &str, dialect: &dyn navidog_sql::dialect::Dialect) -> Self {
         Self {
             reconnectable: crate::sql::split_statements(initial_queries, dialect.lex())
                 .iter()
@@ -30,6 +36,7 @@ impl RecoveryState {
     }
 }
 
+#[doc(hidden)]
 pub fn interrupted(error: DbError, outcome_unknown: bool) -> DbError {
     error.with_session_loss(outcome_unknown)
 }

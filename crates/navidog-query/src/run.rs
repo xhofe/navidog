@@ -12,10 +12,10 @@ use gpui_kit::{App, AsyncWindowContext, Context, WeakEntity, Window};
 use navidog_app_state::actions::OpenConnectionId;
 use navidog_app_state::settings::{ResultsPosition, Settings};
 use navidog_app_state::workspace::Workspace;
-use navidog_db::dialect::Dialect;
 use navidog_db::sql::{Statement, session_setup, split_script};
 use navidog_db::{CancelHandle, DbError, DbResult, Relational, ResultSet};
 use navidog_session::sessions::{Sessions, SharedSession, run_on};
+use navidog_sql::dialect::{ContextSelection, Dialect};
 use navidog_ui::assets::lucide;
 use navidog_util::sql_text;
 use rust_i18n::t;
@@ -95,8 +95,8 @@ impl Live {
                     && context.search_path == info.search_path
             }
             None => match info.dialect.as_deref().map(|d| d.context_selection()) {
-                Some(navidog_db::dialect::ContextSelection::Database) => self.used == info.database,
-                Some(navidog_db::dialect::ContextSelection::Schema) => {
+                Some(ContextSelection::Database) => self.used == info.database,
+                Some(ContextSelection::Schema) => {
                     self.database == info.database
                         && self.used == info.schema
                         && info.search_path.is_none()
@@ -129,7 +129,7 @@ impl SessionContext {
         Self {
             id: next_context_id(),
             known: false,
-            database: (dialect.id() == "postgres")
+            database: (dialect.context_selection() == ContextSelection::Schema)
                 .then(|| info.database.clone())
                 .flatten(),
             schema: None,
@@ -153,11 +153,10 @@ impl SessionContext {
             id: next_context_id(),
             known: true,
             database: value(0),
-            schema: (dialect.context_selection() == navidog_db::dialect::ContextSelection::Schema)
+            schema: (dialect.context_selection() == ContextSelection::Schema)
                 .then(|| value(1))
                 .flatten(),
-            search_path: (dialect.context_selection()
-                == navidog_db::dialect::ContextSelection::Schema)
+            search_path: (dialect.context_selection() == ContextSelection::Schema)
                 .then(|| value(2))
                 .flatten(),
         })
@@ -346,7 +345,7 @@ impl QueryEditor {
         self.stop_flag = stop.clone();
         let continue_on_error = Settings::global(cx).continue_on_error;
         let profile = kind != RunKind::Explain
-            && dialect.id() == "mysql"
+            && dialect.supports_profile()
             && Settings::global(cx).show_profile;
         let mariadb = self.server_version(cx).contains("MariaDB");
         let mut source = crate::results::RunInfo {
@@ -463,7 +462,7 @@ impl QueryEditor {
         impl std::future::Future<Output = DbResult<(SharedSession, Option<SessionContext>)>> + use<>,
     > {
         let conn = self.target.connection.clone()?;
-        let pg = dialect.id() == "postgres";
+        let pg = dialect.context_selection() == ContextSelection::Schema;
         // Another connection, or another PostgreSQL database: that session cannot be reused
         if let Some(live) = self.live.take() {
             let same_db = !pg || live.database == self.target.database;
@@ -486,9 +485,9 @@ impl QueryEditor {
             .as_ref()
             .map(|l| (l.session.clone(), l.used.clone(), l.context.clone()));
         let want = match dialect.context_selection() {
-            navidog_db::dialect::ContextSelection::Database => self.target.database.clone(),
-            navidog_db::dialect::ContextSelection::Schema => self.target.schema.clone(),
-            navidog_db::dialect::ContextSelection::File => None,
+            ContextSelection::Database => self.target.database.clone(),
+            ContextSelection::Schema => self.target.schema.clone(),
+            ContextSelection::File => None,
         };
         let database = self.target.database.clone();
         let this = cx.entity().downgrade();
@@ -645,7 +644,7 @@ impl QueryEditor {
 
 /// Setup SQL for the toolbar's database or schema picker.
 pub(crate) fn toolbar_context_sql(dialect: &dyn Dialect, name: &str) -> String {
-    if dialect.context_selection() == navidog_db::dialect::ContextSelection::Schema {
+    if dialect.context_selection() == ContextSelection::Schema {
         search_path(dialect, name)
     } else {
         dialect
@@ -673,7 +672,7 @@ pub(crate) fn owned_context_sql(
     {
         sql.push(statement);
     } else if let Some(schema) = schema
-        && dialect.context_selection() == navidog_db::dialect::ContextSelection::Schema
+        && dialect.context_selection() == ContextSelection::Schema
     {
         sql.push(search_path(dialect, schema));
     }
@@ -684,14 +683,14 @@ pub(crate) fn owned_context_sql(
 /// resolving (31 §2).
 pub(crate) fn search_path(dialect: &dyn Dialect, schema: &str) -> String {
     let d = dialect;
-    if schema == "public" {
-        format!("SET search_path TO {}", d.quote_ident(schema))
-    } else {
-        format!(
+    // The product's default schema stays on the path so extensions installed there resolve.
+    match d.default_schema() {
+        Some(default) if schema != default => format!(
             "SET search_path TO {}, {}",
             d.quote_ident(schema),
-            d.quote_ident("public")
-        )
+            d.quote_ident(default)
+        ),
+        _ => format!("SET search_path TO {}", d.quote_ident(schema)),
     }
 }
 

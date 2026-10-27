@@ -14,6 +14,7 @@ use gpui_kit::{
     Styled as _, Window, actions,
 };
 use navidog_app_state::settings::Settings;
+use navidog_sql::Lex;
 use navidog_ui::skin::{FormRow, confirm_with, heading};
 use navidog_ui::{palette, tokens};
 use navidog_util::sql_format::{self, BeautifyOptions, CommentMode};
@@ -142,14 +143,14 @@ impl QueryEditor {
             uppercase: s.beautify_uppercase,
             max_inline: s.beautify_max_inline,
             postgres: dialect.as_ref().is_some_and(|d| d.has_schemas()),
-            mysql: dialect.as_ref().is_some_and(|d| d.id() == "mysql"),
+            lex: dialect.as_ref().map_or(Lex::GENERIC, |d| d.lex()),
         };
         self.on_selection(|s| sql_format::beautify(s, &options), window, cx);
     }
 
     pub(crate) fn minify(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mysql = self.dialect(cx).is_some_and(|d| d.id() == "mysql");
-        self.on_selection(|s| sql_format::minify(s, mysql), window, cx);
+        let lex = self.dialect(cx).map_or(Lex::GENERIC, |d| d.lex());
+        self.on_selection(|s| sql_format::minify(s, lex), window, cx);
     }
 
     /// Copy and Cut in the editor also push the selection onto the clipboard stack.
@@ -205,8 +206,8 @@ impl QueryEditor {
         let pair = if enabled && sel_empty && (near(Some(caret)) || near(caret.checked_sub(1))) {
             // ponytail: scans the whole text when the caret touches a bracket; fine up to a few MB
             let value = e.value();
-            let mysql = self.dialect(cx).is_some_and(|d| d.id() == "mysql");
-            sql_format::bracket_at(&sql_format::bracket_pairs(&value, mysql), caret)
+            let lex = self.dialect(cx).map_or(Lex::GENERIC, |d| d.lex());
+            sql_format::bracket_at(&sql_format::bracket_pairs(&value, lex), caret)
         } else {
             None
         };

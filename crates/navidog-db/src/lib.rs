@@ -6,7 +6,6 @@ rust_i18n::i18n!("locales", fallback = "en");
 const _: &str = include_str!("../locales/database.yml");
 
 pub mod commit;
-pub use navidog_sql::dialect;
 pub mod driver;
 pub mod execution;
 pub mod log;
@@ -25,6 +24,69 @@ pub use futures::future::BoxFuture;
 pub use driver::*;
 pub use metadata::referenced_values_sql;
 pub use params::{ConnectParams, Secrets};
+
+// Named by the `relational_catalog!` expansion, which resolves paths in the expanding crate.
+#[doc(hidden)]
+pub use navidog_model;
+
+/// Forwards the eight catalog methods of [`Relational`] to one database crate's `metadata`
+/// module, so each driver writes one line instead of fifty. The module must expose
+/// `list_databases`, `list_schemas`, `list_objects`, `object_ddl`, `table_columns`,
+/// `table_children`, `foreign_keys` and `outline` with the trait's signatures.
+#[macro_export]
+macro_rules! relational_catalog {
+    ($metadata:ident) => {
+        fn list_databases(&mut self) -> $crate::BoxFuture<'_, $crate::DbResult<Vec<String>>> {
+            Box::pin($metadata::list_databases(self))
+        }
+        fn list_schemas(&mut self) -> $crate::BoxFuture<'_, $crate::DbResult<Vec<String>>> {
+            Box::pin($metadata::list_schemas(self))
+        }
+        fn list_objects<'a>(
+            &'a mut self,
+            scope: &'a $crate::navidog_model::object::Scope,
+            kind: $crate::navidog_model::object::ObjectKind,
+        ) -> $crate::BoxFuture<'a, $crate::DbResult<Vec<$crate::ObjectInfo>>> {
+            Box::pin($metadata::list_objects(self, scope, kind))
+        }
+        fn object_ddl<'a>(
+            &'a mut self,
+            scope: &'a $crate::navidog_model::object::Scope,
+            kind: $crate::navidog_model::object::ObjectKind,
+            name: &'a str,
+        ) -> $crate::BoxFuture<'a, $crate::DbResult<String>> {
+            Box::pin($metadata::object_ddl(self, scope, kind, name))
+        }
+        fn table_columns<'a>(
+            &'a mut self,
+            scope: &'a $crate::navidog_model::object::Scope,
+            table: &'a str,
+        ) -> $crate::BoxFuture<'a, $crate::DbResult<Vec<$crate::ColumnInfo>>> {
+            Box::pin($metadata::table_columns(self, scope, table))
+        }
+        fn table_children<'a>(
+            &'a mut self,
+            scope: &'a $crate::navidog_model::object::Scope,
+            table: &'a str,
+        ) -> $crate::BoxFuture<'a, $crate::DbResult<$crate::TableChildren>> {
+            Box::pin($metadata::table_children(self, scope, table))
+        }
+        fn foreign_keys<'a>(
+            &'a mut self,
+            scope: &'a $crate::navidog_model::object::Scope,
+            table: &'a str,
+        ) -> $crate::BoxFuture<'a, $crate::DbResult<Vec<$crate::ForeignKey>>> {
+            Box::pin($metadata::foreign_keys(self, scope, table))
+        }
+        fn outline<'a>(
+            &'a mut self,
+            scope: &'a $crate::navidog_model::object::Scope,
+            system: bool,
+        ) -> $crate::BoxFuture<'a, $crate::DbResult<$crate::outline::Outline>> {
+            Box::pin($metadata::outline(self, scope, system))
+        }
+    };
+}
 
 /// Serializes tests that mutate the process-global `NAVIDOG_HOME`; shared with
 /// the session-crate tests that also write config directories.

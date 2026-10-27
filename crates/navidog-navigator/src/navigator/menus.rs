@@ -91,7 +91,7 @@ impl NavigatorPanel {
                 let mysql = Sessions::global(cx)
                     .read(cx)
                     .dialect(id)
-                    .is_some_and(|d| d.prepare_database_sql("x").is_some());
+                    .is_some_and(|d| d.switches_database());
                 let menu = if open && mysql {
                     menu.menu(t!("nav.reload").to_string(), Box::new(ReloadConnection))
                 } else {

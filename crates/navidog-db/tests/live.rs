@@ -4,12 +4,12 @@
 
 use std::sync::Arc;
 
-use navidog_db::dialect::Dialect;
 use navidog_db::params::{SshParams, SslParams};
 use navidog_db::{ConnectParams, Driver, connect, runtime, test_connection};
 use navidog_model::connection::SslMode;
 use navidog_mysql::MySqlDriver;
 use navidog_postgres::PostgresDriver;
+use navidog_sql::dialect::Dialect;
 
 fn live() -> bool {
     std::env::var_os("NAVIDOG_LIVE").is_some()
@@ -214,8 +214,8 @@ fn mysql_and_postgres_metadata() {
 /// that is rolled back, leaving the seed data untouched.
 #[test]
 fn table_viewer_sql_on_mysql_and_postgres() {
-    use navidog_db::dialect::{ChangeSet, RowKey, RowUpdate, Written};
     use navidog_model::object::Scope;
+    use navidog_sql::dialect::{ChangeSet, RowKey, RowUpdate, Written};
     if !live() {
         return;
     }

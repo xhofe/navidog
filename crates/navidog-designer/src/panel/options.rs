@@ -1,15 +1,9 @@
 use super::*;
 use gpui_kit::component::checkbox::Checkbox;
-use navidog_schema::table_design::{
-    MYSQL_OPTIONS, POSTGRES_OPTIONS, edit_table_option, table_option,
-};
+use navidog_schema::table_design::{edit_table_option, table_option};
 
 pub(super) fn keys(d: &dyn Dialect) -> &'static [&'static str] {
-    match d.id() {
-        "mysql" => MYSQL_OPTIONS,
-        "postgres" => POSTGRES_OPTIONS,
-        _ => &[],
-    }
+    d.table_option_keys()
 }
 impl TableDesigner {
     pub(super) fn sync_table_options(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -17,7 +11,7 @@ impl TableDesigner {
         for (key, input) in &self.table_option_inputs {
             let value = if *key == "owner" {
                 self.draft.owner.clone()
-            } else if *key == "table_comment" && self.dialect.id() == "postgres" {
+            } else if *key == "table_comment" && self.dialect.separate_comments() {
                 self.draft.comment.clone()
             } else {
                 table_option(&self.draft.options, key, self.dialect.as_ref()).unwrap_or_default()
@@ -37,7 +31,7 @@ impl TableDesigner {
         }
         let key = keys(self.dialect.as_ref())[ix];
         let value = self.table_option_inputs[key].read(cx).value().to_string();
-        let result = if key == "table_comment" && self.dialect.id() == "postgres" {
+        let result = if key == "table_comment" && self.dialect.separate_comments() {
             if value.contains('\0') {
                 Err(DbError::msg(t!("designer.invalid_comment").to_string()))
             } else {
@@ -117,8 +111,9 @@ impl TableDesigner {
                     .iter()
                     .enumerate()
                     .map(|(ix, key)| {
+                        let separate = *key == "table_comment" && self.dialect.separate_comments();
                         let parse_error = *key != "owner"
-                            && !(*key == "table_comment" && self.dialect.id() == "postgres")
+                            && !separate
                             && table_option(&self.draft.options, key, self.dialect.as_ref())
                                 .is_err();
                         let values: Vec<String> = match *key {
@@ -169,7 +164,7 @@ impl TableDesigner {
                         )
                     }),
             )
-            .when(self.dialect.id() == "postgres", |v| {
+            .when(self.dialect.supports_unlogged(), |v| {
                 v.child(FormRow::bare(
                     Checkbox::new("designer-option-unlogged")
                         .label(t!("designer.option_unlogged").to_string())
@@ -180,20 +175,18 @@ impl TableDesigner {
                         })),
                 ))
             })
-            .when(self.dialect.id() == "sqlite", |v| {
-                v.children(["without_rowid", "strict"].into_iter().map(|key| {
-                    let value = table_option(&self.draft.options, key, self.dialect.as_ref());
-                    FormRow::bare(
-                        Checkbox::new(SharedString::from(format!("designer-option-{key}")))
-                            .label(t!(format!("designer.option_{key}")).to_string())
-                            .checked(value.as_deref().is_ok_and(|v| v == "true"))
-                            .disabled(disabled || value.is_err())
-                            .on_click(cx.listener(move |this, value, w, cx| {
-                                this.toggle_table_option(key, *value, w, cx)
-                            })),
-                    )
-                }))
-            })
+            .children(self.dialect.bool_table_options().iter().map(|key| {
+                let value = table_option(&self.draft.options, key, self.dialect.as_ref());
+                FormRow::bare(
+                    Checkbox::new(SharedString::from(format!("designer-option-{key}")))
+                        .label(t!(format!("designer.option_{key}")).to_string())
+                        .checked(value.as_deref().is_ok_and(|v| v == "true"))
+                        .disabled(disabled || value.is_err())
+                        .on_click(cx.listener(move |this, value, w, cx| {
+                            this.toggle_table_option(key, *value, w, cx)
+                        })),
+                )
+            }))
             .child(
                 gpui_kit::div()
                     .text_color(palette(cx).label_secondary)

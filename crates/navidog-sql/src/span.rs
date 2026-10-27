@@ -37,6 +37,63 @@ pub struct Lex {
     pub delimiter_command: bool,
 }
 
+impl Lex {
+    /// MySQL and MariaDB: `` `ident` ``, `#` comments, backslash-escaped strings, `"` strings and
+    /// `DELIMITER`.
+    pub const MYSQL: Self = Self {
+        backtick_idents: true,
+        hash_comments: true,
+        dollar_quotes: false,
+        bracket_idents: false,
+        backslash_strings: true,
+        escape_string_prefix: false,
+        double_quote_strings: true,
+        nested_block_comments: false,
+        delimiter_command: true,
+    };
+
+    /// PostgreSQL: `$tag$` bodies, `E'…'` strings and nested block comments. Backticks and
+    /// brackets are ordinary characters; `"` is an identifier quote.
+    pub const POSTGRES: Self = Self {
+        backtick_idents: false,
+        hash_comments: false,
+        dollar_quotes: true,
+        bracket_idents: false,
+        backslash_strings: false,
+        escape_string_prefix: true,
+        double_quote_strings: false,
+        nested_block_comments: true,
+        delimiter_command: false,
+    };
+
+    /// No connection is bound: accept PostgreSQL rules plus backticks, so formatting an unbound
+    /// editor cannot mangle a MySQL-style identifier. Brackets stay ordinary characters.
+    pub const GENERIC: Self = Self {
+        backtick_idents: true,
+        hash_comments: false,
+        dollar_quotes: true,
+        bracket_idents: false,
+        backslash_strings: false,
+        escape_string_prefix: true,
+        double_quote_strings: false,
+        nested_block_comments: true,
+        delimiter_command: false,
+    };
+
+    /// SQLite: `"ident"`, `` `ident` `` and `[ident]`.
+    pub const SQLITE: Self = Self {
+        backtick_idents: true,
+        hash_comments: false,
+        dollar_quotes: false,
+        bracket_idents: true,
+        backslash_strings: false,
+        escape_string_prefix: false,
+        double_quote_strings: false,
+        nested_block_comments: false,
+        delimiter_command: false,
+    };
+}
+
 /// What a span is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpanKind {

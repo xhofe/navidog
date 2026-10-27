@@ -4,7 +4,7 @@
 //! ponytail: one pair of parentheses around the whole condition, not a nested tree. A condition the
 //! parser does not recognize stays in text mode (`parse_where` returns `None`).
 
-use navidog_db::dialect::Dialect;
+use navidog_sql::dialect::Dialect;
 use navidog_sql::span;
 use navidog_util::starts_with_ignore_ascii_case;
 use rust_i18n::t;
@@ -119,7 +119,7 @@ impl Op {
             Self::Contains,
             Self::NotContains,
         ];
-        if dialect.id() == "postgres" {
+        if dialect.case_insensitive_like() {
             ops.push(Self::ContainsI);
             ops.push(Self::NotContainsI);
         }
@@ -299,7 +299,7 @@ fn predicate(rule: &Rule, dialect: &dyn Dialect) -> Option<String> {
     }
     let field = dialect.quote_ident(&rule.field);
     // PostgreSQL has no LIKE for numbers or dates; the cast makes "contains" work on any column
-    let text_field = if dialect.id() == "postgres" {
+    let text_field = if dialect.like_text_cast() {
         format!("{field}::text")
     } else {
         field.clone()
@@ -512,7 +512,7 @@ fn parse_pred(sql: &str, dialect: &dyn Dialect) -> Option<Rule> {
     let (field, rest) = parse_ident(sql.trim(), dialect)?;
     // The cast `predicate` writes before LIKE on PostgreSQL
     let rest = match rest.strip_prefix("::") {
-        Some(cast) if dialect.id() == "postgres" => eat_kw(cast, "text")?,
+        Some(cast) if dialect.like_text_cast() => eat_kw(cast, "text")?,
         _ => rest,
     };
     let rest = rest.trim_start();
@@ -720,13 +720,13 @@ fn parse_sql_value<'a>(s: &'a str, dialect: &dyn Dialect) -> Option<(String, &'a
 /// writes for values with a backslash.
 fn postgres_escape_string<'a>(s: &'a str, dialect: &dyn Dialect) -> Option<&'a str> {
     let rest = s.strip_prefix(['E', 'e'])?;
-    (dialect.id() == "postgres" && rest.starts_with('\'')).then_some(rest)
+    (dialect.lex().escape_string_prefix && rest.starts_with('\'')).then_some(rest)
 }
 
 fn parse_string<'a>(s: &'a str, dialect: &dyn Dialect) -> Option<(String, &'a str)> {
     let (s, backslash_escapes) = match postgres_escape_string(s, dialect) {
         Some(rest) => (rest, true),
-        None => (s, dialect.id() == "mysql"),
+        None => (s, dialect.lex().backslash_strings),
     };
     if !s.starts_with('\'') {
         return None;

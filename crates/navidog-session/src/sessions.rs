@@ -14,8 +14,8 @@ use navidog_model::connection::ConnectionId;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use navidog_db::dialect::Dialect;
 use navidog_db::{ConnectParams, DbError, DbResult, Driver, Relational, Secrets, Session, runtime};
+use navidog_sql::dialect::Dialect;
 
 use crate::registry::DriverRegistry;
 use operation::OperationScope;

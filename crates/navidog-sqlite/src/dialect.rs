@@ -1,7 +1,9 @@
 //! SQLite SQL dialect.
 
 use navidog_model::object::{ObjectKind, Scope};
-use navidog_sql::{ContextSelection, Dialect, Lex, rename_create_table};
+use navidog_sql::{
+    ContextSelection, Dialect, ExplainStyle, Lex, TableOptionStyle, rename_create_table,
+};
 
 #[derive(Debug)]
 pub struct SqliteDialect;
@@ -69,6 +71,30 @@ impl Dialect for SqliteDialect {
     fn context_selection(&self) -> ContextSelection {
         ContextSelection::File
     }
+    fn table_option_style(&self) -> TableOptionStyle {
+        TableOptionStyle::TableFlags
+    }
+    fn bool_table_options(&self) -> &'static [&'static str] {
+        &["without_rowid", "strict"]
+    }
+    fn explain_style(&self) -> ExplainStyle {
+        ExplainStyle::QueryPlanRows
+    }
+    fn supports_column_comments(&self) -> bool {
+        false
+    }
+    fn autoincrement_needs_integer_key(&self) -> bool {
+        true
+    }
+    fn supports_index_method(&self) -> bool {
+        false
+    }
+    fn fk_reference_schema(&self) -> bool {
+        false
+    }
+    fn table_rebuild_catalog(&self) -> Option<&'static str> {
+        Some("main")
+    }
     fn console_prompt(&self, _: &str, _: bool, continuation: bool) -> String {
         if continuation {
             "   ...>".into()
@@ -101,7 +127,7 @@ impl Dialect for SqliteDialect {
         ddl: Option<&str>,
     ) -> Option<Vec<String>> {
         let (from, to) = (self.qualified(scope, old), self.qualified(scope, new));
-        let create = rename_create_table(ddl?, old, &to)?;
+        let create = rename_create_table(ddl?, old, &to, self.lex())?;
         let mut out = vec![create];
         if with_data {
             out.push(format!("INSERT INTO {to} SELECT * FROM {from}"));
@@ -110,44 +136,4 @@ impl Dialect for SqliteDialect {
     }
 }
 
-const LEX: Lex = Lex {
-    backtick_idents: true,
-    hash_comments: false,
-    dollar_quotes: false,
-    bracket_idents: true,
-    backslash_strings: false,
-    escape_string_prefix: false,
-    double_quote_strings: false,
-    nested_block_comments: false,
-    delimiter_command: false,
-};
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use navidog_model::object::Scope;
-
-    #[test]
-    fn quotes_rowid_and_rewrites_create_table() {
-        let scope = Scope::new("c", "app", None);
-        assert_eq!(SqliteDialect.literal(None), "NULL");
-        assert_eq!(SqliteDialect.typed_name("名称"), "\"名称\"");
-        assert!(
-            SqliteDialect
-                .rename_object(&scope, ObjectKind::View, "v", "w")
-                .is_none()
-        );
-        let ddl = "CREATE TABLE IF NOT EXISTS \"actor\" (id INTEGER PRIMARY KEY)";
-        let lite = SqliteDialect
-            .duplicate_table(&scope, "actor", "actor_copy1", false, Some(ddl))
-            .unwrap();
-        assert_eq!(
-            lite,
-            ["CREATE TABLE IF NOT EXISTS \"app\".\"actor_copy1\" (id INTEGER PRIMARY KEY)"]
-        );
-        assert_eq!(
-            SqliteDialect.select_page(&scope, "t", "", "", None, 0, true),
-            "SELECT *, rowid AS \"_rowid\" FROM \"app\".\"t\""
-        );
-    }
-}
+const LEX: Lex = Lex::SQLITE;

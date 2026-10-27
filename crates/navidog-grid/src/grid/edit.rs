@@ -39,10 +39,10 @@ impl ResultGrid {
             let d = table.delegate();
             (d.raw, d.dialect.clone())
         };
-        let text = match dialect.as_deref() {
-            Some(d) => self.model(cx).raw_text(pos.0, pos.1, raw, d),
-            None => self.model(cx).unbound_text(pos.0, pos.1),
-        };
+        let text = self
+            .model(cx)
+            .display_text(pos.0, pos.1, raw, dialect.as_deref())
+            .to_string();
         if let Some(kind) = kind {
             self.temporal_input = Some(crate::date::open(
                 pos,
@@ -95,10 +95,10 @@ impl ResultGrid {
             let d = table.delegate();
             (d.raw, d.dialect.clone())
         };
-        let old = match dialect.as_deref() {
-            Some(d) => self.model(cx).raw_text(r, c, raw, d),
-            None => self.model(cx).unbound_text(r, c),
-        };
+        let old = self
+            .model(cx)
+            .display_text(r, c, raw, dialect.as_deref())
+            .to_string();
         if text != old {
             self.update_model(cx, |m| {
                 let cell = Some(text.into());

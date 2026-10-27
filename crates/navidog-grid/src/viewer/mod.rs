@@ -30,10 +30,10 @@ use gpui_kit::{
 };
 use navidog_app_state::settings::Settings;
 use navidog_app_state::workspace::{Selection, Workspace, WorkspaceEvent};
-use navidog_db::dialect::Dialect;
 use navidog_db::{CancelHandle, ColumnInfo, ResultSet};
 use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_session::sessions::{Sessions, SessionsEvent, SharedSession, run_on};
+use navidog_sql::dialect::Dialect;
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::{FormRow, confirm_with, truncated};
 use navidog_ui::{palette, tabs, tokens};

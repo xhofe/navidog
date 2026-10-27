@@ -5,14 +5,15 @@ mod options;
 mod parse;
 mod properties;
 pub use entries::{DesignEntry, EntryKind, parse_entry, split_field_list};
-pub use options::{MYSQL_OPTIONS, POSTGRES_OPTIONS, edit_table_option, table_option};
+pub use options::{edit_table_option, table_option};
 pub use properties::{ColumnProperties, ColumnProperty, column_properties, edit_column};
 mod plan;
 #[cfg(test)]
 mod tests;
 
-use navidog_db::{DbError, DbResult, Relational, dialect::Dialect};
+use navidog_db::{DbError, DbResult, Relational};
 use navidog_model::object::{ObjectKind, Scope};
+use navidog_sql::dialect::Dialect;
 pub use plan::{plan, plan_with};
 use serde::{Deserialize, Serialize};
 
@@ -315,14 +316,16 @@ pub async fn apply(
     if let Some(sql) = d.prepare_database_sql(&scope.database) {
         r.execute(&sql).await?;
     }
-    if let Some(sql) = d.set_search_path_sql(scope.schema.as_deref().unwrap_or("public")) {
+    if let Some(schema) = scope.schema.as_deref().or(d.default_schema())
+        && let Some(sql) = d.set_search_path_sql(schema)
+    {
         r.execute(&sql).await?;
     }
-    if d.context_selection() == navidog_db::dialect::ContextSelection::File
-        && scope.database != "main"
+    if let Some(primary) = d.table_rebuild_catalog()
+        && scope.database != primary
     {
         return Err(DbError::msg(
-            "The table designer only supports the primary SQLite database.",
+            "The table designer can only rebuild tables in the primary SQLite database.",
         ));
     }
     let occupied = if d.rebuilds_tables() && before.is_some() {

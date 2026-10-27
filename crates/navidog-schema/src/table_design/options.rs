@@ -1,40 +1,7 @@
 //! Lossless edits of known table options; unknown clauses remain in the SQL tail.
 use super::*;
+use navidog_sql::TableOptionStyle;
 use std::collections::BTreeMap;
-
-pub const MYSQL_OPTIONS: &[&str] = &[
-    "engine",
-    "charset",
-    "collation",
-    "auto_increment",
-    "row_format",
-    "avg_row_length",
-    "max_rows",
-    "min_rows",
-    "key_block_size",
-    "stats_auto_recalc",
-    "stats_persistent",
-    "stats_sample_pages",
-    "checksum",
-    "delay_key_write",
-    "pack_keys",
-    "insert_method",
-    "connection",
-    "data_directory",
-    "index_directory",
-    "tablespace",
-    "compression",
-    "encryption",
-    "table_comment",
-];
-pub const POSTGRES_OPTIONS: &[&str] = &[
-    "owner",
-    "tablespace",
-    "inherits",
-    "fillfactor",
-    "autovacuum_enabled",
-    "table_comment",
-];
 
 #[derive(Clone, Debug)]
 struct Token {
@@ -144,7 +111,8 @@ fn mysql_span(s: &str, key: &str, d: &dyn Dialect) -> DbResult<Option<(usize, us
     let mut i = 0;
     while i < ts.len() {
         let mut matched = None;
-        for name in MYSQL_OPTIONS
+        for name in d
+            .table_option_keys()
             .iter()
             .copied()
             .chain(std::iter::once("union"))
@@ -236,9 +204,9 @@ pub(super) fn pg_storage(s: &str, d: &dyn Dialect) -> DbResult<BTreeMap<String, 
     Ok(values)
 }
 pub fn table_option(s: &str, key: &str, d: &dyn Dialect) -> DbResult<String> {
-    match d.id() {
-        "mysql" => Ok(mysql_span(s, key, d)?.map(|v| v.2).unwrap_or_default()),
-        "postgres" => match key {
+    match d.table_option_style() {
+        TableOptionStyle::Clauses => Ok(mysql_span(s, key, d)?.map(|v| v.2).unwrap_or_default()),
+        TableOptionStyle::StorageParameters => match key {
             "fillfactor" | "autovacuum_enabled" => {
                 Ok(pg_storage(s, d)?.remove(key).unwrap_or_default())
             }
@@ -254,7 +222,7 @@ pub fn table_option(s: &str, key: &str, d: &dyn Dialect) -> DbResult<String> {
                 .unwrap_or_default()),
             _ => Err(DbError::msg("Unsupported PostgreSQL option.")),
         },
-        "sqlite" => {
+        TableOptionStyle::TableFlags => {
             let ts = tokens(s, d)?;
             let normalized = ts
                 .iter()
@@ -280,7 +248,6 @@ pub fn table_option(s: &str, key: &str, d: &dyn Dialect) -> DbResult<String> {
             }
             .to_string())
         }
-        _ => Err(DbError::msg("Unsupported table option.")),
     }
 }
 fn replace(s: &str, span: Option<(usize, usize, String)>, replacement: &str) -> String {
@@ -304,9 +271,9 @@ fn number(value: &str, min: u64, max: u64) -> DbResult<()> {
     Ok(())
 }
 pub fn edit_table_option(s: &str, key: &str, value: &str, d: &dyn Dialect) -> DbResult<String> {
-    match d.id() {
-        "mysql" => {
-            if !MYSQL_OPTIONS.contains(&key) {
+    match d.table_option_style() {
+        TableOptionStyle::Clauses => {
+            if !d.table_option_keys().contains(&key) {
                 return Err(DbError::msg("Unsupported MySQL table option."));
             }
             let old = mysql_span(s, key, d)?;
@@ -360,7 +327,7 @@ pub fn edit_table_option(s: &str, key: &str, value: &str, d: &dyn Dialect) -> Db
             };
             Ok(replace(s, old, &replacement))
         }
-        "postgres" => match key {
+        TableOptionStyle::StorageParameters => match key {
             "fillfactor" | "autovacuum_enabled" => {
                 if key == "fillfactor" {
                     number(value, 10, 100)?;
@@ -425,7 +392,7 @@ pub fn edit_table_option(s: &str, key: &str, value: &str, d: &dyn Dialect) -> Db
             }
             _ => Err(DbError::msg("Unsupported PostgreSQL option.")),
         },
-        "sqlite" => {
+        TableOptionStyle::TableFlags => {
             let mut strict = table_option(s, "strict", d)? == "true";
             let mut without = table_option(s, "without_rowid", d)? == "true";
             let enabled = match value {
@@ -447,7 +414,6 @@ pub fn edit_table_option(s: &str, key: &str, value: &str, d: &dyn Dialect) -> Db
             .collect::<Vec<_>>()
             .join(", "))
         }
-        _ => Err(DbError::msg("Unsupported table option.")),
     }
 }
 pub(super) fn pg_parents(s: &str, d: &dyn Dialect) -> DbResult<Vec<String>> {
@@ -496,7 +462,7 @@ pub(super) fn option_alters(
         let mut changes = Vec::new();
         let mut old_tail = old.to_string();
         let mut new_tail = new.to_string();
-        for key in MYSQL_OPTIONS {
+        for key in d.table_option_keys() {
             let before = mysql_span(old, key, d)?;
             let after = mysql_span(new, key, d)?;
             if before.is_some() && after.is_none() {
@@ -505,7 +471,7 @@ pub(super) fn option_alters(
                 ));
             }
             if (before.as_ref().map(|v| &v.2) != after.as_ref().map(|v| &v.2)
-                || (*key == "collation" && charset_changed))
+                || (key == &"collation" && charset_changed))
                 && let Some((a, b, _)) = &after
             {
                 changes.push(new[*a..*b].to_string());

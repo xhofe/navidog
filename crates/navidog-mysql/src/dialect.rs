@@ -1,7 +1,7 @@
 //! MySQL and MariaDB SQL dialect. Both drivers share this implementation.
 
 use navidog_model::object::{ObjectKind, Scope};
-use navidog_sql::{ContextSelection, Dialect, Lex};
+use navidog_sql::{ContextSelection, Dialect, ExplainStyle, Lex, TableOptionStyle};
 
 #[derive(Debug)]
 pub struct MysqlDialect;
@@ -96,6 +96,42 @@ impl Dialect for MysqlDialect {
     fn context_selection(&self) -> ContextSelection {
         ContextSelection::Database
     }
+    fn table_option_style(&self) -> TableOptionStyle {
+        TableOptionStyle::Clauses
+    }
+    fn table_option_keys(&self) -> &'static [&'static str] {
+        crate::words::TABLE_OPTIONS
+    }
+    fn explain_style(&self) -> ExplainStyle {
+        ExplainStyle::TableAndJson
+    }
+    fn supports_profile(&self) -> bool {
+        true
+    }
+    fn counts_changed_rows(&self) -> bool {
+        true
+    }
+    fn switches_database(&self) -> bool {
+        true
+    }
+    fn column_comment_inline(&self) -> bool {
+        true
+    }
+    fn supports_index_comment(&self) -> bool {
+        true
+    }
+    fn supports_index_expression(&self) -> bool {
+        false
+    }
+    fn supports_column_charset(&self) -> bool {
+        true
+    }
+    fn supports_unsigned(&self) -> bool {
+        true
+    }
+    fn index_methods(&self) -> &'static [&'static str] {
+        &["BTREE", "HASH"]
+    }
     fn session_context_sql(&self) -> Option<&'static str> {
         Some("SELECT DATABASE()")
     }
@@ -142,39 +178,4 @@ impl Dialect for MysqlDialect {
     }
 }
 
-const LEX: Lex = Lex {
-    backtick_idents: true,
-    hash_comments: true,
-    dollar_quotes: false,
-    bracket_idents: false,
-    backslash_strings: true,
-    escape_string_prefix: false,
-    double_quote_strings: true,
-    nested_block_comments: false,
-    delimiter_command: true,
-};
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use navidog_model::object::Scope;
-
-    fn scope() -> Scope {
-        Scope::new("c", "app", None)
-    }
-
-    #[test]
-    fn quotes_and_changes() {
-        assert_eq!(MysqlDialect.quote_ident("a`b"), "`a``b`");
-        assert_eq!(MysqlDialect.literal(Some(r"it's \n")), r"'it''s \\n'");
-        assert_eq!(MysqlDialect.qualified(&scope(), "t"), "`app`.`t`");
-        assert_eq!(
-            MysqlDialect
-                .rename_object(&scope(), ObjectKind::Table, "a", "b")
-                .unwrap(),
-            "RENAME TABLE `app`.`a` TO `app`.`b`"
-        );
-        assert_eq!(MysqlDialect.typed_name("order"), "`order`");
-        assert_eq!(MysqlDialect.typed_name("actor"), "actor");
-    }
-}
+const LEX: Lex = Lex::MYSQL;

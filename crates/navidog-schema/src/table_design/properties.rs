@@ -276,7 +276,7 @@ pub fn edit_column(
     }
     let mut p = column_properties(s, d);
     if property == ColumnProperty::Identity {
-        if d.id() != "postgres" || !["", "ALWAYS", "BY DEFAULT"].contains(&input) {
+        if !d.supports_identity() || !["", "ALWAYS", "BY DEFAULT"].contains(&input) {
             return Err(DbError::msg(
                 "Identity mode must be ALWAYS, BY DEFAULT, or empty on PostgreSQL.",
             ));
@@ -436,7 +436,7 @@ pub fn edit_column(
             },
         ),
         ColumnProperty::Comment => {
-            if d.id() != "mysql" {
+            if !d.column_comment_inline() {
                 return Err(DbError::msg(
                     "Column comments are edited through the database comment definition.",
                 ));
@@ -494,7 +494,7 @@ pub fn edit_column(
             )
         }
         ColumnProperty::OnUpdate => {
-            if d.id() != "mysql" {
+            if !d.supports_on_update() {
                 return Err(DbError::msg("ON UPDATE is a MySQL field attribute."));
             }
             (
@@ -508,7 +508,7 @@ pub fn edit_column(
             )
         }
         ColumnProperty::Zerofill => {
-            if d.id() != "mysql" {
+            if !d.supports_zerofill() {
                 return Err(DbError::msg("ZEROFILL is a MySQL field attribute."));
             }
             (

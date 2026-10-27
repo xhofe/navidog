@@ -1,3 +1,4 @@
+//! SQLite: the file driver, the SQL dialect, catalog queries and keywords.
 rust_i18n::i18n!("locales", fallback = "en");
 const _: &str = include_str!("../locales/sqlite.yml");
 

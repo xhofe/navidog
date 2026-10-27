@@ -242,7 +242,12 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
         let PanelInfo::Panel(value) = panel.read(cx).dump(cx).info else {
             panic!("draft")
         };
-        let restored = TableDesigner::restore(serde_json::from_value(value).unwrap(), window, cx);
+        let restored = TableDesigner::restore(
+            serde_json::from_value(value).unwrap(),
+            std::sync::Arc::new(navidog_sqlite::SqliteDialect),
+            window,
+            cx,
+        );
         assert_eq!(restored.read(cx).draft.columns[1].name, "display_name");
         assert_eq!(
             restored.read(cx).definition.read(cx).value(),
@@ -787,6 +792,7 @@ fn postgres_comments_edit_in_the_grid_preview_and_restore(cx: &mut TestAppContex
                     baseline: None,
                     property_height: None,
                 },
+                std::sync::Arc::new(navidog_postgres::PostgresDialect),
                 w,
                 cx,
             );
@@ -855,7 +861,12 @@ fn postgres_comments_edit_in_the_grid_preview_and_restore(cx: &mut TestAppContex
         let PanelInfo::Panel(value) = p.dump(cx).info else {
             panic!("saved draft")
         };
-        let restored = TableDesigner::restore(serde_json::from_value(value).unwrap(), w, cx);
+        let restored = TableDesigner::restore(
+            serde_json::from_value(value).unwrap(),
+            std::sync::Arc::new(navidog_postgres::PostgresDialect),
+            w,
+            cx,
+        );
         assert_eq!(
             restored.read(cx).draft.columns[0].comment,
             "字段 O'Brien \\ path"

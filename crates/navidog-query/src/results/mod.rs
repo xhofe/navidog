@@ -21,10 +21,10 @@ use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, IntoElement,
     ParentElement as _, Render, SharedString, Styled as _, Subscription, WeakEntity, Window, div,
 };
-use navidog_db::dialect::Dialect;
 use navidog_db::{Column, ResultSet};
 use navidog_grid::{GridColumn, ResultGrid};
 use navidog_model::object::Scope;
+use navidog_sql::dialect::Dialect;
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
 

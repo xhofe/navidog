@@ -65,3 +65,14 @@ pub(crate) const FUNCTIONS: &[&str] = &[
     "UNNEST",
     "VERSION",
 ];
+
+/// Table options the designer edits as name/value clauses (`WITH (fillfactor=70)`, plus the
+/// separate `TABLESPACE`, `INHERITS`, `OWNER` and `COMMENT ON` forms).
+pub(crate) const TABLE_OPTIONS: &[&str] = &[
+    "owner",
+    "tablespace",
+    "inherits",
+    "fillfactor",
+    "autovacuum_enabled",
+    "table_comment",
+];

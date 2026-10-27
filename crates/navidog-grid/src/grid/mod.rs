@@ -20,8 +20,8 @@ use gpui_kit::{
     TextAlign, WeakEntity, Window, actions, div, px,
 };
 use navidog_app_state::settings::{RowShade, Settings};
-use navidog_db::dialect::Dialect;
 use navidog_model::object::Scope;
+use navidog_sql::dialect::Dialect;
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::{confirm_with, truncated};
 use navidog_ui::{palette, tokens};
@@ -906,15 +906,17 @@ fn grid_em(rem: Pixels, cx: &App) -> Pixels {
 }
 
 /// Text the cell paints, so the fit matches the grid rather than the stored value.
-fn cell_text(
+/// Painted text: NULL and an unfilled cell have their own text, and a bound dialect may quote a
+/// string in raw data mode.
+pub(super) fn cell_text(
     model: &GridModel,
     r: usize,
     c: usize,
     raw: bool,
-    dialect: &dyn Dialect,
+    dialect: Option<&dyn Dialect>,
 ) -> gpui_kit::SharedString {
     match model.value(r, c) {
-        Some(Some(_)) => model.shown_text(r, c, raw, dialect),
+        Some(Some(_)) => model.display_text(r, c, raw, dialect),
         Some(None) => "(NULL)".into(),
         None => gpui_kit::SharedString::default(),
     }
@@ -939,14 +941,7 @@ fn refit_auto(d: &mut GridDelegate, cx: &App) {
             continue;
         }
         let texts: Vec<gpui_kit::SharedString> = (0..rows)
-            .map(|r| match dialect.as_deref() {
-                Some(dialect) => cell_text(&d.model, r, c, raw, dialect),
-                None => match d.model.value(r, c) {
-                    Some(Some(text)) => text.clone(),
-                    Some(None) => "(NULL)".into(),
-                    None => gpui_kit::SharedString::default(),
-                },
-            })
+            .map(|r| cell_text(&d.model, r, c, raw, dialect.as_deref()))
             .collect();
         auto.insert(
             name.clone(),

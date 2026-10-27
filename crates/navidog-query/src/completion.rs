@@ -21,8 +21,8 @@ use lsp_types::{
 use navidog_app_state::settings::Settings;
 use navidog_app_state::snippets::Snippets;
 use navidog_app_state::store::ConnectionStore;
-use navidog_db::dialect::Dialect;
 use navidog_session::outline::{Outline, OutlineCache};
+use navidog_sql::dialect::Dialect;
 use regex::Regex;
 use rust_i18n::t;
 
@@ -170,12 +170,12 @@ pub(crate) fn complete(text: &str, offset: usize, src: &Sources) -> (Range<usize
             detail: t!("query.snippets").to_string(),
             insert: code.clone(),
         }));
-        out.extend(src.dialect.functions().into_iter().map(|f| Candidate {
+        out.extend(src.dialect.functions().map(|f| Candidate {
             label: f.to_string(),
             detail: t!("query.kind_builtin").to_string(),
             insert: f.to_string(),
         }));
-        out.extend(src.dialect.keywords().into_iter().map(|k| Candidate {
+        out.extend(src.dialect.keywords().map(|k| Candidate {
             label: k.to_string(),
             detail: t!("query.kind_keyword").to_string(),
             insert: k.to_string(),
