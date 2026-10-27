@@ -229,8 +229,18 @@ const COLUMN_TYPES: &[ColumnType] = &[
         args: TypeArgs::Length,
     },
     ColumnType {
+        name: "time with time zone",
+        synonyms: &["TIMETZ"],
+        args: TypeArgs::Length,
+    },
+    ColumnType {
         name: "timestamp without time zone",
         synonyms: &["TIMESTAMP"],
+        args: TypeArgs::Length,
+    },
+    ColumnType {
+        name: "timestamp with time zone",
+        synonyms: &["TIMESTAMPTZ"],
         args: TypeArgs::Length,
     },
     ColumnType {

@@ -16,15 +16,15 @@
 
 字段属性区复用 Navicat nib 的 300pt 输入宽度、22pt 行高、8pt 行间距；字段网格表头 23pt，字段列宽及属性区默认高度暂定，集中在 tokens.rs 并在 02 登记来源。区域使用可拖动分隔条，上部吸收剩余高度，窄窗通过横向滚动访问所有列，不压缩或隐藏字段。来源：本地 `TableDesignFieldModule_mysql`、`TableDesignFieldsModule_sqlite`、`TableDesignIndexesModule_mysql`、`TableDesignForeignKeysModule_mysql` 的导出视图树。未取得运行时屏幕截图的尺寸仍明确标为暂定。
 
-新表名为空。初始字段是该方言的整数类型加 `NOT NULL`（MySQL/MariaDB `int`，PostgreSQL `integer`，SQLite `INTEGER`），约束 `PRIMARY KEY (id)`。添加字段默认是该方言的文本类型（MySQL/MariaDB 与 PostgreSQL 为 `text`，SQLite 为 `TEXT`）。这三种初始定义都视为未修改的空白草稿。默认不执行 SQL。
+新表名为空。初始字段是该方言的整数类型加 `NOT NULL`（MySQL/MariaDB `int`，PostgreSQL `integer`，SQLite `INTEGER`），约束 `PRIMARY KEY (id)`。添加字段默认是该方言的文本类型（MySQL/MariaDB 与 PostgreSQL 为 `text`，SQLite 为 `TEXT`）。已打开连接的设计器只把该方言自己的初始定义当作未修改；连接已删除、无法得知方言时，三种初始定义都视为空白草稿。默认不执行 SQL。
 
 字段类型菜单由方言提供，每一项都是该库建表后会原样回读的名字。手打的同义词在写入草稿时收成这个名字；认不出的类型（域、数组、`geometry`）保持原样，加载已有表时不改写。定义比较区分大小写，因此菜单直接使用回读拼写，避免加载后映射出无意义的 ALTER。
 
-- MySQL/MariaDB：`int`、`bigint`、`smallint`、`tinyint`、`varchar`、`char`、`text`、`decimal`、`double`、`date`、`time`、`timestamp`、`blob`、`json`。`INTEGER` 收成 `int`，`BOOLEAN` 收成 `tinyint`，`NUMERIC` 收成 `decimal`，`REAL` 和 `DOUBLE PRECISION` 收成 `double`。
-- PostgreSQL：`integer`、`bigint`、`smallint`、`character varying`、`character`、`text`、`numeric`、`real`、`double precision`、`boolean`、`date`、`time without time zone`、`timestamp without time zone`、`bytea`、`json`。
+- MySQL/MariaDB：`int`、`bigint`、`smallint`、`tinyint`、`varchar`、`char`、`text`、`decimal`、`double`、`date`、`time`、`timestamp`、`blob`、`json`。`INTEGER` 收成 `int`，`BOOLEAN`/`BOOL` 收成 `tinyint(1)`（MySQL 8.4 仍把这个别名打印成 `tinyint(1)`），`NUMERIC` 收成 `decimal`，`REAL` 和 `DOUBLE PRECISION` 收成 `double`。
+- PostgreSQL：`integer`、`bigint`、`smallint`、`character varying`、`character`、`text`、`numeric`、`real`、`double precision`、`boolean`、`date`、`time without time zone`、`time with time zone`、`timestamp without time zone`、`timestamp with time zone`、`bytea`、`json`。
 - SQLite：写入并原样保存大写声明，如 `INTEGER`、`TEXT`、`BLOB`。`int` 收成 `INTEGER`，单字段主键因此仍是 rowid。
 
-长度和小数点按类型是否保存参数决定。无参数的类型（各库整数，以及 `text`、`blob`/`bytea`、`date`、`json`、`boolean`、`double`、`real`）不进入长度和小数点编辑；改成这类类型时清掉已填的长度和小数点。只有长度的类型（`varchar`、`char`、`character varying`、`time`、`timestamp` 等）可编辑长度。`decimal` 和 `numeric` 同时编辑长度和小数点。已有定义里的 `int(11)`（MariaDB 仍可能返回显示宽度）在不改类型时原样保留。MySQL 与 MariaDB 共用一个方言，不为显示宽度再拆一套；MySQL 8.4 不保存整数显示宽度。
+长度和小数点按类型是否保存参数决定。无参数的类型（各库整数，以及 `text`、`blob`/`bytea`、`date`、`json`、`boolean`、`double`、`real`）不进入长度和小数点编辑；改成另一类无参数类型时清掉已填的长度和小数点。再次选择同一个规范类型时保留已有长度，例如 MariaDB 的 `int(11)`。只有长度的类型（`varchar`、`char`、`character varying`、`time`、`timestamp`，含 PostgreSQL 带时区的形式）可编辑长度。`decimal` 和 `numeric` 同时编辑长度和小数点。MySQL 与 MariaDB 共用一个方言，不为显示宽度再拆一套；MySQL 8.4 不保存普通整数的显示宽度。
 
 ## 2. 驱动与迁移
 

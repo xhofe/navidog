@@ -629,7 +629,7 @@ impl TableDesigner {
     fn dirty(&self) -> bool {
         !self.invalid_inputs.is_empty()
             || self.baseline.as_ref().map_or_else(
-                || self.loaded && !self.draft.is_blank(),
+                || self.loaded && self.draft != TableDesign::blank(self.dialect.as_ref()),
                 |old| old.design != self.draft,
             )
     }

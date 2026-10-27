@@ -75,7 +75,9 @@ impl TableDesign {
             ..Default::default()
         }
     }
-    /// An untouched new table: empty name, one default `id` column and its primary key.
+    /// An untouched new table when the dialect is no longer known. A live designer compares
+    /// against [`TableDesign::blank`] for that connection, so another dialect's id type counts
+    /// as an edit.
     pub fn is_blank(&self) -> bool {
         self.name.is_empty()
             && self.indexes.is_empty()

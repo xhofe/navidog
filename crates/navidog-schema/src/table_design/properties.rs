@@ -281,14 +281,27 @@ pub fn edit_column(
             ColumnProperty::Type => {
                 let typed = input.trim();
                 if let Some(ty) = d.column_type(typed) {
+                    // The server spelling is already stored, so a display width such as
+                    // MariaDB `int(11)` stays. Rewriting a synonym still drops arguments.
+                    let already = p.data_type == ty.name;
                     p.data_type = ty.name.to_string();
-                    match ty.args {
-                        TypeArgs::None => {
-                            p.length.clear();
-                            p.scale.clear();
+                    // MySQL prints BOOL/BOOLEAN back as `tinyint(1)`, the one integer
+                    // display width it still keeps.
+                    let mysql_boolean = ty.name == "tinyint"
+                        && (typed.eq_ignore_ascii_case("bool")
+                            || typed.eq_ignore_ascii_case("boolean"));
+                    if mysql_boolean {
+                        p.length = "1".into();
+                        p.scale.clear();
+                    } else if !already {
+                        match ty.args {
+                            TypeArgs::None => {
+                                p.length.clear();
+                                p.scale.clear();
+                            }
+                            TypeArgs::Length => p.scale.clear(),
+                            TypeArgs::LengthAndScale => {}
                         }
-                        TypeArgs::Length => p.scale.clear(),
-                        TypeArgs::LengthAndScale => {}
                     }
                 } else {
                     p.data_type = typed.to_string();
@@ -689,6 +702,20 @@ mod tests {
             "int NOT NULL"
         );
         assert_eq!(
+            edit_column("int(11) NOT NULL", ColumnProperty::Type, "INTEGER", &mysql).unwrap(),
+            "int(11) NOT NULL"
+        );
+        assert_eq!(
+            edit_column(
+                "VARCHAR(20) NOT NULL",
+                ColumnProperty::Type,
+                "INTEGER",
+                &mysql
+            )
+            .unwrap(),
+            "int NOT NULL"
+        );
+        assert_eq!(
             edit_column("int NOT NULL", ColumnProperty::Length, "11", &mysql).unwrap(),
             "int NOT NULL"
         );
@@ -706,10 +733,14 @@ mod tests {
         );
         assert_eq!(
             edit_column("BOOLEAN NOT NULL", ColumnProperty::Type, "BOOLEAN", &mysql).unwrap(),
-            "tinyint NOT NULL"
+            "tinyint(1) NOT NULL"
         );
         assert_eq!(
             edit_column("REAL(10,2) NOT NULL", ColumnProperty::Type, "REAL", &mysql).unwrap(),
+            "double NOT NULL"
+        );
+        assert_eq!(
+            edit_column("FLOAT NOT NULL", ColumnProperty::Type, "REAL", &mysql).unwrap(),
             "double NOT NULL"
         );
         assert_eq!(
@@ -748,6 +779,26 @@ mod tests {
             .unwrap(),
             "timestamp without time zone NOT NULL"
         );
+        assert_eq!(
+            edit_column(
+                "timestamp(6) with time zone NOT NULL",
+                ColumnProperty::Scale,
+                "2",
+                &postgres
+            )
+            .unwrap(),
+            "timestamp(6) with time zone NOT NULL"
+        );
+        assert_eq!(
+            edit_column(
+                "text NOT NULL",
+                ColumnProperty::Type,
+                "TIMESTAMPTZ",
+                &postgres
+            )
+            .unwrap(),
+            "timestamp with time zone NOT NULL"
+        );
 
         let sqlite = navidog_sqlite::SqliteDialect;
         assert_eq!(
@@ -775,6 +826,9 @@ mod tests {
         );
         assert!(TableDesign::new().is_blank());
         assert!(TableDesign::blank(&sqlite).is_blank());
+        let mut edited = TableDesign::blank(&sqlite);
+        edited.columns[0].definition = "int NOT NULL".into();
+        assert!(edited != TableDesign::blank(&sqlite));
     }
 }
 
