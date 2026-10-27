@@ -9,9 +9,11 @@ mod validation;
 #[cfg(test)]
 mod tests;
 
+use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputState, Textarea, TextareaState};
 use gpui_kit::component::select::SelectState;
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{IndexPath, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -506,8 +508,14 @@ impl Render for ConnectionForm {
                     .justify_between()
                     .child(
                         Button::new("test")
-                            .label(t!("conn.test").to_string())
-                            .loading(testing)
+                            .accessibility_label(t!("conn.test").to_string())
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .when(testing, |row| row.child(Spinner::new().small()))
+                                    .child(t!("conn.test").to_string()),
+                            )
                             .on_click(cx.listener(|this, _, window, cx| this.test(window, cx))),
                     )
                     .child(

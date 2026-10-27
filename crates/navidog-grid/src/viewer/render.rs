@@ -148,10 +148,6 @@ impl Render for TableViewer {
     }
 }
 
-pub(crate) fn refresh_spinning(busy: bool, until: Option<Instant>, now: Instant) -> bool {
-    busy || until.is_some_and(|t| now < t)
-}
-
 impl Drop for TableViewer {
     fn drop(&mut self) {
         if let Some(s) = self.session.take() {
@@ -386,26 +382,18 @@ impl TableViewer {
                     })),
             )
             .child({
-                let mut reload = Button::new("reload")
-                    .ghost()
-                    .xsmall()
-                    .tooltip(t!("viewer.refresh").to_string())
-                    .w(tokens::viewer::BOTTOM_BUTTON_WIDTH.rems())
-                    .h(tokens::viewer::BOTTOM_BUTTON_HEIGHT.rems())
-                    .disabled(self.session.is_none());
-                // Disabled would fade the icon, so a spin looks like it never started.
-                if self.spinning() {
-                    reload = reload.child(
-                        Spinner::new()
-                            .icon(lucide("refresh-cw"))
-                            .xsmall()
-                            .ease(|t| t),
-                    );
-                } else {
-                    reload = reload.icon(lucide("refresh-cw"));
-                }
-                reload.on_click(cx.listener(|this, _, window, cx| {
-                    if this.busy {
+                navidog_ui::refresh_spin::refresh_button(
+                    "reload",
+                    self.spinning(),
+                    gpui_kit::component::Size::XSmall,
+                )
+                .ghost()
+                .tooltip(t!("viewer.refresh").to_string())
+                .w(tokens::viewer::BOTTOM_BUTTON_WIDTH.rems())
+                .h(tokens::viewer::BOTTOM_BUTTON_HEIGHT.rems())
+                .disabled(self.session.is_none())
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.spinning() {
                         return;
                     }
                     this.reload_committed(true, window, cx);

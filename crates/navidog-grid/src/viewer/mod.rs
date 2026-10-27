@@ -1,11 +1,6 @@
 //! Table viewer: paging, row count, WHERE / ORDER BY text, editing, commits and transactions
 //! (21-table-viewer.md §3–6).
 
-use std::collections::HashSet;
-use std::path::Path;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::dock::{
@@ -17,7 +12,6 @@ use gpui_kit::component::input::{
 };
 use gpui_kit::component::native_menu::NativeMenu;
 use gpui_kit::component::resizable::{resizable_panel, v_resizable};
-use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{
     Disableable as _, Selectable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
 };
@@ -40,6 +34,9 @@ use navidog_ui::{palette, tabs, tokens};
 use navidog_util::format::{decode_hex, encode_hex, pretty_json};
 use navidog_util::sql_type::{Choices, choices};
 use rust_i18n::t;
+use std::collections::HashSet;
+use std::path::Path;
+use std::sync::Arc;
 
 use crate::commit::{apply, close_session, error_message};
 use crate::editor::{self, Kind};
@@ -55,8 +52,6 @@ mod form;
 
 const PANEL: &str = "TableViewer";
 const CONTEXT: &str = "TableViewer";
-/// Half a turn of the refresh icon. `Spinner`'s cycle is 0.8s and not configurable.
-const REFRESH_SPIN: Duration = Duration::from_millis(400);
 actions!(
     viewer,
     [
@@ -239,8 +234,8 @@ pub(crate) struct TableView {
     pub(crate) form: bool,
     pub(crate) form_inputs: Vec<Entity<InputState>>,
     pub(crate) form_for: Option<usize>,
-    /// Refresh icon keeps turning until this instant, even if the load finished sooner.
-    pub(crate) spin_until: Option<Instant>,
+    /// Refresh icon keeps turning through at least half a turn after a load or commit.
+    pub(crate) spin: navidog_ui::refresh_spin::HalfSpin,
     /// The most recently executed SQL or error
     pub(crate) status: SharedString,
     pub(crate) _subscriptions: Vec<Subscription>,
@@ -749,7 +744,7 @@ impl TableViewer {
                     form: false,
                     form_inputs: Vec::new(),
                     form_for: None,
-                    spin_until: None,
+                    spin: navidog_ui::refresh_spin::HalfSpin::default(),
                     status: SharedString::default(),
                     _subscriptions: subs,
                 },
@@ -765,7 +760,6 @@ mod editing;
 mod session;
 
 mod render;
-use render::refresh_spinning;
 
 #[cfg(test)]
 mod tests;

@@ -8,6 +8,7 @@ rust_i18n::i18n!("locales", fallback = "en");
 
 pub mod assets;
 pub mod find_bar;
+pub mod refresh_spin;
 pub mod skin;
 pub mod tabs;
 pub mod theme;

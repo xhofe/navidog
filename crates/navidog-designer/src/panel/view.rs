@@ -32,11 +32,10 @@ impl TableDesigner {
                         .small()
                         .icon(lucide("play"))
                         .label(t!("designer.execute").to_string())
-                        .loading(self.busy && self.loaded)
                         .disabled(
-                            !self.loaded
+                            disabled
                                 || self.needs_reload
-                                || (!self.busy && self.preview.as_ref().is_none_or(Vec::is_empty)),
+                                || self.preview.as_ref().is_none_or(Vec::is_empty),
                         )
                         .on_click(cx.listener(|this, _, w, cx| this.request(true, w, cx))),
                 )
@@ -48,8 +47,7 @@ impl TableDesigner {
                         .small()
                         .icon(lucide("save"))
                         .label(t!("designer.save").to_string())
-                        .loading(self.busy && self.loaded)
-                        .disabled(!self.loaded || self.needs_reload)
+                        .disabled(disabled || self.needs_reload)
                         .on_click(cx.listener(|this, _, w, cx| this.show_preview(w, cx))),
                 )
             })
@@ -133,15 +131,23 @@ impl TableDesigner {
                 )
             })
             .when(self.baseline.is_some() || self.needs_reload, |bar| {
+                let spinning = self.reload_spin.spinning(self.reloading);
                 bar.child(
-                    Button::new("designer-reload-toolbar")
-                        .ghost()
-                        .small()
-                        .icon(lucide("refresh-cw"))
-                        .tooltip(t!("designer.reload").to_string())
-                        .accessibility_label(t!("designer.reload").to_string())
-                        .disabled(self.busy)
-                        .on_click(cx.listener(|this, _, w, cx| this.reload(w, cx))),
+                    navidog_ui::refresh_spin::refresh_button(
+                        "designer-reload-toolbar",
+                        spinning,
+                        gpui_kit::component::Size::Small,
+                    )
+                    .ghost()
+                    .tooltip(t!("designer.reload").to_string())
+                    .accessibility_label(t!("designer.reload").to_string())
+                    .disabled(self.busy && !spinning)
+                    .on_click(cx.listener(|this, _, w, cx| {
+                        if this.reload_spin.spinning(this.reloading) {
+                            return;
+                        }
+                        this.reload(w, cx);
+                    })),
                 )
             })
     }
@@ -400,14 +406,22 @@ impl TableDesigner {
                 },
             )
             .when(self.page == Page::ForeignKeys, |v| {
+                let spinning = self.references.spin.spinning(self.references.loading);
                 v.child(
-                    Button::new("designer-reference-refresh")
-                        .ghost()
-                        .small()
-                        .label(t!("designer.refresh_references").to_string())
-                        .loading(self.references.loading)
-                        .disabled(disabled && !self.references.loading)
-                        .on_click(cx.listener(|this, _, w, cx| this.load_references(w, cx))),
+                    navidog_ui::refresh_spin::refresh_button(
+                        "designer-reference-refresh",
+                        spinning,
+                        gpui_kit::component::Size::Small,
+                    )
+                    .ghost()
+                    .label(t!("designer.refresh_references").to_string())
+                    .disabled(disabled && !spinning)
+                    .on_click(cx.listener(|this, _, w, cx| {
+                        if this.references.spin.spinning(this.references.loading) {
+                            return;
+                        }
+                        this.load_references(w, cx);
+                    })),
                 )
                 .when_some(self.references.error.clone(), |v, error| {
                     v.child(gpui_kit::div().text_color(palette(cx).danger).child(error))
@@ -573,11 +587,21 @@ impl Render for TableDesigner {
                 )
             })
             .when(self.needs_reload || !self.loaded, |v| {
+                let spinning = self.reload_spin.spinning(self.reloading);
                 v.child(
-                    Button::new("designer-reload")
-                        .label(t!("designer.reload").to_string())
-                        .disabled(self.busy)
-                        .on_click(cx.listener(|this, _, w, cx| this.load(w, cx))),
+                    navidog_ui::refresh_spin::refresh_button(
+                        "designer-reload",
+                        spinning,
+                        gpui_kit::component::Size::Medium,
+                    )
+                    .label(t!("designer.reload").to_string())
+                    .disabled(self.busy && !spinning)
+                    .on_click(cx.listener(|this, _, w, cx| {
+                        if this.reload_spin.spinning(this.reloading) {
+                            return;
+                        }
+                        this.load(w, cx);
+                    })),
                 )
             })
             .child(gpui_kit::div().flex_1().min_h_0().min_w_0().w_full().child(

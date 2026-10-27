@@ -1,26 +1,7 @@
-//! Viewer unit tests: spin timing and the ownership rules that keep the grid, the drafts and
+//! Viewer unit tests: the ownership rules that keep the grid, the drafts and
 //! the session's committed rows in sync.
 
 use super::*;
-use std::time::{Duration, Instant};
-
-#[test]
-fn refresh_keeps_spinning_for_half_a_turn_after_the_load() {
-    let start = Instant::now();
-    let until = start + Duration::from_millis(400);
-    assert!(refresh_spinning(true, Some(until), start));
-    assert!(refresh_spinning(
-        false,
-        Some(until),
-        start + Duration::from_millis(100)
-    ));
-    assert!(!refresh_spinning(
-        false,
-        Some(until),
-        start + Duration::from_millis(400)
-    ));
-    assert!(!refresh_spinning(false, None, start));
-}
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{TestAppContext, WindowOptions};
 use navidog_app_state::store::ConnectionStore;
