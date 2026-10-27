@@ -126,6 +126,11 @@ impl NavigatorPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Skeleton rows are not objects. Selecting one would replace the workspace selection
+        // with nothing.
+        if matches!(Node::parse(id), Some(Node::Placeholder(_))) {
+            return;
+        }
         let selected = Self::selected_ids(cx);
         let tree = self.tree.read(cx);
         let visible: Vec<SharedString> = (0..)
@@ -175,10 +180,13 @@ impl NavigatorPanel {
         if len == 0 {
             return;
         }
-        let next = match ix {
-            None => Some(0),
-            Some(ix) if down => (ix + 1 < len).then_some(ix + 1),
-            Some(ix) => ix.checked_sub(1),
+        let next = {
+            let tree = self.tree.read(cx);
+            next_row(len, ix, down, |i| {
+                tree.entry(i).is_some_and(|entry| {
+                    matches!(Node::parse(&entry.item().id), Some(Node::Placeholder(_)))
+                })
+            })
         };
         let Some(next) = next else { return };
         let id = self
@@ -281,5 +289,51 @@ impl NavigatorPanel {
         } else if self.expanded.remove(&id) {
             self.rebuild(cx);
         }
+    }
+}
+
+/// The next row in `down`'s direction, skipping rows for which `skip` is true.
+/// With nothing focused, both directions start at the first row that is not skipped.
+pub(super) fn next_row(
+    len: usize,
+    from: Option<usize>,
+    down: bool,
+    skip: impl Fn(usize) -> bool,
+) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let (mut i, step_up) = match from {
+        None => (0, false),
+        Some(ix) if down => (ix.checked_add(1)?, false),
+        Some(ix) => (ix.checked_sub(1)?, true),
+    };
+    loop {
+        if i >= len {
+            return None;
+        }
+        if !skip(i) {
+            return Some(i);
+        }
+        i = if step_up {
+            i.checked_sub(1)?
+        } else {
+            i.checked_add(1)?
+        };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::next_row;
+
+    #[test]
+    fn keyboard_movement_skips_placeholder_rows() {
+        let skip = |i| i == 1 || i == 2;
+        assert_eq!(next_row(4, None, true, skip), Some(0));
+        assert_eq!(next_row(4, None, false, skip), Some(0));
+        assert_eq!(next_row(4, Some(0), true, skip), Some(3));
+        assert_eq!(next_row(4, Some(3), false, skip), Some(0));
+        assert_eq!(next_row(3, Some(0), true, skip), None);
     }
 }

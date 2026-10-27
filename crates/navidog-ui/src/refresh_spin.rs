@@ -131,7 +131,8 @@ mod tests {
             // The scheduled timer still belongs to the first deadline.
             this.spin.until = Some(Instant::now() + Duration::from_secs(30));
         });
-        cx.executor().advance_clock(HALF_TURN + Duration::from_millis(50));
+        cx.executor()
+            .advance_clock(HALF_TURN + Duration::from_millis(50));
         cx.run_until_parked();
         host.update(cx, |this, _| {
             assert!(this.spin.until.is_some());
