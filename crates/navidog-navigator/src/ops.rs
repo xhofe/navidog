@@ -162,7 +162,7 @@ fn empty(truncate: bool, window: &mut Window, cx: &mut App) {
         .filter_map(|o| {
             let d = dialect(&o, cx)?;
             let target = d.qualified(&o.scope, &o.name);
-            if truncate && d.exposes_rowid() {
+            if truncate && d.features().exposes_rowid {
                 None
             } else if truncate {
                 Some((o, format!("TRUNCATE TABLE {target}")))
@@ -373,7 +373,7 @@ fn duplicate(with_data: bool, window: &mut Window, cx: &mut App) {
         move |r| {
             Box::pin(async move {
                 prepare_database(r, d.as_ref(), &src.scope.database).await?;
-                let ddl = if d.exposes_rowid() {
+                let ddl = if d.features().exposes_rowid {
                     Some(r.object_ddl(&src.scope, src.kind, &src.name).await?)
                 } else {
                     None

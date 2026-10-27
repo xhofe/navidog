@@ -33,6 +33,79 @@ pub use navidog_model;
 /// module, so each driver writes one line instead of fifty. The module must expose
 /// `list_databases`, `list_schemas`, `list_objects`, `object_ddl`, `table_columns`,
 /// `table_children`, `foreign_keys` and `outline` with the trait's signatures.
+/// The eight catalog methods of [`Relational`], every one reporting that this session has no
+/// catalog. For test doubles: a real driver uses [`relational_catalog!`].
+#[macro_export]
+macro_rules! unsupported_catalog {
+    () => {
+        fn list_databases(&mut self) -> $crate::BoxFuture<'_, $crate::DbResult<Vec<String>>> {
+            Box::pin(async { Err($crate::DbError::msg("This session does not list catalogs.")) })
+        }
+        fn list_schemas(&mut self) -> $crate::BoxFuture<'_, $crate::DbResult<Vec<String>>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+        fn list_objects<'a>(
+            &'a mut self,
+            _scope: &'a $crate::navidog_model::object::Scope,
+            _kind: $crate::navidog_model::object::ObjectKind,
+        ) -> $crate::BoxFuture<'a, $crate::DbResult<Vec<$crate::ObjectInfo>>> {
+            Box::pin(async { Err($crate::DbError::msg("This session does not list objects.")) })
+        }
+        fn object_ddl<'a>(
+            &'a mut self,
+            _scope: &'a $crate::navidog_model::object::Scope,
+            _kind: $crate::navidog_model::object::ObjectKind,
+            _name: &'a str,
+        ) -> $crate::BoxFuture<'a, $crate::DbResult<String>> {
+            Box::pin(async {
+                Err($crate::DbError::msg(
+                    "This session does not read object definitions.",
+                ))
+            })
+        }
+        fn table_columns<'a>(
+            &'a mut self,
+            _scope: &'a $crate::navidog_model::object::Scope,
+            _table: &'a str,
+        ) -> $crate::BoxFuture<'a, $crate::DbResult<Vec<$crate::ColumnInfo>>> {
+            Box::pin(async { Err($crate::DbError::msg("This session does not read columns.")) })
+        }
+        fn table_children<'a>(
+            &'a mut self,
+            _scope: &'a $crate::navidog_model::object::Scope,
+            _table: &'a str,
+        ) -> $crate::BoxFuture<'a, $crate::DbResult<$crate::TableChildren>> {
+            Box::pin(async {
+                Err($crate::DbError::msg(
+                    "This session does not read table children.",
+                ))
+            })
+        }
+        fn foreign_keys<'a>(
+            &'a mut self,
+            _scope: &'a $crate::navidog_model::object::Scope,
+            _table: &'a str,
+        ) -> $crate::BoxFuture<'a, $crate::DbResult<Vec<$crate::ForeignKey>>> {
+            Box::pin(async {
+                Err($crate::DbError::msg(
+                    "This session does not read foreign keys.",
+                ))
+            })
+        }
+        fn outline<'a>(
+            &'a mut self,
+            _scope: &'a $crate::navidog_model::object::Scope,
+            _system: bool,
+        ) -> $crate::BoxFuture<'a, $crate::DbResult<$crate::outline::Outline>> {
+            Box::pin(async {
+                Err($crate::DbError::msg(
+                    "This session has no completion outline.",
+                ))
+            })
+        }
+    };
+}
+
 #[macro_export]
 macro_rules! relational_catalog {
     ($metadata:ident) => {

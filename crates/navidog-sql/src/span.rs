@@ -181,6 +181,56 @@ pub fn check(sql: &str, lex: Lex) -> Result<(), LexError> {
     }
 }
 
+/// Top-level segments of `sql`, as byte ranges. Whitespace at parenthesis depth 0 separates
+/// them, each character of `split` is a segment of its own, and strings, quoted identifiers and
+/// comments are atomic: they stay inside the segment they belong to, spaces included.
+/// Definition and option parsers share this split instead of walking the text with their own
+/// quote handling.
+pub fn segments(sql: &str, lex: Lex, split: &[char]) -> Vec<Range<usize>> {
+    let mut protected = spans(sql, lex)
+        .into_iter()
+        .filter(|span| span.kind.is_protected() || span.kind.is_comment())
+        .map(|span| span.range)
+        .peekable();
+    let mut out = Vec::new();
+    let mut depth = 0u32;
+    let mut start: Option<usize> = None;
+    let mut i = 0;
+    while i < sql.len() {
+        if let Some(range) = protected.peek()
+            && range.start == i
+        {
+            start.get_or_insert(i);
+            i = range.end;
+            protected.next();
+            continue;
+        }
+        let c = sql[i..].chars().next().unwrap_or('\0');
+        if c.is_whitespace() && depth == 0 {
+            if let Some(from) = start.take() {
+                out.push(from..i);
+            }
+        } else if depth == 0 && split.contains(&c) {
+            if let Some(from) = start.take() {
+                out.push(from..i);
+            }
+            out.push(i..i + 1);
+        } else {
+            start.get_or_insert(i);
+        }
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        i += c.len_utf8();
+    }
+    if let Some(from) = start {
+        out.push(from..sql.len());
+    }
+    out
+}
+
 /// Byte offsets where `delimiter` separates top-level text: outside strings, identifiers and
 /// comments, and at parenthesis depth 0. `delimiter` must be ASCII.
 pub fn separators(sql: &str, lex: Lex, delimiter: u8) -> Vec<usize> {

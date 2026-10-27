@@ -103,3 +103,17 @@ fn paging_and_count_quote_the_product() {
         "SELECT COUNT(*) FROM \"public\".\"t\" WHERE a = 1"
     );
 }
+
+#[test]
+fn reserved_words_are_quoted_when_completion_inserts_them() {
+    // A table or column named after a reserved word needs quotes; the keyword list decides.
+    assert_eq!(PostgresDialect.typed_name("user"), "\"user\"");
+    assert_eq!(PostgresDialect.typed_name("window"), "\"window\"");
+    assert_eq!(PostgresDialect.typed_name("variadic"), "\"variadic\"");
+    assert_eq!(MysqlDialect.typed_name("rank"), "`rank`");
+    assert_eq!(MysqlDialect.typed_name("system"), "`system`");
+    assert_eq!(SqliteDialect.typed_name("pragma"), "\"pragma\"");
+    // A plain identifier stays bare, and PostgreSQL folds unquoted upper case.
+    assert_eq!(PostgresDialect.typed_name("actor"), "actor");
+    assert_eq!(PostgresDialect.typed_name("Actor"), "\"Actor\"");
+}

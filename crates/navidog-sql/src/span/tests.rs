@@ -247,3 +247,35 @@ fn depth_tracks_parentheses() {
         ]
     );
 }
+
+#[test]
+fn segments_split_at_top_level_and_ahead_of_protected_text() {
+    let sql = "TEXT DEFAULT 'a b' COMMENT 'x;y' , second";
+    let parts: Vec<&str> = segments(sql, Lex::MYSQL, &['=', ','])
+        .into_iter()
+        .map(|r| &sql[r])
+        .collect();
+    assert_eq!(
+        parts,
+        [
+            "TEXT", "DEFAULT", "'a b'", "COMMENT", "'x;y'", ",", "second"
+        ]
+    );
+    // Whitespace inside parentheses stays in one segment.
+    assert_eq!(
+        segments("KEY (a, b)", Lex::MYSQL, &['=', ','])
+            .into_iter()
+            .map(|r| &"KEY (a, b)"[r])
+            .collect::<Vec<_>>(),
+        ["KEY", "(a, b)"]
+    );
+    // Comments are protected, so their spaces do not split either.
+    let sql = "a /* x y */ b";
+    assert_eq!(
+        segments(sql, Lex::MYSQL, &[])
+            .into_iter()
+            .map(|r| &sql[r])
+            .collect::<Vec<_>>(),
+        ["a", "/* x y */", "b"]
+    );
+}

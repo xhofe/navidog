@@ -296,10 +296,12 @@ impl Catalog {
         let mut requirements = Vec::new();
         if let Selection::Database(c, d) = &selection {
             match Sessions::global(cx).read(cx).dialect(c) {
-                Some(dialect) if dialect.has_schemas() => requirements.push(Requirement::Schemas {
-                    connection: c.clone(),
-                    database: d.clone(),
-                }),
+                Some(dialect) if dialect.features().has_schemas => {
+                    requirements.push(Requirement::Schemas {
+                        connection: c.clone(),
+                        database: d.clone(),
+                    })
+                }
                 Some(_) => requirements.push(Requirement::Objects {
                     scope: Scope::new(c.clone(), d.clone(), None),
                     kind: ObjectKind::Table,

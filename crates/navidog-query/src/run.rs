@@ -345,7 +345,7 @@ impl QueryEditor {
         self.stop_flag = stop.clone();
         let continue_on_error = Settings::global(cx).continue_on_error;
         let profile = kind != RunKind::Explain
-            && dialect.supports_profile()
+            && dialect.features().supports_profile
             && Settings::global(cx).show_profile;
         let mariadb = self.server_version(cx).contains("MariaDB");
         let mut source = crate::results::RunInfo {
@@ -835,6 +835,8 @@ mod tests {
             ) -> BoxFuture<'a, DbResult<Vec<ResultSet>>> {
                 Box::pin(async { Err(DbError::msg("injected context probe failure")) })
             }
+
+            navidog_db::unsupported_catalog!();
         }
         let mut probe = ProbeFailure(0);
         let (sets, context) = navidog_db::runtime::runtime()

@@ -11,7 +11,7 @@ impl TableDesigner {
         for (key, input) in &self.table_option_inputs {
             let value = if *key == "owner" {
                 self.draft.owner.clone()
-            } else if *key == "table_comment" && self.dialect.separate_comments() {
+            } else if *key == "table_comment" && self.dialect.features().separate_comments {
                 self.draft.comment.clone()
             } else {
                 table_option(&self.draft.options, key, self.dialect.as_ref()).unwrap_or_default()
@@ -31,7 +31,7 @@ impl TableDesigner {
         }
         let key = keys(self.dialect.as_ref())[ix];
         let value = self.table_option_inputs[key].read(cx).value().to_string();
-        let result = if key == "table_comment" && self.dialect.separate_comments() {
+        let result = if key == "table_comment" && self.dialect.features().separate_comments {
             if value.contains('\0') {
                 Err(DbError::msg(t!("designer.invalid_comment").to_string()))
             } else {
@@ -111,7 +111,8 @@ impl TableDesigner {
                     .iter()
                     .enumerate()
                     .map(|(ix, key)| {
-                        let separate = *key == "table_comment" && self.dialect.separate_comments();
+                        let separate =
+                            *key == "table_comment" && self.dialect.features().separate_comments;
                         let parse_error = *key != "owner"
                             && !separate
                             && table_option(&self.draft.options, key, self.dialect.as_ref())
@@ -164,7 +165,7 @@ impl TableDesigner {
                         )
                     }),
             )
-            .when(self.dialect.supports_unlogged(), |v| {
+            .when(self.dialect.features().supports_unlogged, |v| {
                 v.child(FormRow::bare(
                     Checkbox::new("designer-option-unlogged")
                         .label(t!("designer.option_unlogged").to_string())
@@ -191,7 +192,7 @@ impl TableDesigner {
                 gpui_kit::div()
                     .text_color(palette(cx).label_secondary)
                     .child(
-                        t!(if self.dialect.inline_table_options() {
+                        t!(if self.dialect.features().inline_table_options {
                             "designer.table_options_mysql_help"
                         } else {
                             "designer.table_options_help"

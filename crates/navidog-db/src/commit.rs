@@ -80,7 +80,8 @@ pub async fn apply(
 /// checked.
 pub fn matched_a_row(sql: &str, sets: &[ResultSet], dialect: &dyn Dialect) -> DbResult<()> {
     let delete = starts_with_ignore_ascii_case(sql, "DELETE");
-    let update = starts_with_ignore_ascii_case(sql, "UPDATE") && !dialect.counts_changed_rows();
+    let update =
+        starts_with_ignore_ascii_case(sql, "UPDATE") && !dialect.features().counts_changed_rows;
     if (delete || update) && sets.last().and_then(|s| s.affected_rows) == Some(0) {
         return Err(DbError::coded(
             "navidog.row_not_found",
@@ -121,6 +122,8 @@ mod tests {
                 }
             })
         }
+
+        crate::unsupported_catalog!();
     }
 
     #[test]

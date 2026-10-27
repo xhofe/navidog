@@ -330,67 +330,50 @@ pub trait Relational: Send {
         self.execute(sql)
     }
 
-    // Catalog queries. The SQL lives in each database crate; these defaults only keep test
-    // doubles compiling. A real session overrides them.
-    fn list_databases(&mut self) -> BoxFuture<'_, DbResult<Vec<String>>> {
-        Box::pin(async { Err(DbError::msg("This session does not list catalogs.")) })
-    }
+    // Catalog queries. The SQL lives in each database crate: a real driver writes
+    // `navidog_db::relational_catalog!(metadata);`, a test double
+    // `navidog_db::unsupported_catalog!();`. Both are required, so a new driver cannot compile
+    // with the catalog quietly missing.
+
+    fn list_databases(&mut self) -> BoxFuture<'_, DbResult<Vec<String>>>;
     /// Schemas in the database this session is connected to. Dialects without a schema level
     /// return an empty list.
-    fn list_schemas(&mut self) -> BoxFuture<'_, DbResult<Vec<String>>> {
-        Box::pin(async { Ok(Vec::new()) })
-    }
+    fn list_schemas(&mut self) -> BoxFuture<'_, DbResult<Vec<String>>>;
     fn object_kinds(&self) -> &'static [ObjectKind] {
         self.dialect().object_kinds()
     }
     fn list_objects<'a>(
         &'a mut self,
-        _scope: &'a Scope,
-        _kind: ObjectKind,
-    ) -> BoxFuture<'a, DbResult<Vec<ObjectInfo>>> {
-        Box::pin(async { Err(DbError::msg("This session does not list objects.")) })
-    }
+        scope: &'a Scope,
+        kind: ObjectKind,
+    ) -> BoxFuture<'a, DbResult<Vec<ObjectInfo>>>;
     fn object_ddl<'a>(
         &'a mut self,
-        _scope: &'a Scope,
-        _kind: ObjectKind,
-        _name: &'a str,
-    ) -> BoxFuture<'a, DbResult<String>> {
-        Box::pin(async {
-            Err(DbError::msg(
-                "This session does not read object definitions.",
-            ))
-        })
-    }
+        scope: &'a Scope,
+        kind: ObjectKind,
+        name: &'a str,
+    ) -> BoxFuture<'a, DbResult<String>>;
     fn table_columns<'a>(
         &'a mut self,
-        _scope: &'a Scope,
-        _table: &'a str,
-    ) -> BoxFuture<'a, DbResult<Vec<ColumnInfo>>> {
-        Box::pin(async { Err(DbError::msg("This session does not read columns.")) })
-    }
+        scope: &'a Scope,
+        table: &'a str,
+    ) -> BoxFuture<'a, DbResult<Vec<ColumnInfo>>>;
     fn table_children<'a>(
         &'a mut self,
-        _scope: &'a Scope,
-        _table: &'a str,
-    ) -> BoxFuture<'a, DbResult<TableChildren>> {
-        Box::pin(async { Err(DbError::msg("This session does not read table children.")) })
-    }
+        scope: &'a Scope,
+        table: &'a str,
+    ) -> BoxFuture<'a, DbResult<TableChildren>>;
     fn foreign_keys<'a>(
         &'a mut self,
-        _scope: &'a Scope,
-        _table: &'a str,
-    ) -> BoxFuture<'a, DbResult<Vec<ForeignKey>>> {
-        Box::pin(async { Err(DbError::msg("This session does not read foreign keys.")) })
-    }
+        scope: &'a Scope,
+        table: &'a str,
+    ) -> BoxFuture<'a, DbResult<Vec<ForeignKey>>>;
     /// Tables, views, functions and columns used to complete SQL. `system` includes hidden catalogs.
     fn outline<'a>(
         &'a mut self,
-        _scope: &'a Scope,
-        _system: bool,
-    ) -> BoxFuture<'a, DbResult<crate::outline::Outline>> {
-        Box::pin(async { Err(DbError::msg("This session has no completion outline.")) })
-    }
+        scope: &'a Scope,
+        system: bool,
+    ) -> BoxFuture<'a, DbResult<crate::outline::Outline>>;
 }
 
 pub trait Document: Send {

@@ -72,7 +72,7 @@ impl TableDesign {
         parts.extend(self.constraints.iter().map(|c| format!("  {}", c.trim())));
         Ok(format!(
             "CREATE {}TABLE {} (\n{}\n){}",
-            if dialect.supports_unlogged() && self.unlogged {
+            if dialect.features().supports_unlogged && self.unlogged {
                 "UNLOGGED "
             } else {
                 ""
@@ -116,7 +116,7 @@ impl TableDesign {
         if self.comment.contains('\0') || self.columns.iter().any(|c| c.comment.contains('\0')) {
             return Err(DbError::msg("Comments cannot contain NUL characters."));
         }
-        if !dialect.separate_comments()
+        if !dialect.features().separate_comments
             && (!self.comment.is_empty() || self.columns.iter().any(|c| !c.comment.is_empty()))
         {
             return Err(DbError::msg(
@@ -133,7 +133,7 @@ impl TableDesign {
                     "Each supplemental definition must contain one SQL statement.",
                 ));
             }
-            if dialect.separate_comments()
+            if dialect.features().separate_comments
                 && (index.starts_with("COMMENT ON TABLE ")
                     || index.starts_with("COMMENT ON COLUMN "))
             {
@@ -164,7 +164,7 @@ pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult
     let dialect = r.dialect();
     let mut ddl = r.object_ddl(scope, ObjectKind::Table, name).await?;
     let mut design = parse::create(&ddl, name, dialect.as_ref())?;
-    if dialect.enriches_from_catalog() {
+    if dialect.features().enriches_from_catalog {
         design.migrate_comments(scope, dialect.as_ref())?;
         // The general DDL view omits identity/generated flags and nondefault collations.
         // Include them in both the editable draft and the concurrency fingerprint.
@@ -242,7 +242,7 @@ pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult
         ));
     }
     let mut triggers = Vec::new();
-    if dialect.rebuilds_tables() {
+    if dialect.features().rebuilds_tables {
         let sql = format!(
             "SELECT type, sql FROM {}.sqlite_schema WHERE tbl_name = {} AND type IN ('index', 'trigger') AND sql IS NOT NULL ORDER BY type, name",
             dialect.quote_ident(&scope.database),
@@ -299,7 +299,7 @@ pub async fn apply(
 ) -> DbResult<TableSnapshot> {
     let d = r.dialect();
     let mut legacy_before = before.cloned();
-    if d.separate_comments()
+    if d.features().separate_comments
         && let Some(old) = &mut legacy_before
     {
         old.design.migrate_comments(scope, d.as_ref())?;
@@ -328,7 +328,7 @@ pub async fn apply(
             "The table designer can only rebuild tables in the primary SQLite database.",
         ));
     }
-    let occupied = if d.rebuilds_tables() && before.is_some() {
+    let occupied = if d.features().rebuilds_tables && before.is_some() {
         sqlite_table_names(r, scope).await?
     } else {
         Vec::new()
@@ -337,7 +337,8 @@ pub async fn apply(
     if statements.is_empty() {
         return load(r, scope, &after.name).await;
     }
-    let sqlite_rebuild = d.rebuilds_tables() && before.is_some() && sqlite_rename(&statements);
+    let sqlite_rebuild =
+        d.features().rebuilds_tables && before.is_some() && sqlite_rename(&statements);
     let foreign_keys = if sqlite_rebuild {
         r.execute("PRAGMA foreign_keys")
             .await?
@@ -368,10 +369,10 @@ pub async fn apply(
     } else {
         false
     };
-    let transactional = d.transactional_ddl();
+    let transactional = d.features().transactional_ddl;
     let result = async {
         if transactional {
-            r.execute(if d.begin_immediate() {
+            r.execute(if d.features().begin_immediate {
                 "BEGIN IMMEDIATE"
             } else {
                 "BEGIN"

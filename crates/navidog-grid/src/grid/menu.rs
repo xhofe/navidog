@@ -86,7 +86,7 @@ impl ResultGrid {
         if self
             .target
             .as_ref()
-            .is_some_and(|t| t.dialect.exposes_rowid())
+            .is_some_and(|t| t.dialect.features().exposes_rowid)
         {
             menu = menu.menu_with_check(
                 t!("grid.rowid").to_string(),

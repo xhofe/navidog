@@ -420,7 +420,7 @@ impl TableDesigner {
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
-            let migration_error = if dialect.separate_comments() {
+            let migration_error = if dialect.features().separate_comments {
                 saved
                     .draft
                     .migrate_comments(&saved.scope, dialect.as_ref())
@@ -691,7 +691,7 @@ impl TableDesigner {
             props.data_type,
             props.length,
             props.scale,
-            if self.dialect.separate_comments() {
+            if self.dialect.features().separate_comments {
                 c.map(|c| c.comment.clone()).unwrap_or_default()
             } else {
                 props.comment
@@ -799,7 +799,7 @@ impl TableDesigner {
             return;
         }
         self.flush(cx);
-        if self.dialect.rebuilds_tables()
+        if self.dialect.features().rebuilds_tables
             && self.baseline.is_some()
             && let Some(job) = Sessions::global(cx)
                 .read(cx)
@@ -995,7 +995,7 @@ impl TableDesigner {
                     }
                     Err(e) => {
                         this.error = Some(e.to_string());
-                        if save && !this.dialect.transactional_ddl() {
+                        if save && !this.dialect.features().transactional_ddl {
                             this.needs_reload = true;
                         }
                     }

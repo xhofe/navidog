@@ -142,7 +142,7 @@ impl QueryEditor {
             indent_spaces: s.insert_spaces.then_some(s.tab_width.clamp(1, 16)),
             uppercase: s.beautify_uppercase,
             max_inline: s.beautify_max_inline,
-            postgres: dialect.as_ref().is_some_and(|d| d.has_schemas()),
+            postgres: dialect.as_ref().is_some_and(|d| d.features().has_schemas),
             lex: dialect.as_ref().map_or(Lex::GENERIC, |d| d.lex()),
         };
         self.on_selection(|s| sql_format::beautify(s, &options), window, cx);

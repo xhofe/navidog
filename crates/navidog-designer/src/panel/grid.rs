@@ -103,17 +103,17 @@ impl TableDelegate for DesignerGrid {
                         .small()
                         .disabled(
                             self.disabled
-                                || (col == 7
+                                || (col == structured::FIELD_COMMENT
                                     && self
                                         .owner
                                         .read_with(cx, |this, _| {
-                                            !this.dialect.supports_column_comments()
+                                            !this.dialect.features().supports_column_comments
                                         })
                                         .unwrap_or(true)),
                         )
                         .flex_1(),
                 )
-                .when(col == 1, |row| {
+                .when(col == structured::FIELD_TYPE, |row| {
                     row.child(super::view::choices(
                         self.owner.clone(),
                         0,

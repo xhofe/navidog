@@ -304,7 +304,11 @@ impl TableViewer {
     }
 
     pub(crate) fn toggle_rowid(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.dialect.as_ref().is_some_and(|d| d.exposes_rowid()) {
+        if !self
+            .dialect
+            .as_ref()
+            .is_some_and(|d| d.features().exposes_rowid)
+        {
             return;
         }
         let on = !self.view.grid.read(cx).show_rowid;

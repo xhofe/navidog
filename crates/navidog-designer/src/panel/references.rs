@@ -62,7 +62,7 @@ impl TableDesigner {
         let scope = self.entry_inputs[REFERENCE_SCHEMA].read(cx).value();
         scope.is_empty()
             || scope
-                == if self.dialect.has_schemas() {
+                == if self.dialect.features().has_schemas {
                     self.scope
                         .schema
                         .as_deref()

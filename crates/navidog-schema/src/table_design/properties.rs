@@ -1,6 +1,6 @@
 //! Structured edits replace only the requested SQL clause; unrecognized attributes survive.
 use super::*;
-use navidog_sql::span::{self as sql_span, SpanKind};
+use navidog_sql::span::{self as sql_span};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ColumnProperty {
@@ -47,44 +47,10 @@ pub struct ColumnProperties {
 
 fn words(s: &str, d: &dyn Dialect) -> Vec<(usize, usize)> {
     // Top-level words: whitespace separates them, except inside quotes and parentheses.
-    let spans = sql_span::spans(s, d.lex());
-    let mut out = Vec::new();
-    let mut depth = 0u32;
-    let mut next = 0;
-    let mut start = None;
-    let mut i = 0;
-    while i < s.len() {
-        if let Some(span) = spans.get(next)
-            && span.range.start == i
-        {
-            start.get_or_insert(i);
-            match span.kind {
-                SpanKind::OpenParen => depth += 1,
-                SpanKind::CloseParen => depth = depth.saturating_sub(1),
-                _ => {}
-            }
-            i = span.range.end;
-            next += 1;
-            continue;
-        }
-        match s[i..].chars().next() {
-            Some(c) if c.is_whitespace() && depth == 0 => {
-                if let Some(a) = start.take() {
-                    out.push((a, i));
-                }
-                i += c.len_utf8();
-            }
-            Some(c) => {
-                start.get_or_insert(i);
-                i += c.len_utf8();
-            }
-            None => break,
-        }
-    }
-    if let Some(a) = start {
-        out.push((a, s.len()));
-    }
-    out
+    sql_span::segments(s, d.lex(), &[])
+        .into_iter()
+        .map(|range| (range.start, range.end))
+        .collect()
 }
 
 fn clause(word: &str) -> bool {
@@ -276,7 +242,7 @@ pub fn edit_column(
     }
     let mut p = column_properties(s, d);
     if property == ColumnProperty::Identity {
-        if !d.supports_identity() || !["", "ALWAYS", "BY DEFAULT"].contains(&input) {
+        if !d.features().supports_identity || !["", "ALWAYS", "BY DEFAULT"].contains(&input) {
             return Err(DbError::msg(
                 "Identity mode must be ALWAYS, BY DEFAULT, or empty on PostgreSQL.",
             ));
@@ -436,7 +402,7 @@ pub fn edit_column(
             },
         ),
         ColumnProperty::Comment => {
-            if !d.column_comment_inline() {
+            if !d.features().column_comment_inline {
                 return Err(DbError::msg(
                     "Column comments are edited through the database comment definition.",
                 ));
@@ -494,7 +460,7 @@ pub fn edit_column(
             )
         }
         ColumnProperty::OnUpdate => {
-            if !d.supports_on_update() {
+            if !d.features().supports_on_update {
                 return Err(DbError::msg("ON UPDATE is a MySQL field attribute."));
             }
             (
@@ -508,7 +474,7 @@ pub fn edit_column(
             )
         }
         ColumnProperty::Zerofill => {
-            if !d.supports_zerofill() {
+            if !d.features().supports_zerofill {
                 return Err(DbError::msg("ZEROFILL is a MySQL field attribute."));
             }
             (

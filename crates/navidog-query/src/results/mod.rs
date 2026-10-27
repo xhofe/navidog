@@ -56,7 +56,7 @@ impl RunInfo {
     pub fn scope_for(&self, origin_schema: &str) -> Option<Scope> {
         let conn = self.connection_id.clone();
         let dialect = self.dialect.as_ref()?;
-        Some(if dialect.has_schemas() {
+        Some(if dialect.features().has_schemas {
             Scope::new(
                 conn,
                 self.database.clone()?,

@@ -181,6 +181,8 @@ impl Relational for CountingSession {
         }
         .boxed()
     }
+
+    navidog_db::unsupported_catalog!();
 }
 
 #[test]

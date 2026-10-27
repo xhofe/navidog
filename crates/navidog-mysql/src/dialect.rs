@@ -1,7 +1,9 @@
 //! MySQL and MariaDB SQL dialect. Both drivers share this implementation.
 
 use navidog_model::object::{ObjectKind, Scope};
-use navidog_sql::{ContextSelection, Dialect, ExplainStyle, Lex, TableOptionStyle};
+use navidog_sql::{
+    ConstraintKind, ContextSelection, Dialect, DialectFeatures, ExplainStyle, Lex, TableOptionStyle,
+};
 
 #[derive(Debug)]
 pub struct MysqlDialect;
@@ -43,58 +45,51 @@ impl Dialect for MysqlDialect {
     fn is_system_schema(&self, _: &str) -> bool {
         false
     }
-    fn has_schemas(&self) -> bool {
-        false
-    }
     fn extra_keywords(&self) -> &'static [&'static str] {
         crate::words::KEYWORDS
     }
     fn extra_functions(&self) -> &'static [&'static str] {
         crate::words::FUNCTIONS
     }
-    fn limit_unkeyed_writes(&self) -> bool {
-        true
-    }
-    fn like_backslash_escape(&self) -> bool {
-        true
-    }
-    fn supports_column_position(&self) -> bool {
-        true
-    }
-    fn standalone_indexes(&self) -> bool {
-        false
-    }
-    fn supports_zerofill(&self) -> bool {
-        true
-    }
-    fn supports_on_update(&self) -> bool {
-        true
-    }
-    fn transactional_ddl(&self) -> bool {
-        false
-    }
     fn ident_quote(&self) -> char {
         '`'
     }
-    fn drop_index_alters_table(&self) -> bool {
-        true
-    }
-    fn rewrites_columns(&self) -> bool {
-        true
-    }
-    fn inline_table_options(&self) -> bool {
-        true
-    }
-    fn drop_constraint_clause(&self, kind: &str, name: &str) -> Option<String> {
+    fn drop_constraint_clause(&self, kind: ConstraintKind, name: &str) -> Option<String> {
         Some(match kind {
-            "PRIMARY" => "DROP PRIMARY KEY".into(),
-            "FOREIGN" => format!("DROP FOREIGN KEY {}", self.quote_ident(name)),
-            "INDEX" => format!("DROP INDEX {}", self.quote_ident(name)),
-            _ => return None,
+            ConstraintKind::Primary => "DROP PRIMARY KEY".into(),
+            ConstraintKind::ForeignKey => format!("DROP FOREIGN KEY {}", self.quote_ident(name)),
+            ConstraintKind::Index => format!("DROP INDEX {}", self.quote_ident(name)),
+            // MySQL drops UNIQUE and CHECK constraints through DROP INDEX / DROP CHECK, which
+            // this designer does not model; an EXCLUDE constraint does not exist there.
+            ConstraintKind::Unique | ConstraintKind::Check | ConstraintKind::Exclude => {
+                return None;
+            }
         })
     }
     fn context_selection(&self) -> ContextSelection {
         ContextSelection::Database
+    }
+    fn features(&self) -> DialectFeatures {
+        DialectFeatures {
+            limit_unkeyed_writes: true,
+            supports_column_position: true,
+            standalone_indexes: false,
+            supports_zerofill: true,
+            supports_on_update: true,
+            transactional_ddl: false,
+            drop_index_alters_table: true,
+            rewrites_columns: true,
+            inline_table_options: true,
+            supports_profile: true,
+            counts_changed_rows: true,
+            switches_database: true,
+            column_comment_inline: true,
+            supports_index_comment: true,
+            supports_column_charset: true,
+            supports_unsigned: true,
+            supports_index_expression: false,
+            ..DialectFeatures::default()
+        }
     }
     fn table_option_style(&self) -> TableOptionStyle {
         TableOptionStyle::Clauses
@@ -104,30 +99,6 @@ impl Dialect for MysqlDialect {
     }
     fn explain_style(&self) -> ExplainStyle {
         ExplainStyle::TableAndJson
-    }
-    fn supports_profile(&self) -> bool {
-        true
-    }
-    fn counts_changed_rows(&self) -> bool {
-        true
-    }
-    fn switches_database(&self) -> bool {
-        true
-    }
-    fn column_comment_inline(&self) -> bool {
-        true
-    }
-    fn supports_index_comment(&self) -> bool {
-        true
-    }
-    fn supports_index_expression(&self) -> bool {
-        false
-    }
-    fn supports_column_charset(&self) -> bool {
-        true
-    }
-    fn supports_unsigned(&self) -> bool {
-        true
     }
     fn index_methods(&self) -> &'static [&'static str] {
         &["BTREE", "HASH"]

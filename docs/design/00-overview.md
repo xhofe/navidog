@@ -128,7 +128,7 @@ flowchart TD
 | `navidog-ui` | Navicat 主题 JSON、具名 token、AppKit 外观皮肤、图标资源 | M1 |
 | `navidog-model` | 纯数据模型：连接、分组、对象引用、密钥与加密、配置路径、保存的查询、列宽。不依赖 GPUI，可被 headless 工具和驱动直接使用 | M1 |
 | `navidog-app-state` | GPUI 应用状态：`Settings`、`ConnectionStore`、`Workspace` 选择、收藏、虚拟组、代码段、跨 feature 命令、对象 URI、驱动注册表 | M1 |
-| `navidog-sql` | 方言 trait（词法标志、标识符、字面量、分页、变更 SQL、对象种类、系统库、关键字、事务和 DROP/RENAME）和唯一的 SQL 扫描器。扫描器只接收 `Lex`，不认识产品名 | M2 |
+| `navidog-sql` | 方言 trait（词法标志、标识符、字面量、分页、变更 SQL、对象种类、系统库、关键字、事务和 DROP/RENAME）、能力集合 `DialectFeatures` 和唯一的 SQL 扫描器。扫描器只接收 `Lex`，不认识产品名 | M2 |
 | `navidog-session` | 驱动注册表与会话、元数据缓存状态机（`ScopeCache`）、代码补全信息缓存。注册四个内置驱动 | M1 |
 | `navidog-schema` | 表草稿的解析、编辑和迁移的执行顺序。产品相关的语句由方言能力方法决定，不依赖界面，也不承担驱动协议 | M4 |
 | `navidog-sql-log` | SQL 日志文件的写入与轮转 | M3 |

@@ -2,7 +2,8 @@
 
 use navidog_model::object::{ObjectKind, Scope};
 use navidog_sql::{
-    ContextSelection, Dialect, ExplainStyle, Lex, TableOptionStyle, rename_create_table,
+    ContextSelection, Dialect, DialectFeatures, ExplainStyle, Lex, TableOptionStyle,
+    rename_create_table,
 };
 
 #[derive(Debug)]
@@ -41,35 +42,31 @@ impl Dialect for SqliteDialect {
     fn is_system_schema(&self, _: &str) -> bool {
         false
     }
-    fn has_schemas(&self) -> bool {
-        false
-    }
     fn extra_keywords(&self) -> &'static [&'static str] {
         crate::words::KEYWORDS
     }
     fn extra_functions(&self) -> &'static [&'static str] {
         crate::words::FUNCTIONS
     }
-    fn exposes_rowid(&self) -> bool {
-        true
-    }
-    fn drops_index_by_name(&self) -> bool {
-        true
-    }
-    fn drops_trigger_by_name(&self) -> bool {
-        true
-    }
-    fn begin_immediate(&self) -> bool {
-        true
-    }
-    fn rebuilds_tables(&self) -> bool {
-        true
-    }
     fn autoincrement_keyword(&self) -> &'static str {
         "AUTOINCREMENT"
     }
     fn context_selection(&self) -> ContextSelection {
         ContextSelection::File
+    }
+    fn features(&self) -> DialectFeatures {
+        DialectFeatures {
+            exposes_rowid: true,
+            drop_index_by_name: true,
+            drop_trigger_by_name: true,
+            begin_immediate: true,
+            rebuilds_tables: true,
+            supports_column_comments: false,
+            autoincrement_needs_integer_key: true,
+            supports_index_method: false,
+            fk_reference_schema: false,
+            ..DialectFeatures::default()
+        }
     }
     fn table_option_style(&self) -> TableOptionStyle {
         TableOptionStyle::TableFlags
@@ -79,18 +76,6 @@ impl Dialect for SqliteDialect {
     }
     fn explain_style(&self) -> ExplainStyle {
         ExplainStyle::QueryPlanRows
-    }
-    fn supports_column_comments(&self) -> bool {
-        false
-    }
-    fn autoincrement_needs_integer_key(&self) -> bool {
-        true
-    }
-    fn supports_index_method(&self) -> bool {
-        false
-    }
-    fn fk_reference_schema(&self) -> bool {
-        false
     }
     fn table_rebuild_catalog(&self) -> Option<&'static str> {
         Some("main")

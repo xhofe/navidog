@@ -91,7 +91,7 @@ impl NavigatorPanel {
                 let mysql = Sessions::global(cx)
                     .read(cx)
                     .dialect(id)
-                    .is_some_and(|d| d.switches_database());
+                    .is_some_and(|d| d.features().switches_database);
                 let menu = if open && mysql {
                     menu.menu(t!("nav.reload").to_string(), Box::new(ReloadConnection))
                 } else {
@@ -299,7 +299,7 @@ impl NavigatorPanel {
             );
         if o.kind == ObjectKind::Table {
             menu = menu.menu(t!("obj.empty_table").to_string(), Box::new(EmptyTables));
-            if d.as_ref().is_none_or(|d| !d.exposes_rowid()) {
+            if d.as_ref().is_none_or(|d| !d.features().exposes_rowid) {
                 menu = menu.menu(
                     t!("obj.truncate_table").to_string(),
                     Box::new(TruncateTables),

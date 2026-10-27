@@ -1,6 +1,6 @@
 use super::*;
 
-const PROPERTIES: [ColumnProperty; 11] = [
+pub(super) const PROPERTIES: [ColumnProperty; 11] = [
     ColumnProperty::Type,
     ColumnProperty::Length,
     ColumnProperty::Scale,
@@ -29,6 +29,21 @@ pub(super) const PROPERTY_IDS: [&str; 11] = [
 pub(super) const REFERENCE_SCHEMA: usize = 4;
 pub(super) const REFERENCE_TABLE: usize = 5;
 pub(super) const REFERENCE_FIELDS: usize = 6;
+/// Columns of the fields table, in the order the renderer below builds them.
+pub(super) const FIELD_NAME: usize = 0;
+pub(super) const FIELD_TYPE: usize = 1;
+pub(super) const FIELD_LENGTH: usize = 2;
+pub(super) const FIELD_SCALE: usize = 3;
+pub(super) const FIELD_COMMENT: usize = 7;
+
+/// Row of a column property in the form, taken from the `PROPERTIES` order.
+fn property_row(property: ColumnProperty) -> usize {
+    PROPERTIES
+        .iter()
+        .position(|p| *p == property)
+        .expect("the form lists every column property")
+}
+
 pub(super) const ENTRY_KEYS: [&str; 10] = [
     "name",
     "fields",
@@ -132,7 +147,7 @@ impl TableDesigner {
                         p.not_null.to_string(),
                         p.generated.to_string(),
                         self.is_primary(&c.name).to_string(),
-                        if self.dialect.separate_comments() {
+                        if self.dialect.features().separate_comments {
                             c.comment.clone()
                         } else {
                             p.comment
@@ -146,12 +161,16 @@ impl TableDesigner {
                 .iter()
                 .position(|c| Some(c.id) == self.selected);
             let editing = row.zip(self.active_cell).and_then(|(r, c)| {
+                let property = |property: ColumnProperty| {
+                    let row = property_row(property);
+                    (self.properties[row].clone(), PROPERTY_IDS[row])
+                };
                 let (input, id) = match c {
-                    0 => (self.name.clone(), "designer-field-name"),
-                    1 => (self.properties[0].clone(), PROPERTY_IDS[0]),
-                    2 => (self.properties[1].clone(), PROPERTY_IDS[1]),
-                    3 => (self.properties[2].clone(), PROPERTY_IDS[2]),
-                    7 => (self.properties[3].clone(), PROPERTY_IDS[3]),
+                    FIELD_NAME => (self.name.clone(), "designer-field-name"),
+                    FIELD_TYPE => property(ColumnProperty::Type),
+                    FIELD_LENGTH => property(ColumnProperty::Length),
+                    FIELD_SCALE => property(ColumnProperty::Scale),
+                    FIELD_COMMENT => property(ColumnProperty::Comment),
                     _ => return None,
                 };
                 Some((r, c, input, id))
@@ -255,7 +274,9 @@ impl TableDesigner {
                 1 => Some(self.properties[0].clone()),
                 2 => Some(self.properties[1].clone()),
                 3 => Some(self.properties[2].clone()),
-                7 if self.dialect.supports_column_comments() => Some(self.properties[3].clone()),
+                7 if self.dialect.features().supports_column_comments => {
+                    Some(self.properties[3].clone())
+                }
                 _ => None,
             };
             if let Some(input) = input {
@@ -286,15 +307,23 @@ impl TableDesigner {
         else {
             return;
         };
-        if ix == 3 && self.dialect.text_rejects_nul() {
-            if value.contains('\0') {
-                self.invalid_inputs
-                    .insert(ix, t!("designer.invalid_comment").to_string());
-            } else {
-                c.comment = value;
-                self.invalid_inputs.remove(&ix);
-                self.preview = None;
-            }
+        // Two independent facts: the text type may reject NUL, and the comment may live outside
+        // the column definition. Either can hold on its own.
+        if PROPERTIES[ix] == ColumnProperty::Comment
+            && self.dialect.features().text_rejects_nul
+            && value.contains('\0')
+        {
+            self.invalid_inputs
+                .insert(ix, t!("designer.invalid_comment").to_string());
+            self.error = self.invalid_inputs.values().next().cloned();
+            self.refresh_grid(cx);
+            cx.notify();
+            return;
+        }
+        if PROPERTIES[ix] == ColumnProperty::Comment && self.dialect.features().separate_comments {
+            c.comment = value;
+            self.invalid_inputs.remove(&ix);
+            self.preview = None;
             self.error = self.invalid_inputs.values().next().cloned();
             self.refresh_grid(cx);
             cx.notify();
@@ -462,7 +491,7 @@ impl TableDesigner {
         }
         if property == ColumnProperty::AutoIncrement
             && checked
-            && self.dialect.autoincrement_needs_integer_key()
+            && self.dialect.features().autoincrement_needs_integer_key
         {
             let Some(column) = self
                 .draft
@@ -689,7 +718,7 @@ impl TableDesigner {
         } else {
             String::new()
         };
-        let standalone = kind == EntryKind::Index && self.dialect.standalone_indexes();
+        let standalone = kind == EntryKind::Index && self.dialect.features().standalone_indexes;
         if let Ok(sql) = e.sql(
             self.dialect.as_ref(),
             &self.scope,

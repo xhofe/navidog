@@ -1,7 +1,10 @@
 use super::*;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::resizable::{resizable_panel, v_resizable};
-use structured::{ENTRY_KEYS, PROPERTY_IDS};
+use structured::{ENTRY_KEYS, PROPERTIES, PROPERTY_IDS};
+
+/// Choice-menu id space of the identity row; see `render_property_row`.
+const IDENTITY_CHOICE_IX: usize = 90;
 
 impl TableDesigner {
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -158,20 +161,32 @@ impl TableDesigner {
                         .disabled(disabled)
                         .flex_1(),
                 )
-                .when(ix == 8 || ix == 10, |row| {
-                    row.child(choices(
-                        cx.entity().downgrade(),
-                        if ix == 10 { 90 } else { ix },
-                        if ix == 10 {
-                            vec!["".into(), "ALWAYS".into(), "BY DEFAULT".into()]
-                        } else if !self.dialect.supports_virtual_generated() {
-                            vec!["STORED".into()]
-                        } else {
-                            vec!["VIRTUAL".into(), "STORED".into()]
-                        },
-                        disabled,
-                    ))
-                }),
+                .when(
+                    matches!(
+                        PROPERTIES[ix],
+                        ColumnProperty::GeneratedStorage | ColumnProperty::Identity
+                    ),
+                    |row| {
+                        row.child(choices(
+                            cx.entity().downgrade(),
+                            // The identity menu gets its own id space so its choices cannot
+                            // collide with the generated-storage menu.
+                            if PROPERTIES[ix] == ColumnProperty::Identity {
+                                IDENTITY_CHOICE_IX
+                            } else {
+                                ix
+                            },
+                            if PROPERTIES[ix] == ColumnProperty::Identity {
+                                vec!["".into(), "ALWAYS".into(), "BY DEFAULT".into()]
+                            } else if !self.dialect.features().supports_virtual_generated {
+                                vec!["STORED".into()]
+                            } else {
+                                vec!["VIRTUAL".into(), "STORED".into()]
+                            },
+                            disabled,
+                        ))
+                    },
+                ),
         )
     }
     fn render_field_properties(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -201,10 +216,11 @@ impl TableDesigner {
                 cx,
             ))
             .child(self.property_row(5, "collation", disabled, cx))
-            .when(text && self.dialect.supports_column_charset(), |v| {
-                v.child(self.property_row(6, "charset", disabled, cx))
-            })
-            .when(numeric && !self.dialect.supports_identity(), |v| {
+            .when(
+                text && self.dialect.features().supports_column_charset,
+                |v| v.child(self.property_row(6, "charset", disabled, cx)),
+            )
+            .when(numeric && !self.dialect.features().supports_identity, |v| {
                 v.child(FormRow::bare(
                     Checkbox::new("designer-auto-increment")
                         .label(t!("designer.auto_increment").to_string())
@@ -215,7 +231,7 @@ impl TableDesigner {
                         })),
                 ))
             })
-            .when(numeric && self.dialect.supports_unsigned(), |v| {
+            .when(numeric && self.dialect.features().supports_unsigned, |v| {
                 v.child(FormRow::bare(
                     Checkbox::new("designer-unsigned")
                         .label(t!("designer.unsigned").to_string())
@@ -226,7 +242,7 @@ impl TableDesigner {
                         })),
                 ))
             })
-            .when(self.dialect.supports_zerofill() && numeric, |v| {
+            .when(self.dialect.features().supports_zerofill && numeric, |v| {
                 v.child(FormRow::bare(
                     Checkbox::new("designer-zerofill")
                         .label(t!("designer.zerofill").to_string())
@@ -238,13 +254,13 @@ impl TableDesigner {
                 ))
             })
             .when(
-                self.dialect.supports_on_update()
+                self.dialect.features().supports_on_update
                     && ["TIMESTAMP", "DATETIME"]
                         .iter()
                         .any(|ty| p.data_type.to_ascii_uppercase().contains(ty)),
                 |v| v.child(self.property_row(9, "on_update_expression", disabled, cx)),
             )
-            .when(self.dialect.supports_identity() && numeric, |v| {
+            .when(self.dialect.features().supports_identity && numeric, |v| {
                 v.child(self.property_row(10, "identity_mode", disabled || p.generated, cx))
             })
             .when(p.generated, |v| {
@@ -284,16 +300,17 @@ impl TableDesigner {
                             && entry.as_ref().is_some_and(|e| e.kind != EntryKind::Index))
                             && !(self.page == Page::ForeignKeys
                                 && ENTRY_KEYS[*ix] == "reference_schema"
-                                && !self.dialect.fk_reference_schema())
+                                && !self.dialect.features().fk_reference_schema)
                     })
                     .map(|ix| {
                         let key = ENTRY_KEYS[ix];
                         let control_disabled = disabled
-                            || (key == "comment" && !self.dialect.supports_index_comment())
-                            || (key == "method" && !self.dialect.supports_index_method())
+                            || (key == "comment"
+                                && !self.dialect.features().supports_index_comment)
+                            || (key == "method" && !self.dialect.features().supports_index_method)
                             || (key == "expression"
                                 && self.page == Page::Indexes
-                                && !self.dialect.supports_index_expression());
+                                && !self.dialect.features().supports_index_expression);
                         FormRow::new(
                             t!(format!("designer.{}", ENTRY_KEYS[ix])).to_string(),
                             h_flex()
@@ -311,19 +328,27 @@ impl TableDesigner {
                                         .flex_1(),
                                 )
                                 .when(
-                                    [1, 2, 7, 8].contains(&ix)
-                                        || (self.page == Page::ForeignKeys
-                                            && [4, 5, 6].contains(&ix)),
+                                    matches!(
+                                        ENTRY_KEYS[ix],
+                                        "fields" | "method" | "on_delete" | "on_update"
+                                    ) || (self.page == Page::ForeignKeys
+                                        && matches!(
+                                            ENTRY_KEYS[ix],
+                                            "reference_schema"
+                                                | "reference_table"
+                                                | "reference_fields"
+                                        )),
                                     |row| {
-                                        let values = match ix {
-                                            4..=6 => self.reference_values(ix, cx),
-                                            1 => self
+                                        let values = match ENTRY_KEYS[ix] {
+                                            "reference_schema" | "reference_table"
+                                            | "reference_fields" => self.reference_values(ix, cx),
+                                            "fields" => self
                                                 .draft
                                                 .columns
                                                 .iter()
                                                 .map(|c| c.name.clone())
                                                 .collect(),
-                                            2 => self
+                                            "method" => self
                                                 .dialect
                                                 .index_methods()
                                                 .iter()

@@ -17,6 +17,18 @@ pub enum ContextSelection {
     File,
 }
 
+/// The kind of constraint an `ALTER TABLE … DROP` targets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConstraintKind {
+    Primary,
+    ForeignKey,
+    Unique,
+    Check,
+    Index,
+    /// PostgreSQL `EXCLUDE` constraints, dropped like any other named constraint.
+    Exclude,
+}
+
 /// How a product writes the clauses that follow a table's column definitions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TableOptionStyle {
@@ -40,6 +52,138 @@ pub enum ExplainStyle {
     QueryPlanRows,
 }
 
+/// What a product can do, apart from the SQL it writes. Grouped rather than one trait method per
+/// flag: a reader sees the whole list at once, and a new dialect fills in one value.
+///
+/// `Default` describes a plain relational product (transactional DDL, standalone `CREATE INDEX`,
+/// column comments, `USING` methods, index expressions, schema-qualified foreign keys, virtual
+/// generated columns); a product that differs overrides those fields.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DialectFeatures {
+    /// A schema level sits between the database and its objects.
+    pub has_schemas: bool,
+    /// Selecting a table exposes an implicit `rowid` column.
+    pub exposes_rowid: bool,
+    /// Writes that match no primary key are limited to one row.
+    pub limit_unkeyed_writes: bool,
+    /// Unquoted identifiers fold to lower case.
+    pub folds_unquoted: bool,
+    /// `DROP INDEX name` works without an `ALTER TABLE`.
+    pub drop_index_by_name: bool,
+    /// `DROP TRIGGER name` works without an `ALTER TABLE`.
+    pub drop_trigger_by_name: bool,
+    /// The console prints a boxed table and errors without a numeric code.
+    pub console_boxed_tables: bool,
+    /// An error line carries the server's numeric code.
+    pub console_errors_have_code: bool,
+    /// `LIKE` works on numbers and dates after a `::text` cast.
+    pub like_text_cast: bool,
+    /// `UNLOGGED` tables.
+    pub supports_unlogged: bool,
+    /// `FIRST` / `AFTER` in a column definition.
+    pub supports_column_position: bool,
+    /// The column comment is a separate `COMMENT ON COLUMN` statement.
+    pub separate_comments: bool,
+    /// Indexes are their own `CREATE INDEX` statements, not clauses of `ALTER TABLE`.
+    pub standalone_indexes: bool,
+    /// `ZEROFILL` on numeric columns.
+    pub supports_zerofill: bool,
+    /// `ON UPDATE` on a temporal column.
+    pub supports_on_update: bool,
+    /// DDL rolls back with the transaction.
+    pub transactional_ddl: bool,
+    /// Dropping an index goes through `ALTER TABLE`.
+    pub drop_index_alters_table: bool,
+    /// `BEGIN IMMEDIATE` rather than `BEGIN` when applying DDL.
+    pub begin_immediate: bool,
+    /// One `CHANGE COLUMN` rewrites the name, type and position together.
+    pub rewrites_columns: bool,
+    /// Table options are clauses of one `ALTER TABLE` (engine, charset).
+    pub inline_table_options: bool,
+    /// Changing an existing table means rebuilding it.
+    pub rebuilds_tables: bool,
+    /// After `SHOW`/`pg_get` DDL, read owner, persistence and column metadata from the catalog.
+    pub enriches_from_catalog: bool,
+    /// `SHOW PROFILE`: run again with profiling and show the stage table.
+    pub supports_profile: bool,
+    /// Affected rows of an `UPDATE` count only rows whose value changed, so a no-op write would
+    /// look like a lost row.
+    pub counts_changed_rows: bool,
+    /// A session switches its current database with [`Dialect::prepare_database_sql`].
+    pub switches_database: bool,
+    /// Columns carry a comment at all.
+    pub supports_column_comments: bool,
+    /// The column comment is a clause of the column definition (MySQL `COMMENT '…'`).
+    pub column_comment_inline: bool,
+    /// `GENERATED … AS IDENTITY`, with `ALWAYS` / `BY DEFAULT`.
+    pub supports_identity: bool,
+    /// Text values reject `NUL`.
+    pub text_rejects_nul: bool,
+    /// `AUTOINCREMENT` only applies to `INTEGER PRIMARY KEY` columns.
+    pub autoincrement_needs_integer_key: bool,
+    /// `CREATE INDEX … COMMENT '…'`.
+    pub supports_index_comment: bool,
+    /// `ILIKE`, so the filter pane can offer case-insensitive contains.
+    pub case_insensitive_like: bool,
+    /// `GENERATED ALWAYS AS (…) VIRTUAL`; a product with only stored generated columns omits it.
+    pub supports_virtual_generated: bool,
+    /// Per-column `CHARACTER SET` / `COLLATE`.
+    pub supports_column_charset: bool,
+    /// `UNSIGNED` on numeric columns.
+    pub supports_unsigned: bool,
+    /// `CREATE INDEX … USING method`.
+    pub supports_index_method: bool,
+    /// Index entries may be expressions rather than column names.
+    pub supports_index_expression: bool,
+    /// A foreign key names a schema (or database) besides the table.
+    pub fk_reference_schema: bool,
+}
+
+impl Default for DialectFeatures {
+    fn default() -> Self {
+        Self {
+            has_schemas: false,
+            exposes_rowid: false,
+            limit_unkeyed_writes: false,
+            folds_unquoted: false,
+            drop_index_by_name: false,
+            drop_trigger_by_name: false,
+            console_boxed_tables: false,
+            console_errors_have_code: true,
+            like_text_cast: false,
+            supports_unlogged: false,
+            supports_column_position: false,
+            separate_comments: false,
+            standalone_indexes: true,
+            supports_zerofill: false,
+            supports_on_update: false,
+            transactional_ddl: true,
+            drop_index_alters_table: false,
+            begin_immediate: false,
+            rewrites_columns: false,
+            inline_table_options: false,
+            rebuilds_tables: false,
+            enriches_from_catalog: false,
+            supports_profile: false,
+            counts_changed_rows: false,
+            switches_database: false,
+            supports_column_comments: true,
+            column_comment_inline: false,
+            supports_identity: false,
+            text_rejects_nul: false,
+            autoincrement_needs_integer_key: false,
+            supports_index_comment: false,
+            case_insensitive_like: false,
+            supports_virtual_generated: true,
+            supports_column_charset: false,
+            supports_unsigned: false,
+            supports_index_method: true,
+            supports_index_expression: true,
+            fk_reference_schema: true,
+        }
+    }
+}
+
 /// One database product's SQL rules. Implementations live in the per-database crates.
 ///
 /// Feature code asks these methods; it must not compare [`Dialect::id`], which would lose the
@@ -56,7 +200,6 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
     fn begin_transaction(&self) -> &'static str;
     fn is_system_database(&self, name: &str) -> bool;
     fn is_system_schema(&self, name: &str) -> bool;
-    fn has_schemas(&self) -> bool;
     fn extra_keywords(&self) -> &'static [&'static str];
     fn extra_functions(&self) -> &'static [&'static str];
     fn rename_object(
@@ -76,6 +219,8 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
     ) -> Option<Vec<String>>;
     fn console_prompt(&self, database: &str, superuser: bool, continuation: bool) -> String;
     fn context_selection(&self) -> ContextSelection;
+    /// What this product can do. Prefer a field here over a new boolean method.
+    fn features(&self) -> DialectFeatures;
     /// Query that reads the session's current database, and for [`ContextSelection::Schema`]
     /// also the schema and `search_path`. `None` when the product has no such state.
     fn session_context_sql(&self) -> Option<&'static str> {
@@ -94,78 +239,13 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
         None
     }
 
-    fn exposes_rowid(&self) -> bool {
-        false
-    }
-    fn limit_unkeyed_writes(&self) -> bool {
-        false
-    }
-    fn folds_unquoted(&self) -> bool {
-        false
-    }
-    fn drops_index_by_name(&self) -> bool {
-        false
-    }
-    fn drops_trigger_by_name(&self) -> bool {
-        false
-    }
-    fn console_psql_grid(&self) -> bool {
-        false
-    }
-    fn like_text_cast(&self) -> bool {
-        false
-    }
-    fn like_backslash_escape(&self) -> bool {
-        false
-    }
-    fn supports_unlogged(&self) -> bool {
-        false
-    }
-    fn supports_column_position(&self) -> bool {
-        false
-    }
-    fn separate_comments(&self) -> bool {
-        false
-    }
-    /// Indexes are their own `CREATE INDEX` statements, not clauses of `ALTER TABLE`.
-    fn standalone_indexes(&self) -> bool {
-        true
-    }
-    fn supports_zerofill(&self) -> bool {
-        false
-    }
-    fn supports_on_update(&self) -> bool {
-        false
-    }
-    fn transactional_ddl(&self) -> bool {
-        true
-    }
     fn ident_quote(&self) -> char {
         '"'
     }
-    fn drop_index_alters_table(&self) -> bool {
-        false
-    }
-    /// `BEGIN IMMEDIATE` rather than `BEGIN` when applying DDL.
-    fn begin_immediate(&self) -> bool {
-        false
-    }
     /// MySQL drops constraints with `DROP PRIMARY KEY` / `DROP FOREIGN KEY` / `DROP INDEX`.
     /// `None` means this designer does not know a safe statement for that kind.
-    fn drop_constraint_clause(&self, _kind: &str, name: &str) -> Option<String> {
+    fn drop_constraint_clause(&self, _kind: ConstraintKind, name: &str) -> Option<String> {
         Some(format!("DROP CONSTRAINT {}", self.quote_ident(name)))
-    }
-    /// One `CHANGE COLUMN` rewrites the name, type and position together.
-    fn rewrites_columns(&self) -> bool {
-        false
-    }
-    /// Table options are clauses of one `ALTER TABLE` (engine, charset), not storage parameters.
-    fn inline_table_options(&self) -> bool {
-        false
-    }
-    /// Changing an existing table means rebuilding it.
-    fn rebuilds_tables(&self) -> bool {
-        false
     }
     /// Statement that locks the table for the duration of a structure change.
     fn exclusive_lock_sql(&self, _qualified: &str) -> Option<String> {
@@ -182,10 +262,6 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
     fn autoincrement_keyword(&self) -> &'static str {
         "AUTO_INCREMENT"
     }
-    /// After `SHOW`/`pg_get` DDL, read owner, persistence and column metadata from the catalog.
-    fn enriches_from_catalog(&self) -> bool {
-        false
-    }
 
     /// How the table designer's option form maps onto this product's `CREATE TABLE` tail.
     fn table_option_style(&self) -> TableOptionStyle;
@@ -199,61 +275,6 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
     }
     /// Which `EXPLAIN` form [`crate::Dialect`] consumers should use.
     fn explain_style(&self) -> ExplainStyle;
-    /// `SHOW PROFILE`: run again with profiling and show the stage table.
-    fn supports_profile(&self) -> bool {
-        false
-    }
-    /// Affected rows of an `UPDATE` count only rows whose value changed (MySQL), so a no-op
-    /// write would look like a lost row.
-    fn counts_changed_rows(&self) -> bool {
-        false
-    }
-    /// A session switches its current database with the statement from
-    /// [`prepare_database_sql`](Dialect::prepare_database_sql).
-    fn switches_database(&self) -> bool {
-        false
-    }
-    /// Columns carry a comment at all.
-    fn supports_column_comments(&self) -> bool {
-        true
-    }
-    /// The column comment is a clause of the column definition (MySQL `COMMENT '…'`) rather than
-    /// a separate `COMMENT ON` statement.
-    fn column_comment_inline(&self) -> bool {
-        false
-    }
-    /// `GENERATED … AS IDENTITY`, with `ALWAYS` / `BY DEFAULT`.
-    fn supports_identity(&self) -> bool {
-        false
-    }
-    /// Text values reject `NUL`; the designer validates comments before they reach the server.
-    fn text_rejects_nul(&self) -> bool {
-        false
-    }
-    /// `AUTOINCREMENT` only applies to `INTEGER PRIMARY KEY` columns.
-    fn autoincrement_needs_integer_key(&self) -> bool {
-        false
-    }
-    /// `CREATE INDEX … COMMENT '…'`.
-    fn supports_index_comment(&self) -> bool {
-        false
-    }
-    /// `ILIKE`, so the filter pane can offer case-insensitive contains.
-    fn case_insensitive_like(&self) -> bool {
-        false
-    }
-    /// `GENERATED ALWAYS AS (…) VIRTUAL`; a product with only stored generated columns omits it.
-    fn supports_virtual_generated(&self) -> bool {
-        true
-    }
-    /// Per-column `CHARACTER SET` / `COLLATE`.
-    fn supports_column_charset(&self) -> bool {
-        false
-    }
-    /// `UNSIGNED` on numeric columns.
-    fn supports_unsigned(&self) -> bool {
-        false
-    }
     /// Type name offered for binary data.
     fn binary_type(&self) -> &'static str {
         "BLOB"
@@ -261,18 +282,6 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
     /// `USING` methods offered for an index.
     fn index_methods(&self) -> &'static [&'static str] {
         &["BTREE", "HASH"]
-    }
-    /// `CREATE INDEX … USING method`.
-    fn supports_index_method(&self) -> bool {
-        true
-    }
-    /// Index entries may be expressions rather than column names.
-    fn supports_index_expression(&self) -> bool {
-        true
-    }
-    /// A foreign key names a schema (or database) besides the table.
-    fn fk_reference_schema(&self) -> bool {
-        true
     }
     /// Schema assumed when a scope names none, when the product has one.
     fn default_schema(&self) -> Option<&'static str> {
@@ -318,8 +327,8 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
             ObjectKind::View => "VIEW",
             ObjectKind::MaterializedView => "MATERIALIZED VIEW",
             ObjectKind::Event => "EVENT",
-            ObjectKind::Trigger if self.drops_trigger_by_name() => "TRIGGER",
-            ObjectKind::Index if self.drops_index_by_name() => "INDEX",
+            ObjectKind::Trigger if self.features().drop_trigger_by_name => "TRIGGER",
+            ObjectKind::Index if self.features().drop_index_by_name => "INDEX",
             ObjectKind::Sequence => "SEQUENCE",
             _ => return None,
         })
@@ -336,7 +345,7 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
         offset: u64,
         rowid: bool,
     ) -> String {
-        let list = if rowid && self.exposes_rowid() {
+        let list = if rowid && self.features().exposes_rowid {
             "*, rowid AS \"_rowid\""
         } else {
             "*"
@@ -370,7 +379,7 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
         has_primary_key: bool,
     ) -> Vec<String> {
         let target = self.qualified(scope, table);
-        let limit = if self.limit_unkeyed_writes() && !has_primary_key {
+        let limit = if self.features().limit_unkeyed_writes && !has_primary_key {
             " LIMIT 1"
         } else {
             ""
@@ -475,7 +484,7 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
             .next()
             .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
             && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-        let folds = self.folds_unquoted() && name.chars().any(|c| c.is_ascii_uppercase());
+        let folds = self.features().folds_unquoted && name.chars().any(|c| c.is_ascii_uppercase());
         if plain && !folds && !self.is_keyword(name) {
             name.to_string()
         } else {
@@ -484,7 +493,7 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
     }
 
     fn format_console_error(&self, code: Option<&str>, message: &str) -> String {
-        if self.console_psql_grid() {
+        if !self.features().console_errors_have_code {
             format!("ERROR:  {message}\n")
         } else if let Some(code) = code {
             format!("ERROR {code}: {message}\n")

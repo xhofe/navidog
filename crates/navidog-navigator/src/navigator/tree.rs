@@ -195,7 +195,7 @@ impl TreeBuilder<'_> {
         {
             return None;
         }
-        let children = if dialect.has_schemas() {
+        let children = if dialect.features().has_schemas {
             match self.catalog.schemas(conn, db) {
                 Some(Load::Ready(list)) => list
                     .iter()

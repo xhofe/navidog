@@ -152,7 +152,7 @@ pub(crate) fn complete(text: &str, offset: usize, src: &Sources) -> (Range<usize
             out.extend(tables_of(o));
             out.extend(o.schemas.iter().map(|s| Candidate {
                 label: s.clone(),
-                detail: if src.dialect.has_schemas() {
+                detail: if src.dialect.features().has_schemas {
                     t!("query.schema").to_string()
                 } else {
                     t!("query.database").to_string()
@@ -283,7 +283,7 @@ impl CompletionProvider for Provider {
         let outline = scope.as_ref().and_then(|s| cache.ready(s));
         let others = |name: &str| {
             let s = scope.as_ref()?;
-            let other = if dialect.has_schemas() {
+            let other = if dialect.features().has_schemas {
                 navidog_model::object::Scope::new(
                     s.connection.clone(),
                     s.database.clone(),
@@ -300,7 +300,7 @@ impl CompletionProvider for Provider {
             .filter(|s| s.applies_to(&driver))
             .map(|s| (s.name.clone(), s.code.clone()))
             .collect();
-        let current = if dialect.has_schemas() {
+        let current = if dialect.features().has_schemas {
             e.target.schema.clone()
         } else {
             e.target.database.clone()
@@ -521,9 +521,10 @@ mod tests {
         let none = |_: &str| None;
         let got = run("SELECT * FROM act|", &navidog_mysql::MysqlDialect, &none);
         assert_eq!(&got[..2], ["actor", "actor_info"]);
+        // A prefix that matches no keyword, function, snippet or column offers nothing.
         assert!(
             run(
-                "SELECT * FROM t WHERE first|",
+                "SELECT * FROM t WHERE zzz|",
                 &navidog_mysql::MysqlDialect,
                 &none
             )

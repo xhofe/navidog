@@ -261,7 +261,7 @@ impl Node {
                 Node::Connection(s.connection.clone()),
                 Node::Database(s.connection.clone(), s.database.clone()),
             ];
-            if s.schema.is_some() && dialect.is_some_and(|d| d.has_schemas()) {
+            if s.schema.is_some() && dialect.is_some_and(|d| d.features().has_schemas) {
                 v.push(Node::Schema(s.clone()));
             }
             v
@@ -569,7 +569,7 @@ impl NavigatorPanel {
                 if Sessions::global(cx)
                     .read(cx)
                     .dialect(c)
-                    .is_some_and(|d| d.has_schemas())
+                    .is_some_and(|d| d.features().has_schemas)
                 {
                     requirements.push(Requirement::Schemas {
                         connection: c.clone(),

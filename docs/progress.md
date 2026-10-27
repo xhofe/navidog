@@ -26,12 +26,12 @@
 | M11 AI 助手 | 未开始 | | | |
 | M12 同步（替代 Cloud） | 未开始 | | | |
 | M13 HTTP 隧道 | 未开始 | | | |
-| M14 其他数据库 | 未开始 | | db/ | 已实现的 MySQL/MariaDB、PostgreSQL、SQLite 各自一个 crate。新数据库加 crate 并在 session 注册，实现 `Dialect` 的能力方法即可，界面不再按产品名分支（`scripts/check-dialect-branches.sh` 检查） |
+| M14 其他数据库 | 未开始 | | db/ | 已实现的 MySQL/MariaDB、PostgreSQL、SQLite 各自一个 crate。接入一个新数据库：新建不依赖 GPUI 的 crate，实现 `Driver`（`info()`、`connect()`）；关系型再实现 `Relational`（八个目录/补全方法用 `relational_catalog!` 转发，漏实现是编译错误）和 `Dialect`（词法、引用、`features()` 与少量返回 SQL 的方法）；最后在 `navidog-session::init` 注册具体驱动。界面只读能力方法与 `DialectFeatures`，不按产品名分支（`scripts/check-dialect-branches.sh` 检查） |
 | M15 发布 | 部分 | `codex/macos-adhoc-signing` | 150-macos-distribution | 工作流、安装包、`latest.json`、应用内更新已在仓库里；无证书时免费临时签名与验签已接入并经本机验证。正式公证仍需证书与凭据（第 4 节），配置迁移（F-REL-004）未做 |
 
 ## 2. 当前里程碑：M4（表设计器）
 
-已实现的三种数据库拆成独立 crate：`navidog-mysql`（含 MariaDB）、`navidog-postgres`、`navidog-sqlite`。`Dialect` 是 trait，扫描器只看 `Lex`。目录和补全 SQL 在各会话实现里，`navidog-db` 只留结果集读取。表设计的语句差异是方言上的能力方法，执行顺序仍在 `navidog-schema`。连接表单读 `DriverInfo` 的多主机、超时、连接参数和 SSL 模式。界面按方言能力方法（`like_text_cast`、`standalone_indexes`、`table_option_style`、`explain_style` 等）和 `DriverInfo` 标志分支，没有按 `Dialect::id()` 的比较。相对拆分前有三处行为变化：没有方言时查询补全为空（以前回退到 MySQL 关键字）；未绑定连接的网格按输入的原文显示，不再加引号；表设计器标签在连接消失后显示缺失连接面板，未保存的草稿关闭前要确认。验证见第 5 节。
+已实现的三种数据库拆成独立 crate：`navidog-mysql`（含 MariaDB）、`navidog-postgres`、`navidog-sqlite`。`Dialect` 是 trait，扫描器只看 `Lex`。目录和补全 SQL 在各会话实现里；`navidog-db` 保留 `Driver`/`Session`/`Relational` 契约、连接与 SSH 编排、执行恢复和结果集读取。表设计的语句差异是方言上的能力方法，执行顺序仍在 `navidog-schema`。连接表单读 `DriverInfo` 的多主机、超时、连接参数和 SSL 模式。界面按方言能力方法（`like_text_cast`、`standalone_indexes`、`table_option_style`、`explain_style` 等）和 `DriverInfo` 标志分支，没有按 `Dialect::id()` 的比较。相对拆分前有三处行为变化：没有方言时查询补全为空（以前回退到 MySQL 关键字）；未绑定连接的网格按输入的原文显示，不再加引号；表设计器标签在连接消失后显示缺失连接面板，未保存的草稿关闭前要确认。验证见第 5 节。
 
 ### M3 收尾记录
 
@@ -296,7 +296,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 命令列界面分输出区和输入区，不支持 `\d`、`.tables` 等客户端命令 | M3 | 需要时加显示宽度表 |
 | 弹出窗口里的查询编辑器没有代码段和标识符页 | M3 | 无 |
 | MySQL 的“写入超时”仍只保存 | M3 | mysql_async 提供发送超时后接上 |
-| `Dialect` 有 85 个能力方法，尚未收进 `Features` 结构体；`drop_constraint_clause` 仍用字符串 kind；`navidog-schema` 的 `words`/`tokens` 两套切词；设计器的属性列仍按 `PROPERTY_IDS`/`ENTRY_KEYS` 下标定位。目录方法的默认实现仍是运行时错误，真实驱动用 `relational_catalog!` 转发 | 拆 crate | 接入第四个数据库前把布尔收进 `Features`、把约束 kind 改成枚举，并考虑拆 `Catalog` trait 让漏实现变成编译错误 |
+| `navidog-schema` 的表选项解析（`mysql_span`/`pg_storage`/`pg_clause`）仍在通用 crate 里，只按 `TableOptionStyle` 分派；关键字表是手抄的保留字集合，不是脚本从官方文件生成 | 拆 crate | 接第四个数据库时把选项解析搬进各方言 crate（会形成 schema → 方言 crate 的依赖，需要在 00-overview 里先定方向），并让关键字表由脚本生成 |
 
 ## 5. 验证
 

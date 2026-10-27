@@ -13,60 +13,13 @@ struct Token {
 /// belong to. The shared scanner decides where those end for this dialect.
 fn tokens(s: &str, d: &dyn Dialect) -> DbResult<Vec<Token>> {
     parse::fragment(s, d)?;
-    let mut protected = navidog_sql::span::spans(s, d.lex())
+    Ok(navidog_sql::span::segments(s, d.lex(), &['=', ','])
         .into_iter()
-        .filter(|span| span.kind.is_protected())
-        .map(|span| span.range)
-        .peekable();
-    let mut out = Vec::new();
-    let mut depth = 0u32;
-    let mut start: Option<usize> = None;
-    let mut i = 0;
-    while i < s.len() {
-        if let Some(range) = protected.peek()
-            && range.start == i
-        {
-            start.get_or_insert(i);
-            i = range.end;
-            protected.next();
-            continue;
-        }
-        let c = s[i..].chars().next().unwrap_or('\0');
-        if c.is_whitespace() && depth == 0 {
-            if let Some(from) = start.take() {
-                out.push(Token {
-                    start: from,
-                    end: i,
-                });
-            }
-        } else if depth == 0 && (c == '=' || c == ',') {
-            if let Some(from) = start.take() {
-                out.push(Token {
-                    start: from,
-                    end: i,
-                });
-            }
-            out.push(Token {
-                start: i,
-                end: i + 1,
-            });
-        } else {
-            start.get_or_insert(i);
-        }
-        match c {
-            '(' => depth += 1,
-            ')' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-        i += c.len_utf8();
-    }
-    if let Some(from) = start {
-        out.push(Token {
-            start: from,
-            end: s.len(),
-        });
-    }
-    Ok(out)
+        .map(|range| Token {
+            start: range.start,
+            end: range.end,
+        })
+        .collect())
 }
 
 fn text<'a>(s: &'a str, t: &Token) -> &'a str {
@@ -457,7 +410,7 @@ pub(super) fn option_alters(
     if old == new {
         return Ok(Vec::new());
     }
-    if d.inline_table_options() {
+    if d.features().inline_table_options {
         let charset_changed = table_option(old, "charset", d)? != table_option(new, "charset", d)?;
         let mut changes = Vec::new();
         let mut old_tail = old.to_string();

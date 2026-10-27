@@ -73,7 +73,7 @@ fn category_scope(cx: &App) -> Option<navidog_model::object::Scope> {
     let dialect = navidog_session::sessions::Sessions::global(cx)
         .read(cx)
         .dialect(&scope.connection)?;
-    (!dialect.has_schemas() || scope.schema.is_some()).then_some(scope)
+    (!dialect.features().has_schemas || scope.schema.is_some()).then_some(scope)
 }
 
 /// A category button is enabled when there is a scope and its dialect supports the category.

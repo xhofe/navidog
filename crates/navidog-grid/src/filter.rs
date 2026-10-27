@@ -119,7 +119,7 @@ impl Op {
             Self::Contains,
             Self::NotContains,
         ];
-        if dialect.case_insensitive_like() {
+        if dialect.features().case_insensitive_like {
             ops.push(Self::ContainsI);
             ops.push(Self::NotContainsI);
         }
@@ -299,7 +299,7 @@ fn predicate(rule: &Rule, dialect: &dyn Dialect) -> Option<String> {
     }
     let field = dialect.quote_ident(&rule.field);
     // PostgreSQL has no LIKE for numbers or dates; the cast makes "contains" work on any column
-    let text_field = if dialect.like_text_cast() {
+    let text_field = if dialect.features().like_text_cast {
         format!("{field}::text")
     } else {
         field.clone()
@@ -512,7 +512,7 @@ fn parse_pred(sql: &str, dialect: &dyn Dialect) -> Option<Rule> {
     let (field, rest) = parse_ident(sql.trim(), dialect)?;
     // The cast `predicate` writes before LIKE on PostgreSQL
     let rest = match rest.strip_prefix("::") {
-        Some(cast) if dialect.like_text_cast() => eat_kw(cast, "text")?,
+        Some(cast) if dialect.features().like_text_cast => eat_kw(cast, "text")?,
         _ => rest,
     };
     let rest = rest.trim_start();

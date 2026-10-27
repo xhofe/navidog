@@ -117,7 +117,7 @@ pub fn referenced_values_sql(
             .replace('%', "\\%")
             .replace('_', "\\_");
         // PostgreSQL has no LIKE for integers, and most foreign keys are integers.
-        let cast = if dialect.like_text_cast() {
+        let cast = if dialect.features().like_text_cast {
             "::text"
         } else {
             ""

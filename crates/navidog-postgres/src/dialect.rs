@@ -1,7 +1,9 @@
 //! PostgreSQL SQL dialect.
 
 use navidog_model::object::{ObjectKind, Scope};
-use navidog_sql::{ContextSelection, Dialect, ExplainStyle, Lex, TableOptionStyle};
+use navidog_sql::{
+    ContextSelection, Dialect, DialectFeatures, ExplainStyle, Lex, TableOptionStyle,
+};
 
 #[derive(Debug)]
 pub struct PostgresDialect;
@@ -45,29 +47,11 @@ impl Dialect for PostgresDialect {
     fn is_system_schema(&self, name: &str) -> bool {
         matches!(name, "pg_catalog" | "information_schema")
     }
-    fn has_schemas(&self) -> bool {
-        true
-    }
     fn extra_keywords(&self) -> &'static [&'static str] {
         crate::words::KEYWORDS
     }
     fn extra_functions(&self) -> &'static [&'static str] {
         crate::words::FUNCTIONS
-    }
-    fn folds_unquoted(&self) -> bool {
-        true
-    }
-    fn console_psql_grid(&self) -> bool {
-        true
-    }
-    fn like_text_cast(&self) -> bool {
-        true
-    }
-    fn supports_unlogged(&self) -> bool {
-        true
-    }
-    fn separate_comments(&self) -> bool {
-        true
     }
     fn generated_default_storage(&self) -> &'static str {
         "STORED"
@@ -81,11 +65,25 @@ impl Dialect for PostgresDialect {
             self.quote_ident(owner)
         ))
     }
-    fn enriches_from_catalog(&self) -> bool {
-        true
-    }
     fn context_selection(&self) -> ContextSelection {
         ContextSelection::Schema
+    }
+    fn features(&self) -> DialectFeatures {
+        DialectFeatures {
+            has_schemas: true,
+            folds_unquoted: true,
+            console_boxed_tables: true,
+            console_errors_have_code: false,
+            like_text_cast: true,
+            supports_unlogged: true,
+            separate_comments: true,
+            enriches_from_catalog: true,
+            supports_identity: true,
+            text_rejects_nul: true,
+            case_insensitive_like: true,
+            supports_virtual_generated: false,
+            ..DialectFeatures::default()
+        }
     }
     fn table_option_style(&self) -> TableOptionStyle {
         TableOptionStyle::StorageParameters
@@ -96,23 +94,11 @@ impl Dialect for PostgresDialect {
     fn explain_style(&self) -> ExplainStyle {
         ExplainStyle::JsonNodes
     }
-    fn supports_identity(&self) -> bool {
-        true
-    }
-    fn supports_virtual_generated(&self) -> bool {
-        false
-    }
-    fn case_insensitive_like(&self) -> bool {
-        true
-    }
     fn binary_type(&self) -> &'static str {
         "BYTEA"
     }
     fn index_methods(&self) -> &'static [&'static str] {
         &["BTREE", "HASH", "GIN", "GIST", "BRIN"]
-    }
-    fn text_rejects_nul(&self) -> bool {
-        true
     }
     fn default_schema(&self) -> Option<&'static str> {
         Some("public")

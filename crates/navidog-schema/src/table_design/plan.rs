@@ -1,5 +1,6 @@
 use super::parse::{ident, positions};
 use super::*;
+use navidog_sql::dialect::ConstraintKind;
 
 pub fn plan(
     d: &dyn Dialect,
@@ -31,7 +32,7 @@ pub(super) fn plan_on(
 ) -> DbResult<Vec<String>> {
     let mut after = after.clone();
     let mut before = before.cloned();
-    if d.separate_comments() {
+    if d.features().separate_comments {
         after.migrate_comments(scope, d)?;
         if let Some(old) = &mut before {
             old.design.migrate_comments(scope, d)?;
@@ -43,7 +44,7 @@ pub(super) fn plan_on(
     let Some(before) = before else {
         let mut out = vec![after.create_sql(d, scope, &after.name)?];
         out.extend(after.indexes.clone());
-        if d.separate_comments() {
+        if d.features().separate_comments {
             out.extend(comments::statements(scope, None, after, d));
         }
         if let Some(sql) = d.table_owner_sql(&d.qualified(scope, &after.name), &after.owner)
@@ -70,7 +71,7 @@ pub(super) fn plan_on(
     {
         return Err(DbError::msg("Unknown original column identity."));
     }
-    if d.rebuilds_tables() {
+    if d.features().rebuilds_tables {
         if old.columns == after.columns
             && old.constraints == after.constraints
             && old.options == after.options
@@ -107,7 +108,7 @@ pub(super) fn plan_on(
         .filter(|c| !after.constraints.contains(c))
     {
         let (kind, name) = constraint_name(constraint)?;
-        let drop = d.drop_constraint_clause(&kind, &name).ok_or_else(|| {
+        let drop = d.drop_constraint_clause(kind, &name).ok_or_else(|| {
             DbError::msg(
                 "Removing this constraint requires dialect-specific SQL; it has been preserved.",
             )
@@ -130,7 +131,7 @@ pub(super) fn plan_on(
             .original
             .as_ref()
             .and_then(|name| old.columns.iter().find(|c| &c.name == name));
-        let position = if d.supports_column_position() {
+        let position = if d.features().supports_column_position {
             if ix == 0 {
                 " FIRST".into()
             } else {
@@ -149,11 +150,11 @@ pub(super) fn plan_on(
                 let moved = old.columns.iter().position(|v| v.name == previous.name) != Some(ix);
                 if c.name == previous.name
                     && c.definition == previous.definition
-                    && (!moved || !d.supports_column_position())
+                    && (!moved || !d.features().supports_column_position)
                 {
                     continue;
                 }
-                if d.rewrites_columns() {
+                if d.features().rewrites_columns {
                     out.push(format!(
                         "ALTER TABLE {table} CHANGE COLUMN {} {} {}{position}",
                         d.quote_ident(&previous.name),
@@ -235,7 +236,7 @@ pub(super) fn plan_on(
         &old.options,
         &after.options,
     )?);
-    if d.supports_unlogged() && old.unlogged != after.unlogged {
+    if d.features().supports_unlogged && old.unlogged != after.unlogged {
         out.push(format!(
             "ALTER TABLE {table} SET {}",
             if after.unlogged { "UNLOGGED" } else { "LOGGED" }
@@ -243,7 +244,7 @@ pub(super) fn plan_on(
     }
     for s in old.indexes.iter().filter(|s| !after.indexes.contains(s)) {
         let name = index_name(s)?;
-        if d.drop_index_alters_table() {
+        if d.features().drop_index_alters_table {
             out.push(format!(
                 "ALTER TABLE {table} DROP INDEX {}",
                 d.quote_ident(&name)
@@ -252,7 +253,7 @@ pub(super) fn plan_on(
         }
         out.push(format!(
             "DROP INDEX {}{}",
-            if d.has_schemas() {
+            if d.features().has_schemas {
                 format!(
                     "{}.",
                     d.quote_ident(
@@ -276,7 +277,7 @@ pub(super) fn plan_on(
             .filter(|s| !old.indexes.contains(s))
             .cloned(),
     );
-    if d.separate_comments() {
+    if d.features().separate_comments {
         out.extend(comments::statements(scope, Some(old), after, d));
     }
     if old.owner != after.owner
@@ -290,16 +291,25 @@ pub(super) fn plan_on(
     Ok(out)
 }
 
-fn constraint_name(sql: &str) -> DbResult<(String, String)> {
+/// The constraint's kind and name, from its `CREATE TABLE` clause text.
+fn constraint_name(sql: &str) -> DbResult<(ConstraintKind, String)> {
     let (first, rest) = ident(sql)?;
     let first = first.to_uppercase();
     if first == "PRIMARY" {
-        return Ok(("PRIMARY".into(), "PRIMARY".into()));
+        return Ok((ConstraintKind::Primary, "PRIMARY".into()));
     }
     if first == "CONSTRAINT" {
         let (name, rest) = ident(rest)?;
         let (kind, _) = ident(rest)?;
-        return Ok((kind.to_uppercase(), name));
+        let kind = match kind.to_uppercase().as_str() {
+            "PRIMARY" => ConstraintKind::Primary,
+            "FOREIGN" => ConstraintKind::ForeignKey,
+            "UNIQUE" => ConstraintKind::Unique,
+            "CHECK" => ConstraintKind::Check,
+            "EXCLUDE" => ConstraintKind::Exclude,
+            _ => return Err(DbError::msg("Cannot identify this constraint safely.")),
+        };
+        return Ok((kind, name));
     }
     let rest = if matches!(first.as_str(), "UNIQUE" | "FULLTEXT" | "SPATIAL") {
         let (key, rest) = ident(rest)?;
@@ -312,7 +322,7 @@ fn constraint_name(sql: &str) -> DbResult<(String, String)> {
     } else {
         return Err(DbError::msg("Cannot identify this constraint safely."));
     };
-    Ok(("INDEX".into(), ident(rest)?.0))
+    Ok((ConstraintKind::Index, ident(rest)?.0))
 }
 pub(super) fn index_name(sql: &str) -> DbResult<String> {
     let (_, rest) = ident(sql)?;

@@ -140,7 +140,7 @@ impl QueryEditor {
             .as_ref()
             .and_then(|id| store.read(cx).get(id))
             .map(|c| c.name.clone());
-        let pg = self.dialect(cx).is_some_and(|d| d.has_schemas());
+        let pg = self.dialect(cx).is_some_and(|d| d.features().has_schemas);
         let selected = self.has_selection(cx);
         let show_results = Settings::global(cx).results_position == ResultsPosition::NewPage
             && !self.results_page

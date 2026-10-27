@@ -359,7 +359,7 @@ impl ObjectsPanel {
                 _ => Content::Empty,
             },
             Selection::Database(c, d) => match sessions.dialect(c) {
-                Some(dialect) if dialect.has_schemas() => match catalog.schemas(c, d) {
+                Some(dialect) if dialect.features().has_schemas => match catalog.schemas(c, d) {
                     Some(Load::Ready(list)) => Content::Rows(
                         list.iter()
                             .map(|s| {
@@ -495,15 +495,18 @@ impl ObjectsPanel {
                             window.dispatch_action(Box::new(EmptyTables), cx)
                         }),
                 )
-                .when(dialect.as_ref().is_none_or(|d| !d.exposes_rowid()), |bar| {
-                    bar.child(
-                        button("obj-truncate", "scissors", t!("obj.truncate").to_string())
-                            .disabled(selected.is_none())
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(TruncateTables), cx)
-                            }),
-                    )
-                })
+                .when(
+                    dialect.as_ref().is_none_or(|d| !d.features().exposes_rowid),
+                    |bar| {
+                        bar.child(
+                            button("obj-truncate", "scissors", t!("obj.truncate").to_string())
+                                .disabled(selected.is_none())
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(TruncateTables), cx)
+                                }),
+                        )
+                    },
+                )
             })
             .child(div().flex_1())
             .when_some(kind.filter(|_| view == ViewMode::Detail), |bar, kind| {

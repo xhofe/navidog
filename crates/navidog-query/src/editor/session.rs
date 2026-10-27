@@ -152,7 +152,7 @@ impl QueryEditor {
         else {
             return;
         };
-        if !self.dialect(cx).is_some_and(|d| d.has_schemas()) {
+        if !self.dialect(cx).is_some_and(|d| d.features().has_schemas) {
             return;
         }
         let Some(job) = Sessions::global(cx)

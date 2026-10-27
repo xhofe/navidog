@@ -97,7 +97,7 @@ pub(crate) fn format_result(
                     .iter()
                     .map(|c| type_kind(&c.type_name) == TypeKind::Number)
                     .collect();
-                if dialect.console_psql_grid() {
+                if dialect.features().console_boxed_tables {
                     out.push_str(&fmt::psql_table(&names, &set.rows, &numeric));
                     out.push_str(&fmt::psql_rows_footer(set.rows.len()));
                 } else {
@@ -402,10 +402,12 @@ impl Console {
             self.close_tab(cx);
             return true;
         }
-        let Some(dialect) = self.dialect.as_deref() else {
-            return true;
-        };
-        if dialect.lex().delimiter_command
+        // Without a stored dialect (a restored tab whose connection is not open yet) the flow
+        // still runs: it reaches the "not connected" message below instead of swallowing Enter.
+        if self
+            .dialect
+            .as_deref()
+            .is_some_and(|d| d.lex().delimiter_command)
             && let Some(rest) = navidog_util::sql_text::strip_keyword(trimmed, "DELIMITER")
         {
             let next = rest.trim();
