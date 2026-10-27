@@ -12,7 +12,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, SharedString,
-    Subscription, Task, WeakEntity, Window, prelude::*,
+    Subscription, Task, WeakEntity, Window, div, prelude::*,
 };
 use grid::DesignerGrid;
 use navidog_app_state::actions::TableStructureChanged;
@@ -83,8 +83,89 @@ pub(crate) fn init(cx: &mut App) {
             baseline: None,
             property_height: None,
         });
+        // A layout can still name a connection that was deleted. Restoring that panel must
+        // not panic; the draft stays in the dumped state until the tab is closed.
+        if connection_dialect(cx, &saved.scope.connection).is_none() {
+            return panel_handle(MissingConnection::open(ctx.state().clone(), cx));
+        }
         panel_handle(TableDesigner::restore(saved, window, cx))
     });
+}
+
+/// Shown when a saved table-design tab outlives its connection.
+struct MissingConnection {
+    focus: FocusHandle,
+    state: PanelState,
+}
+
+impl MissingConnection {
+    fn open(state: PanelState, cx: &mut App) -> Entity<Self> {
+        cx.new(|cx| Self {
+            focus: cx.focus_handle().tab_stop(true),
+            state,
+        })
+    }
+}
+
+impl EventEmitter<PanelEvent> for MissingConnection {}
+impl Focusable for MissingConnection {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+impl BasePanel for MissingConnection {
+    fn panel_name(&self) -> &'static str {
+        PANEL
+    }
+    fn closable(&self, _: &App) -> bool {
+        true
+    }
+    fn dump(&self, _: &App) -> PanelState {
+        self.state.clone()
+    }
+    fn on_added_to(&mut self, group: WeakEntity<TabGroup>, _: &mut Window, cx: &mut Context<Self>) {
+        tabs::added(PanelId::from(cx.entity_id()), group, cx);
+    }
+    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
+        tabs::set_active(PanelId::from(cx.entity_id()), active, cx);
+    }
+    fn on_removed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        tabs::removed(PanelId::from(cx.entity_id()), cx);
+    }
+}
+impl Panel for MissingConnection {
+    fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tabs::title(
+            PanelId::from(cx.entity_id()),
+            Some(lucide("table")),
+            t!("designer.missing_connection").to_string(),
+            None,
+            false,
+        )
+    }
+}
+impl Render for MissingConnection {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .p_4()
+            .text_color(palette(cx).label)
+            .child(t!("designer.missing_connection").to_string())
+    }
+}
+
+fn connection_dialect(cx: &App, connection: &str) -> Option<Arc<dyn Dialect>> {
+    Sessions::global(cx)
+        .read(cx)
+        .dialect(connection)
+        .or_else(|| {
+            let driver = navidog_app_state::store::ConnectionStore::global(cx)
+                .read(cx)
+                .get(connection)?
+                .driver
+                .clone();
+            navidog_session::DriverRegistry::dialect(cx, &driver)
+        })
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Saved {
@@ -259,17 +340,7 @@ impl TableDesigner {
     }
     fn restore(mut saved: Saved, window: &mut Window, cx: &mut App) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
-            let dialect = Sessions::global(cx)
-                .read(cx)
-                .dialect(&saved.scope.connection)
-                .or_else(|| {
-                    let driver = navidog_app_state::store::ConnectionStore::global(cx)
-                        .read(cx)
-                        .get(&saved.scope.connection)?
-                        .driver
-                        .clone();
-                    navidog_session::DriverRegistry::dialect(cx, &driver)
-                })
+            let dialect = connection_dialect(cx, &saved.scope.connection)
                 .expect("the connection's driver is registered");
             let migration_error = if dialect.id() == "postgres" {
                 saved

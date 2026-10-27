@@ -3,6 +3,9 @@ designer:
   title:
     en: Table design
     zh-CN: 表设计器
+  missing_connection:
+    en: This connection is no longer available.
+    zh-CN: 此连接已不存在。
   untitled:
     en: New table
     zh-CN: 新建表

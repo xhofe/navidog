@@ -379,17 +379,13 @@ impl ResultView {
                 let result = run_on(session.clone(), move |rel| {
                     Box::pin(async move {
                         if owned && let Some(dialect) = info.dialect.as_ref() {
-                            if let Some(sql) = info
-                                .database
-                                .as_ref()
-                                .and_then(|database| dialect.prepare_database_sql(database))
-                            {
-                                rel.execute(&sql).await?;
-                            }
-                            if let Some(path) = info.search_path.clone().or(info.schema.clone())
-                                && let Some(sql) = dialect.set_search_path_sql(&path)
-                            {
-                                rel.execute(&sql).await?;
+                            for statement in crate::run::owned_context_sql(
+                                dialect.as_ref(),
+                                info.database.as_deref(),
+                                info.search_path.as_deref(),
+                                info.schema.as_deref(),
+                            ) {
+                                rel.execute(&statement).await?;
                             }
                         }
                         rel.execute_statement(&sql).await

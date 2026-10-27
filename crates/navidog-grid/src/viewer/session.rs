@@ -113,8 +113,16 @@ impl TableViewer {
                     )
                 });
             }
-            Ok(Err(e)) => self.view.status = error_message(&e).into(),
-            Err(e) => self.view.status = e.to_string().into(),
+            Ok(Err(e)) => {
+                // `connect` set `busy`, and `reload` returns immediately when the dialect was
+                // never stored. Clear it here or the grid stays locked.
+                self.set_busy(false, cx);
+                self.view.status = error_message(&e).into();
+            }
+            Err(e) => {
+                self.set_busy(false, cx);
+                self.view.status = e.to_string().into();
+            }
         }
         self.session = Some(shared);
         self.cancel = cancel;

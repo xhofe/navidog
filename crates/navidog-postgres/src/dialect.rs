@@ -101,6 +101,12 @@ impl Dialect for PostgresDialect {
     fn set_search_path_sql(&self, schema: &str) -> Option<String> {
         Some(format!("SET search_path TO {}", self.quote_ident(schema)))
     }
+    fn restore_search_path_sql(&self, path: &str) -> Option<String> {
+        Some(format!(
+            "SELECT pg_catalog.set_config('search_path', {}, false)",
+            self.string_literal(path)
+        ))
+    }
     fn console_prompt(&self, database: &str, superuser: bool, continuation: bool) -> String {
         let mark = if superuser { '#' } else { '>' };
         format!("{database}{}{mark}", if continuation { '-' } else { '=' })

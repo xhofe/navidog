@@ -518,10 +518,9 @@ impl QueryEditor {
                 (None, None) => unreachable!("no session and nothing opening one"),
             };
             if let Some(name) = want.filter(|w| Some(w) != used.as_ref()) {
-                let sql = dialect
-                    .prepare_database_sql(&name)
-                    .or_else(|| dialect.set_search_path_sql(&name))
-                    .unwrap_or_else(|| search_path(dialect.as_ref(), &name));
+                // A picked PostgreSQL schema keeps `public` on the path. `set_search_path_sql`
+                // names only that schema, so the toolbar uses `search_path` instead.
+                let sql = toolbar_context_sql(dialect.as_ref(), &name);
                 run_on(session.clone(), move |rel| {
                     Box::pin(async move { rel.execute(&sql).await })
                 })
@@ -642,6 +641,43 @@ impl QueryEditor {
         });
         cx.notify();
     }
+}
+
+/// Setup SQL for the toolbar's database or schema picker.
+pub(crate) fn toolbar_context_sql(dialect: &dyn Dialect, name: &str) -> String {
+    if dialect.context_selection() == navidog_db::dialect::ContextSelection::Schema {
+        search_path(dialect, name)
+    } else {
+        dialect
+            .prepare_database_sql(name)
+            .unwrap_or_else(|| search_path(dialect, name))
+    }
+}
+
+/// Statements that put a fresh session back where an edited result was produced.
+/// A recorded `search_path` is restored as a setting, not as one quoted identifier.
+pub(crate) fn owned_context_sql(
+    dialect: &dyn Dialect,
+    database: Option<&str>,
+    search_path_setting: Option<&str>,
+    schema: Option<&str>,
+) -> Vec<String> {
+    let mut sql = Vec::new();
+    if let Some(database) = database
+        && let Some(statement) = dialect.prepare_database_sql(database)
+    {
+        sql.push(statement);
+    }
+    if let Some(path) = search_path_setting
+        && let Some(statement) = dialect.restore_search_path_sql(path)
+    {
+        sql.push(statement);
+    } else if let Some(schema) = schema
+        && dialect.context_selection() == navidog_db::dialect::ContextSelection::Schema
+    {
+        sql.push(search_path(dialect, schema));
+    }
+    sql
 }
 
 /// `SET search_path` for a picked schema; `public` stays on it so extensions installed there keep
@@ -876,6 +912,37 @@ mod tests {
         assert_eq!(
             search_path(&navidog_postgres::PostgresDialect, "inventory"),
             "SET search_path TO \"inventory\", \"public\""
+        );
+        assert_eq!(
+            toolbar_context_sql(&navidog_postgres::PostgresDialect, "inventory"),
+            "SET search_path TO \"inventory\", \"public\""
+        );
+        assert_eq!(
+            toolbar_context_sql(&navidog_mysql::MysqlDialect, "sakila"),
+            "USE `sakila`"
+        );
+        let reload = owned_context_sql(
+            &navidog_postgres::PostgresDialect,
+            Some("pagila"),
+            Some("inventory, public"),
+            Some("inventory"),
+        );
+        assert_eq!(
+            reload,
+            vec![
+                "SELECT pg_catalog.set_config('search_path', 'inventory, public', false)"
+                    .to_string()
+            ]
+        );
+        let schema_only = owned_context_sql(
+            &navidog_postgres::PostgresDialect,
+            None,
+            None,
+            Some("inventory"),
+        );
+        assert_eq!(
+            schema_only,
+            vec!["SET search_path TO \"inventory\", \"public\"".to_string()]
         );
     }
 

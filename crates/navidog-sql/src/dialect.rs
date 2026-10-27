@@ -59,6 +59,12 @@ pub trait Dialect: Send + Sync {
     fn set_search_path_sql(&self, _schema: &str) -> Option<String> {
         None
     }
+    /// Put back a recorded `search_path` setting, which may be a comma-separated list.
+    /// [`set_search_path_sql`](Dialect::set_search_path_sql) quotes one schema name and would
+    /// treat that list as a single identifier.
+    fn restore_search_path_sql(&self, _path: &str) -> Option<String> {
+        None
+    }
 
     fn exposes_rowid(&self) -> bool {
         false

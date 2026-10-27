@@ -939,11 +939,13 @@ fn refit_auto(d: &mut GridDelegate, cx: &App) {
             continue;
         }
         let texts: Vec<gpui_kit::SharedString> = (0..rows)
-            .map(|r| {
-                dialect
-                    .as_deref()
-                    .map(|dialect| cell_text(&d.model, r, c, raw, dialect))
-                    .unwrap_or_default()
+            .map(|r| match dialect.as_deref() {
+                Some(dialect) => cell_text(&d.model, r, c, raw, dialect),
+                None => match d.model.value(r, c) {
+                    Some(Some(text)) => text.clone(),
+                    Some(None) => "(NULL)".into(),
+                    None => gpui_kit::SharedString::default(),
+                },
             })
             .collect();
         auto.insert(
