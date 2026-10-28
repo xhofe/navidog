@@ -202,7 +202,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 功能 | 状态 | 验证 | 说明 |
 | --- | --- | --- | --- |
 | F-QRY-001 查询编辑器 | 完成 | query editor 测试、snapshot | 行号、折叠、括号高亮、自动换行、缩放；编辑器偏好即时生效。不自动补右括号 |
-| F-QRY-002 代码补全 | 完成 | completion 单元测试（含 `a_completed_word_gains_a_space_and_a_snippet_keeps_its_text`）、sqlite 测试、live 测试、outline 单元测试、`a_column_name_uses_the_property_color` | `.` 之后按数据库、表、别名给出候选；前缀、连续包含、跨字符三档排序（`mocfg` → `mount_cfgs`），命中的字符涂蓝；插入的词末尾加一个空格，代码段按原文插入。字段名记到主题的 `property` 色。Tab 确认、Esc 打开；补全信息在连接目录的 `.outline/`。排序在 `navidog-sql`，筛选文本、命令列、代码段编辑框和表设计器共用。补全浮层没有图标（偏差） |
+| F-QRY-002 代码补全 | 完成 | completion 单元测试（含 `a_completed_word_gains_a_space_and_a_snippet_keeps_its_text`、`a_completion_replaces_the_whole_identifier_and_keeps_space_outside_quotes`）、sqlite 测试、live 测试、outline 单元测试、`a_column_name_uses_the_property_color` | `.` 之后按数据库、表、别名给出候选；前缀、连续包含、跨字符三档排序（`mocfg` → `mount_cfgs`），命中的字符涂蓝；替换整个标识符，词末尾加一个空格，已有引号不套第二层，代码段按原文插入。字段名记到主题的 `property` 色，子句片段里的标识符同样。Tab 确认、Esc 打开；补全信息在连接目录的 `.outline/`。排序在 `navidog-sql`，筛选文本、命令列、代码段编辑框和表设计器共用。补全浮层没有图标（偏差） |
 | F-QRY-003 查找与替换 | 完成 | find 单元测试、query editor 测试 | 模式下拉里有正则表达式、大小写符合、整个字；递增搜索始终开着，到末尾不回绕。查找框回车是下一个，替换框回车是替换当前并跳到下一个 |
 | F-QRY-004 SQL 格式 | 完成 | sql_format 单元测试、query editor 测试 | 缩排、注释、大小写、美化 SQL（sqlformat，记号序列不变）、简化 SQL，每条命令一步撤销 |
 | F-QRY-005 剪贴板堆栈 | 完成 | format 单元测试、query editor 测试 | 10 项，⇧⌘V 连按依次替换 |
@@ -219,7 +219,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | F-INFO-006 标识符 | 完成 | info 测试 | 双击或拖动插入名称 |
 | F-APP-016 自动恢复 | 完成 | recovery 单元测试、query editor 测试 | 正常退出不询问（偏差） |
 | F-APP-017 日志文件（SQL 日志） | 完成 | log 单元测试 | QueryExec.log 每次启动清空 |
-| F-PREF-004 编辑器 | 完成 | theme 单元测试、目测 | 语法颜色按外观分开保存 |
+| F-PREF-004 编辑器 | 完成 | theme 单元测试（含 `syntax_colors_override_the_theme` 的字段色）、目测 | 语法颜色按外观分开保存，含字段色 |
 | F-PREF-006 代码补全 | 完成 | 目测 | |
 | F-PREF-008 自动恢复 | 完成 | 目测 | |
 | F-PREF-010 高级（日志选项） | 完成 | 目测 | 应用日志的位置和级别下次启动生效 |
