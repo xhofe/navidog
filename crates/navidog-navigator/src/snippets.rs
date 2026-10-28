@@ -4,6 +4,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use anyhow::Result;
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{
     CompletionProvider, Editor, EditorState, Input, InputState, Rope, RopeExt as _,
@@ -12,9 +13,10 @@ use gpui_kit::component::native_menu::NativeMenu;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, AppContext as _, ClickEvent, Context, Entity, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, div, px,
+    AnyElement, App, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Global,
+    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Render,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, deferred,
+    div, px,
 };
 use lsp_types::{
     CompletionContext, CompletionItem, CompletionResponse, CompletionTextEdit, TextEdit,
@@ -498,12 +500,97 @@ pub(crate) fn open_editor(
             id: s.id.clone(),
         }
     });
-    window.open_dialog(cx, move |dialog, window, _| {
-        dialog
-            .w(tokens::snippet::POPOVER_WIDTH.to_pixels(window.rem_size()))
-            .close_button(false)
-            .child(view.clone())
+    let previous = window.focused(cx);
+    let form = SnippetForm::global(cx);
+    form.update(cx, |form, cx| {
+        form.editor = Some(view.clone());
+        form.previous = previous;
+        cx.notify();
     });
+    view.update(cx, |editor, cx| {
+        editor.name.update(cx, |name, cx| name.focus(window, cx));
+    });
+}
+
+pub struct SnippetForm {
+    editor: Option<Entity<SnippetEditor>>,
+    previous: Option<FocusHandle>,
+}
+
+struct GlobalSnippetForm(Entity<SnippetForm>);
+impl Global for GlobalSnippetForm {}
+
+impl SnippetForm {
+    fn global(cx: &App) -> Entity<Self> {
+        cx.global::<GlobalSnippetForm>().0.clone()
+    }
+}
+
+pub(crate) fn init(cx: &mut App) {
+    let entity = cx.new(|_| SnippetForm {
+        editor: None,
+        previous: None,
+    });
+    cx.set_global(GlobalSnippetForm(entity));
+}
+
+fn dismiss_form(window: &mut Window, cx: &mut App) {
+    let previous = SnippetForm::global(cx).update(cx, |form, cx| {
+        form.editor = None;
+        cx.notify();
+        form.previous.take()
+    });
+    if let Some(handle) = previous {
+        window.focus(&handle, cx);
+    }
+}
+
+/// The snippet editor sits in the main window, not in a dialog. A dialog is a
+/// deferred layer above the completion menu, so the menu would paint behind it.
+pub fn snippet_form_entity(cx: &App) -> Entity<SnippetForm> {
+    SnippetForm::global(cx)
+}
+
+pub fn snippet_form(cx: &App) -> AnyElement {
+    let Some(editor) = SnippetForm::global(cx).read(cx).editor.clone() else {
+        return div().into_any_element();
+    };
+    let p = palette(cx);
+    deferred(
+        div()
+            .id("snippet-form")
+            .absolute()
+            .inset_0()
+            .occlude()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().overlay)
+            .on_mouse_down(MouseButton::Left, |_, window, cx| dismiss_form(window, cx))
+            .on_key_down(|event: &KeyDownEvent, window, cx| {
+                if event.keystroke.key == "escape" {
+                    dismiss_form(window, cx);
+                    cx.stop_propagation();
+                }
+            })
+            .child(
+                v_flex()
+                    .id("snippet-form-card")
+                    .occlude()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .w(tokens::snippet::POPOVER_WIDTH.rems())
+                    .max_h_full()
+                    .overflow_hidden()
+                    .bg(p.window_bg)
+                    .border_1()
+                    .border_color(p.separator)
+                    .rounded(cx.theme().radius_lg)
+                    .p_3()
+                    .child(editor),
+            ),
+    )
+    .priority(0)
+    .into_any_element()
 }
 
 struct SnippetEditor {
@@ -552,7 +639,7 @@ impl SnippetEditor {
             preset: false,
         };
         Snippets::global(cx).update(cx, |s, cx| s.upsert(snippet, cx));
-        window.close_dialog(cx);
+        dismiss_form(window, cx);
     }
 
     fn rewrite_code(
@@ -667,7 +754,7 @@ impl Render for SnippetEditor {
                         Button::new("snippet-cancel")
                             .small()
                             .label(t!("snippet.cancel").to_string())
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                            .on_click(|_, window, cx| dismiss_form(window, cx)),
                     )
                     .child(
                         Button::new("snippet-save")
@@ -742,6 +829,7 @@ impl CompletionProvider for SnippetProvider {
                 snippets: &snippets,
                 in_scope: &[],
                 extras: &[],
+                keywords: completion::Keywords::All,
             },
         );
         let lsp_range = lsp_types::Range {

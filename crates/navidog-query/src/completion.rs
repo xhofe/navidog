@@ -136,6 +136,7 @@ pub(crate) fn response(req: &Request<'_>, cx: &App) -> CompletionResponse {
             snippets,
             in_scope,
             extras,
+            keywords: navidog_sql::completion::Keywords::All,
         },
     );
     let lsp_range = lsp_types::Range {

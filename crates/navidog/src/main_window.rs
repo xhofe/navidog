@@ -171,6 +171,9 @@ impl MainWindow {
             cx.observe(&Favorites::global(cx), |_, _, cx| {
                 crate::menus::set_menus(cx)
             }),
+            cx.observe(&navidog_navigator::snippet_form_entity(cx), |_, _, cx| {
+                cx.notify()
+            }),
             cx.subscribe_in(
                 &Sessions::global(cx),
                 window,
@@ -668,6 +671,7 @@ impl Render for MainWindow {
         let status = navidog_navigator::status_text(cx);
         let root = v_flex()
             .id("main-window")
+            .relative()
             .key_context("MainWindow")
             .track_focus(&self.focus_handle)
             .size_full()
@@ -933,5 +937,6 @@ impl Render for MainWindow {
                     .left(status),
             )
         })
+        .child(navidog_navigator::snippet_form(cx))
     }
 }

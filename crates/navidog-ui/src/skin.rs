@@ -1,19 +1,32 @@
 //! Skin components with the AppKit look. Behavior comes from GPUI elements and gpui-component
 //! components; these only handle appearance and sizing.
 
+use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::{Editor, EditorState};
 use gpui_kit::component::skeleton::Skeleton;
 use gpui_kit::component::{Icon, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, ElementId, FontWeight, Hsla, InteractiveElement as _, IntoElement,
-    ParentElement, Rems, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled, Window,
-    div, relative,
+    AnyElement, App, ClickEvent, ElementId, Entity, FontWeight, Hsla, InteractiveElement as _,
+    IntoElement, ParentElement, Rems, RenderOnce, SharedString, StatefulInteractiveElement as _,
+    Styled, Window, div, relative,
 };
 
 use crate::tokens::{self, palette};
 
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+
+/// A SQL editor that should look like `Input::small`. The code editor's own line
+/// is 1.5× the mono font plus padding, which is taller than that control: the
+/// glyphs clip and a scrollbar appears. A line height of 1 fits one row inside.
+pub fn single_line_sql(state: &Entity<EditorState>) -> Editor {
+    Editor::new(state)
+        .small()
+        .h(tokens::find::CONTROL_HEIGHT.rems())
+        .line_height(relative(1.))
+        .overflow_hidden()
+}
 
 /// Single-line text as Navicat shows it: never wraps, overflow ends in an ellipsis, and the full
 /// text appears on hover. Use it for every label whose content comes from data or user input.

@@ -76,11 +76,11 @@ impl Line {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SqlMode {
-    /// Draft columns, keywords and built-in functions.
+    /// Draft columns, clause keywords (`AND`, `OR`, …) and built-in functions.
     Expression,
-    /// [`SqlMode::Expression`] plus the dialect's type names.
+    /// [`SqlMode::Expression`]'s columns, plus the full keyword list and type names.
     Definition,
-    /// [`SqlMode::Expression`] plus an already loaded outline.
+    /// [`SqlMode::Definition`] without type names, plus an already loaded outline.
     Catalog,
 }
 
@@ -290,6 +290,11 @@ impl CompletionProvider for DesignerProvider {
         };
         let raw = text.to_string();
         let (from, window_text) = completion::window(&raw, offset);
+        let keywords = if self.mode == SqlMode::Expression {
+            completion::Keywords::Clause
+        } else {
+            completion::Keywords::All
+        };
         let (range, list) = completion::complete(
             &window_text,
             offset - from,
@@ -301,6 +306,7 @@ impl CompletionProvider for DesignerProvider {
                 snippets: &[],
                 in_scope: &in_scope,
                 extras: &extras,
+                keywords,
             },
         );
         let lsp_range = lsp_types::Range {
@@ -474,9 +480,40 @@ mod tests {
                 snippets: &[],
                 in_scope: &in_scope,
                 extras: &[],
+                keywords: completion::Keywords::Clause,
             },
         );
         assert!(hits.iter().any(|h| h.label == "display_name"), "{hits:?}");
+        let (_, hits) = completion::complete(
+            "AN",
+            2,
+            &Sources {
+                dialect: &dialect,
+                current: None,
+                catalog: None,
+                others: &|_| None,
+                snippets: &[],
+                in_scope: &in_scope,
+                extras: &[],
+                keywords: completion::Keywords::Clause,
+            },
+        );
+        assert!(hits.iter().any(|h| h.label == "AND"), "{hits:?}");
+        let (_, hits) = completion::complete(
+            "SEL",
+            3,
+            &Sources {
+                dialect: &dialect,
+                current: None,
+                catalog: None,
+                others: &|_| None,
+                snippets: &[],
+                in_scope: &[],
+                extras: &[],
+                keywords: completion::Keywords::Clause,
+            },
+        );
+        assert!(!hits.iter().any(|h| h.label == "SELECT"), "{hits:?}");
         let extras = type_hits(&dialect);
         let (_, hits) = completion::complete(
             "INT",
@@ -489,6 +526,7 @@ mod tests {
                 snippets: &[],
                 in_scope: &in_scope,
                 extras: &extras,
+                keywords: completion::Keywords::All,
             },
         );
         assert!(

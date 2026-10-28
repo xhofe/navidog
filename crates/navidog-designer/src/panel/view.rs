@@ -164,9 +164,7 @@ impl TableDesigner {
                 .disabled(disabled)
                 .flex_1()
                 .into_any_element(),
-            complete::Line::Sql(editor) => Editor::new(editor)
-                .small()
-                .h(tokens::find::CONTROL_HEIGHT.rems())
+            complete::Line::Sql(editor) => navidog_ui::skin::single_line_sql(editor)
                 .disabled(disabled)
                 .flex_1()
                 .min_w_0()
@@ -643,8 +641,7 @@ impl Render for TableDesigner {
                                     .child(t!("designer.advanced_help").to_string()),
                             )
                             .child(
-                                Editor::new(&self.definition)
-                                    .h(tokens::find::CONTROL_HEIGHT.rems())
+                                navidog_ui::skin::single_line_sql(&self.definition)
                                     .disabled(disabled || self.selected.is_none()),
                             )
                             .child(

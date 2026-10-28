@@ -86,6 +86,23 @@ pub struct OwnedCatalog {
     pub functions: Vec<String>,
 }
 
+/// Which keywords a field offers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Keywords {
+    /// The dialect's full list, including statement words such as `SELECT`.
+    All,
+    /// Words used inside a condition or `ORDER BY`. No statement keywords.
+    Clause,
+    /// No keywords.
+    None,
+}
+
+/// Shared by the filter and by column expressions. Not split per dialect.
+pub const CLAUSE_KEYWORDS: &[&str] = &[
+    "AND", "OR", "NOT", "IS", "NULL", "IN", "LIKE", "BETWEEN", "EXISTS", "CASE", "WHEN", "THEN",
+    "ELSE", "END", "TRUE", "FALSE", "ASC", "DESC",
+];
+
 pub struct Sources<'a> {
     pub dialect: &'a dyn Dialect,
     /// Database (PostgreSQL: schema) the catalog belongs to.
@@ -99,6 +116,7 @@ pub struct Sources<'a> {
     pub in_scope: &'a [(String, String)],
     /// Extra rows merged in before ranking. Type names pass their spelling as `insert`.
     pub extras: &'a [Hit],
+    pub keywords: Keywords,
 }
 
 pub fn is_ident(c: char) -> bool {
@@ -272,11 +290,20 @@ pub fn complete(text: &str, offset: usize, src: &Sources) -> (Range<usize>, Vec<
                 .functions()
                 .map(|f| Hit::plain(f, f, Kind::Builtin)),
         );
-        out.extend(
-            src.dialect
-                .keywords()
-                .map(|k| Hit::plain(k, k, Kind::Keyword)),
-        );
+        match src.keywords {
+            Keywords::All => out.extend(
+                src.dialect
+                    .keywords()
+                    .map(|k| Hit::plain(k, k, Kind::Keyword)),
+            ),
+            Keywords::Clause => out.extend(
+                CLAUSE_KEYWORDS
+                    .iter()
+                    .copied()
+                    .map(|k| Hit::plain(k, k, Kind::Keyword)),
+            ),
+            Keywords::None => {}
+        }
     }
     let needle = word.to_lowercase();
     let mut seen = std::collections::HashSet::new();
@@ -421,7 +448,8 @@ pub fn window(text: &str, offset: usize) -> (usize, String) {
 
 /// Collapse pasted line breaks so a single-line SQL field stays one line.
 pub fn one_line(text: &str) -> String {
-    text.replace(['\n', '\r'], " ")
+    // A Windows break is one line, so it becomes one space rather than two.
+    text.replace("\r\n", " ").replace(['\n', '\r'], " ")
 }
 
 #[cfg(test)]
@@ -562,6 +590,7 @@ mod tests {
                 snippets: &snippets,
                 in_scope,
                 extras,
+                keywords: Keywords::All,
             },
         )
         .1
@@ -679,5 +708,59 @@ mod tests {
     #[test]
     fn one_line_turns_breaks_into_spaces() {
         assert_eq!(one_line("a\nb\rc"), "a b c");
+        assert_eq!(one_line("a\r\nb"), "a b");
+        assert_eq!(one_line("ab"), "ab");
+    }
+
+    #[test]
+    fn clause_keywords_keep_and_or_and_drop_statement_words() {
+        let (held, names) = hold();
+        let tables: Vec<Table> = names
+            .iter()
+            .zip(held.columns.iter())
+            .map(|((name, view), columns)| Table {
+                name,
+                view: *view,
+                columns,
+            })
+            .collect();
+        let none = |_: &str| None;
+        let labels = |text: &str, keywords: Keywords| {
+            let offset = text.find('|').unwrap();
+            let text = text.replace('|', "");
+            complete(
+                &text,
+                offset,
+                &Sources {
+                    dialect: &Plain,
+                    current: Some("sakila"),
+                    catalog: Some(Catalog {
+                        schemas: &held.schemas,
+                        tables: &tables,
+                        functions: &held.functions,
+                    }),
+                    others: &none,
+                    snippets: &[],
+                    in_scope: &[],
+                    extras: &[],
+                    keywords,
+                },
+            )
+            .1
+            .into_iter()
+            .map(|c| c.label)
+            .collect::<Vec<_>>()
+        };
+        let clause = labels("AN|", Keywords::Clause);
+        assert!(clause.iter().any(|l| l == "AND"));
+        assert!(labels("OR|", Keywords::Clause).iter().any(|l| l == "OR"));
+        assert!(labels("AS|", Keywords::Clause).iter().any(|l| l == "ASC"));
+        assert!(
+            !labels("SEL|", Keywords::Clause)
+                .iter()
+                .any(|l| l == "SELECT")
+        );
+        assert!(labels("SEL|", Keywords::All).iter().any(|l| l == "SELECT"));
+        assert!(!labels("AN|", Keywords::None).iter().any(|l| l == "AND"));
     }
 }

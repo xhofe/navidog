@@ -41,6 +41,7 @@ pub use ddl::DdlPanel;
 pub use info::InfoPanel;
 pub use navigator::{NavigatorPanel, ViewOptions, bind_actions, set_view_options};
 pub use objects::ObjectsPanel;
+pub use snippets::{snippet_form, snippet_form_entity};
 
 /// Category buttons of the main toolbar: show that category's objects in the current database or schema.
 #[derive(Clone, PartialEq, Debug, Action)]
@@ -55,6 +56,7 @@ pub fn init(cx: &mut App) {
     objects::init(cx);
     info::init(cx);
     ddl::init(cx);
+    snippets::init(cx);
     cx.on_action(|a: &ShowCategory, cx| {
         let Some(kind) = ObjectKind::from_key(&a.kind) else {
             return;

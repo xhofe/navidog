@@ -167,6 +167,7 @@ impl CompletionProvider for FilterProvider {
                 snippets: &[],
                 in_scope: &in_scope,
                 extras: &[],
+                keywords: navidog_sql::completion::Keywords::Clause,
             },
         );
         let lsp_range = lsp_types::Range {

@@ -284,19 +284,15 @@ impl TableViewer {
             .overflow_hidden()
             .child(label("WHERE"))
             .child(
-                Editor::new(&self.view.filter)
-                    .small()
+                navidog_ui::skin::single_line_sql(&self.view.filter)
                     .flex_1()
-                    .min_w_0()
-                    .h_full(),
+                    .min_w_0(),
             )
             .child(label("ORDER BY"))
             .child(
-                Editor::new(&self.view.order)
-                    .small()
+                navidog_ui::skin::single_line_sql(&self.view.order)
                     .flex_1()
-                    .min_w_0()
-                    .h_full(),
+                    .min_w_0(),
             )
     }
 

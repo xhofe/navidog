@@ -9,13 +9,27 @@ use navidog_db::{ConnectParams, Secrets, connect};
 use navidog_model::connection::Connection;
 use navidog_model::crypto::Key;
 use navidog_sqlite::SqliteDriver;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 struct Host(Entity<TableViewer>);
 impl Render for Host {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().size_full().child(self.0.clone())
     }
+}
+
+/// One viewer test at a time. `NAVIDOG_HOME` is process-global, so the guard
+/// has to live until the test returns.
+fn isolate_home(name: &str) -> (MutexGuard<'static, ()>, std::path::PathBuf) {
+    static LOCK: Mutex<()> = Mutex::new(());
+    let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = std::env::temp_dir().join(format!("navidog-viewer-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).unwrap();
+    // SAFETY: `guard` is held until the caller returns, so no other test in this
+    // process reads the variable.
+    unsafe { std::env::set_var("NAVIDOG_HOME", &home) };
+    (guard, home)
 }
 
 fn sql(file: &std::path::Path, sql: &str) -> Vec<Vec<Option<String>>> {
@@ -65,19 +79,12 @@ fn notify_database_changed(cx: &mut TestAppContext, connection: &str) {
 
 #[gpui_kit::test]
 fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext) {
-    let home =
-        std::env::temp_dir().join(format!("navidog-viewer-ownership-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).unwrap();
+    let (_guard, home) = isolate_home("ownership");
     let file = home.join("rows.db");
     sql(
         &file,
         "CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT); INSERT INTO t VALUES(1, 'a'), (2, 'b')",
     );
-    // SAFETY: this is the only test in this process that changes the configuration directory.
-    unsafe {
-        std::env::set_var("NAVIDOG_HOME", &home);
-    }
     cx.executor().allow_parking();
     let id = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -964,11 +971,7 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
 
 #[gpui_kit::test]
 fn where_text_collapses_a_pasted_line_break(cx: &mut TestAppContext) {
-    let home = std::env::temp_dir().join(format!("navidog-filter-line-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).unwrap();
-    // SAFETY: this test does not run beside another that reads NAVIDOG_HOME.
-    unsafe { std::env::set_var("NAVIDOG_HOME", &home) }
+    let (_guard, home) = isolate_home("filter-line");
     let (handle, viewer) = cx.update(|cx| {
         gpui_kit::init(cx);
         navidog_app_state::init(cx);
