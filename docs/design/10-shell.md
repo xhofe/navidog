@@ -13,7 +13,7 @@
 3. `application().with_assets(NavidogAssets)`，其中 `NavidogAssets` 先查找 navidog 自有的图标，找不到再回退 gpui-kit 的 `Assets`。
 4. 在 `run` 回调中依次执行：
    1. `gpui_kit::init(cx)`；
-   2. `cx.set_app_identity(...)`，Bundle ID 为 `ci.nn.navidog`。Dock 图标用 `crates/navidog/resources/navidog.svg`；`scripts/bundle-macos.sh` 把它做成 `navidog.icns` 放进应用包，`cargo run` 启动时用同一张图调用 `setApplicationIconImage`（gpui 在 macOS 上忽略窗口的 `icon`）；
+   2. `cx.set_app_identity(...)`，Bundle ID 为 `ci.nn.navidog`。Dock 图标用 `crates/navidog/resources/navidog.svg`。本地 `scripts/bundle-macos.sh` 把它做成 `navidog.icns` 放进应用包。GitHub Actions 的 `cargo bundle` 在仓库根目录解析图标路径，使用 `crates/navidog/icons/navidog.icns`；打包后检查 `Contents/Resources/navidog.icns` 存在，且 `CFBundleIconFile` 为 `navidog.icns`。`cargo run` 启动时用同一张 SVG 调用 `setApplicationIconImage`（gpui 在 macOS 上忽略窗口的 `icon`）；
    3. 加载主题（默认 gpui-kit 的 Default；偏好设置可选 Navicat），`font_size` 设为 13，外观跟随系统或使用偏好设置中固定的外观；
    4. 初始化各 crate：`navidog_app_state::init`、`navidog_db::init`（启动 tokio 运行时）、`navidog_connection::init`；
    5. 先 `cx.bind_keys(...)`，再 `cx.set_menus(...)`；
@@ -39,6 +39,7 @@
 - 标题栏：macOS 原生红绿灯，标题居中显示“navidog”。标题栏和主工具栏共用 `color.window_bg` 背景，两者之间没有分隔线；工具栏下方有一条 `color.separator` 分隔线。
 - 窗口位置和尺寸在关闭时用 `window.window_bounds()` 读取，写入 `state.json`；下次启动时作为 `WindowOptions.window_bounds` 恢复。
 - 关闭主窗口时，如果有未保存的编辑器选项卡，逐个询问是否保存。退出应用（⌘Q）同样处理。
+- 关闭最后一个窗口后进程仍留在程序坞。点程序坞图标，或选「窗口 > 显示主窗口」，会把仍在的主窗口（含最小化）带到前面；主窗口已经关掉时，按关闭前写入 `state.json` 的布局再开一个，不再做启动时的更新检查、自动连接、启动选项卡和崩溃恢复。
 
 ## 3. 主工具栏（F-APP-002）
 

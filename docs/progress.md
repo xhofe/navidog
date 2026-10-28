@@ -116,7 +116,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | F-APP-004 状态栏 | 完成 | snapshot | |
 | F-APP-005 编辑器选项卡 | 部分 | snapshot | M2 加入表查看器和 DDL 选项卡；弹出为新窗口未做 |
 | F-APP-006 显示或隐藏窗格 | 完成 | 目测 | |
-| F-APP-007 窗口与布局持久化 | 完成 | state 单元测试、目测 | |
+| F-APP-007 窗口与布局持久化 | 完成 | state 单元测试、`present_main_window_reopens_after_the_last_window_closes`、目测 | 关掉最后一个窗口后，点程序坞图标或「显示主窗口」按已保存布局再开主窗口 |
 | F-APP-008 全屏与专注模式 | 部分 | | 全屏已完成；专注模式在 M2 |
 | F-APP-009 浅色与深色外观 | 完成 | snapshot、theme 单元测试 | |
 | F-APP-010 界面语言 | 完成 | settings 单元测试、目测 | |
@@ -241,7 +241,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 
 | 功能 | 状态 | 验证 | 说明 |
 | --- | --- | --- | --- |
-| F-REL-001 打包 | 部分 | publish 工作流（`main` 推送与每日定时；安装包经 artifact 汇总后统一替换 `nightly`）；PR 预览构建产出 macOS aarch64 DMG artifact（7 天） | macOS DMG、Windows zip / MSI / `.msi.zip`、Linux deb / rpm / AppImage / tarball，附 `latest.json` 和 `SHA256SUMS`。未在每台机器上安装验证 |
+| F-REL-001 打包 | 部分 | publish 工作流（`main` 推送与每日定时；安装包经 artifact 汇总后统一替换 `nightly`）；PR 预览构建产出 macOS aarch64 DMG artifact（7 天）；`scripts/check-macos-bundle-icon.sh` | macOS DMG、Windows zip / MSI / `.msi.zip`、Linux deb / rpm / AppImage / tarball，附 `latest.json` 和 `SHA256SUMS`。`cargo bundle` 的图标路径相对仓库根目录，打包后检查 `navidog.icns`。未在每台机器上安装验证 |
 | F-REL-002 签名与公证 | 部分 | 本机真实签名/篡改/DMG 回归、完整应用首帧；publish/lint 配置检查 | 无证书时本地打包和发布共用免费临时签名脚本，严格验签失败则停止；完整签名应用经过 DMG 复制、整包替换仍可启动。两架构 CI 已接入回归，远端未跑；正式签名与公证未实测。见 [验收记录](pr/acceptance-macos-signing.md) |
 | F-REL-003 自动更新 | 完成 | update 单元测试 | 与 F-APP-018 同一条路径：读 `latest.json` 的 `releases` 并校验 SHA-256。tag 的发布说明由 changelogithub 写入清单。tag 在清单上传成功后取消 draft。tag 构建在编译前把 workspace 版本改成 tag，不改仓库里的 Cargo.toml |
 | F-REL-004 迁移或升级 | 未开始 | | 配置目录还没有版本迁移 |
