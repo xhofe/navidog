@@ -4,6 +4,7 @@
 //! filter parser and the table designer all read the same [`span`] list, so one script cannot be
 //! read two different ways. No UI and no drivers here.
 
+pub mod completion;
 pub mod dialect;
 pub mod keywords;
 pub mod span;
