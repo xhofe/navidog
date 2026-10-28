@@ -111,14 +111,16 @@ pub(super) fn line(
         return Line::Text(cx.new(|cx| InputState::new(window, cx).default_value(value)));
     }
     let editor = cx.new(|cx| {
-        EditorState::new(window, cx)
-            .language("sql")
-            .line_number(false)
-            .folding(false)
-            .soft_wrap(false)
-            .auto_close(false)
-            .searchable(false)
-            .default_value(value)
+        navidog_ui::skin::single_line_state(
+            EditorState::new(window, cx)
+                .language("sql")
+                .line_number(false)
+                .folding(false)
+                .soft_wrap(false)
+                .auto_close(false)
+                .searchable(false)
+                .default_value(value),
+        )
     });
     attach(&editor, owner, mode, cx);
     Line::Sql(editor)

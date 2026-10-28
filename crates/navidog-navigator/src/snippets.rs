@@ -580,7 +580,7 @@ pub fn snippet_form(cx: &App) -> AnyElement {
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .w(tokens::snippet::POPOVER_WIDTH.rems())
                     .max_h_full()
-                    .overflow_hidden()
+                    .overflow_y_scroll()
                     .bg(p.window_bg)
                     .border_1()
                     .border_color(p.separator)

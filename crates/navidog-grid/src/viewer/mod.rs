@@ -545,24 +545,28 @@ impl TableViewer {
         cx.new(|cx: &mut Context<Self>| {
             let grid = cx.new(|cx| ResultGrid::new(window, cx));
             let filter = cx.new(|cx| {
-                EditorState::new(window, cx)
-                    .language("sql")
-                    .line_number(false)
-                    .folding(false)
-                    .soft_wrap(false)
-                    .auto_close(false)
-                    .searchable(false)
-                    .placeholder(t!("viewer.where_hint").to_string())
+                navidog_ui::skin::single_line_state(
+                    EditorState::new(window, cx)
+                        .language("sql")
+                        .line_number(false)
+                        .folding(false)
+                        .soft_wrap(false)
+                        .auto_close(false)
+                        .searchable(false)
+                        .placeholder(t!("viewer.where_hint").to_string()),
+                )
             });
             let order = cx.new(|cx| {
-                EditorState::new(window, cx)
-                    .language("sql")
-                    .line_number(false)
-                    .folding(false)
-                    .soft_wrap(false)
-                    .auto_close(false)
-                    .searchable(false)
-                    .placeholder(t!("viewer.order_hint").to_string())
+                navidog_ui::skin::single_line_state(
+                    EditorState::new(window, cx)
+                        .language("sql")
+                        .line_number(false)
+                        .folding(false)
+                        .soft_wrap(false)
+                        .auto_close(false)
+                        .searchable(false)
+                        .placeholder(t!("viewer.order_hint").to_string()),
+                )
             });
             complete::attach(&filter, cx.entity().downgrade(), cx);
             complete::attach(&order, cx.entity().downgrade(), cx);

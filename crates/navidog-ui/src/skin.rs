@@ -17,9 +17,19 @@ use crate::tokens::{self, palette};
 
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
+/// A code editor used as one line. Code-editor mode reserves empty rows under
+/// the last line; that room is the hover scrollbar and what the wheel scrolls.
+pub fn single_line_state(state: EditorState) -> EditorState {
+    state
+        .scroll_beyond_last_line(Some(0))
+        .cursor_surrounding_lines(Some(0))
+}
+
 /// A SQL editor that should look like `Input::small`. The code editor's own line
 /// is 1.5× the mono font plus padding, which is taller than that control: the
-/// glyphs clip and a scrollbar appears. A line height of 1 fits one row inside.
+/// glyphs clip. A line height of 1 fits one row inside. Pair it with
+/// [`single_line_state`], or the editor still scrolls into the empty rows it
+/// keeps under the last line.
 pub fn single_line_sql(state: &Entity<EditorState>) -> Editor {
     Editor::new(state)
         .small()
@@ -340,6 +350,13 @@ pub fn heading(text: impl Into<SharedString>) -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::find_matches;
+    use gpui_kit::component::input::EditorState;
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        AppContext as _, Bounds, Context, Entity, IntoElement, ParentElement as _, Render,
+        ScrollDelta, Styled as _, TestAppContext, Window, WindowBounds, WindowOptions, div, point,
+        px, size,
+    };
 
     #[test]
     fn matches_ignore_ascii_case_and_keep_utf8_offsets() {
@@ -351,5 +368,95 @@ mod tests {
         assert_eq!(find_matches("aaaa", "aa"), vec![0..2, 2..4]);
         assert!(find_matches("abc", "").is_empty());
         assert!(find_matches("ab", "abc").is_empty());
+    }
+
+    struct LineHost {
+        editor: Entity<EditorState>,
+        limited: bool,
+    }
+
+    impl Render for LineHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let editor = if self.limited {
+                super::single_line_sql(&self.editor)
+            } else {
+                gpui_kit::component::input::Editor::new(&self.editor)
+                    .h(crate::tokens::find::CONTROL_HEIGHT.rems())
+            };
+            // raw-px: the test window only has to be wider than the field.
+            div().size_full().child(editor.w(px(240.)))
+        }
+    }
+
+    fn laid_out(
+        cx: &mut TestAppContext,
+        limited: bool,
+    ) -> (gpui_kit::AnyWindowHandle, Entity<EditorState>) {
+        let mut editor = None;
+        let handle = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                        Default::default(),
+                        // raw-px: room around the one-line field.
+                        size(px(320.), px(120.)),
+                    ))),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    let state = cx.new(|cx| {
+                        let state = EditorState::new(window, cx)
+                            .language("sql")
+                            .default_value("id > 10");
+                        if limited {
+                            super::single_line_state(state)
+                        } else {
+                            state
+                        }
+                    });
+                    editor = Some(state.clone());
+                    cx.new(|_| LineHost {
+                        editor: state,
+                        limited,
+                    })
+                },
+            )
+            .unwrap()
+            .0
+        });
+        (handle, editor.unwrap())
+    }
+
+    fn scroll_y(cx: &mut TestAppContext, limited: bool) -> gpui_kit::Pixels {
+        let (handle, editor) = laid_out(cx, limited);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            editor.update(cx, |state, cx| {
+                state.set_scroll_offset(point(px(0.), px(-500.)), cx);
+            });
+            window.render_frame(cx);
+            window.scroll(
+                ("input", editor.entity_id()),
+                ScrollDelta::Pixels(point(px(0.), px(-80.))),
+                cx,
+            );
+            editor.read(cx).scroll_offset().y
+        })
+        .unwrap()
+    }
+
+    #[gpui_kit::test]
+    fn a_single_line_sql_editor_does_not_scroll(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::init(cx);
+        });
+        let open = scroll_y(cx, false);
+        assert!(
+            open < px(0.),
+            "a code editor keeps rows under the last line"
+        );
+        assert_eq!(scroll_y(cx, true), px(0.));
     }
 }

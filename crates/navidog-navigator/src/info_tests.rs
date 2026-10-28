@@ -1,5 +1,5 @@
 //! Headless test of the info pane's query pages: they come and go with the query editor, a
-//! snippet saves from the editor dialog, and identifiers list a real SQLite table.
+//! snippet saves from the editor overlay, and identifiers list a real SQLite table.
 
 use navidog_test_support::wait;
 use std::sync::Arc;
@@ -7,7 +7,7 @@ use std::sync::Arc;
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
     AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
-    TestAppContext, Window, WindowOptions, div,
+    Subscription, TestAppContext, Window, WindowOptions, div,
 };
 use navidog_app_state::snippets::Snippets;
 use navidog_app_state::store::ConnectionStore;
@@ -22,11 +22,20 @@ use crate::info::{InfoPanel, Page};
 
 struct Host {
     info: Entity<InfoPanel>,
+    _form: Subscription,
 }
 
 impl Render for Host {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        crate::bind_actions(div().size_full().child(self.info.clone()))
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The editor is a main-window overlay. This host is the test window, so it
+        // has to paint the same layer, and watch the form or the click never shows it.
+        crate::bind_actions(
+            div()
+                .size_full()
+                .relative()
+                .child(self.info.clone())
+                .child(crate::snippet_form(cx)),
+        )
     }
 }
 
@@ -84,7 +93,10 @@ fn query_pages_follow_the_editor(cx: &mut TestAppContext) {
         let h = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             let i = InfoPanel::shared(window, cx);
             info = Some(i.clone());
-            cx.new(|_| Host { info: i })
+            cx.new(|cx| Host {
+                _form: cx.observe(&crate::snippet_form_entity(cx), |_, _, cx| cx.notify()),
+                info: i,
+            })
         })
         .unwrap();
         (h.0, info.unwrap())
@@ -108,7 +120,7 @@ fn query_pages_follow_the_editor(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(page(cx) == Page::Snippets);
 
-    // New snippet through the editor dialog
+    // New snippet through the editor overlay
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("snippet-new").is_some(), "the + button");
@@ -120,7 +132,7 @@ fn query_pages_follow_the_editor(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(
             window.try_find("snippet-name").is_some(),
-            "the editor dialog"
+            "the snippet editor"
         );
         window.click("snippet-name", cx);
         window.input("films", cx);
