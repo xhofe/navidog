@@ -322,7 +322,17 @@ pub fn complete(text: &str, offset: usize, src: &Sources) -> (Range<usize>, Vec<
     });
     (
         start..offset,
-        ranked.into_iter().map(|(_, _, c)| c).collect(),
+        ranked
+            .into_iter()
+            .map(|(_, _, mut hit)| {
+                // A snippet inserts its own text. Every other row is a word, and the
+                // next word needs a space in front of it.
+                if hit.kind != Kind::Snippet && !hit.insert.ends_with(' ') {
+                    hit.insert.push(' ');
+                }
+                hit
+            })
+            .collect(),
     )
 }
 
@@ -762,5 +772,45 @@ mod tests {
         );
         assert!(labels("SEL|", Keywords::All).iter().any(|l| l == "SELECT"));
         assert!(!labels("AN|", Keywords::None).iter().any(|l| l == "AND"));
+    }
+
+    #[test]
+    fn a_completed_word_gains_a_space_and_a_snippet_keeps_its_text() {
+        let snippets = [("mine".to_string(), "SELECT ${x}".to_string())];
+        let none = |_: &str| None;
+        let hits = complete(
+            "AN",
+            2,
+            &Sources {
+                dialect: &Plain,
+                current: None,
+                catalog: None,
+                others: &none,
+                snippets: &snippets,
+                in_scope: &[],
+                extras: &[],
+                keywords: Keywords::Clause,
+            },
+        )
+        .1;
+        let and = hits.iter().find(|h| h.label == "AND").unwrap();
+        assert_eq!(and.insert, "AND ");
+        let hits = complete(
+            "mi",
+            2,
+            &Sources {
+                dialect: &Plain,
+                current: None,
+                catalog: None,
+                others: &none,
+                snippets: &snippets,
+                in_scope: &[],
+                extras: &[],
+                keywords: Keywords::None,
+            },
+        )
+        .1;
+        let snippet = hits.iter().find(|h| h.kind == Kind::Snippet).unwrap();
+        assert_eq!(snippet.insert, "SELECT ${x}");
     }
 }

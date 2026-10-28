@@ -409,7 +409,7 @@ impl TableDesigner {
                             .checked(entry.as_ref().is_some_and(|e| e.unique))
                             .disabled(disabled)
                             .on_click(cx.listener(|this, value, w, cx| {
-                                this.write_entry(Some(*value), w, cx)
+                                this.write_entry(Some(*value), None, w, cx)
                             })),
                     ))
                 },

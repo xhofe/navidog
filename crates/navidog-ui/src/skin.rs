@@ -433,11 +433,13 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             editor.update(cx, |state, cx| {
+                // raw-px: a scroll offset past any one-line viewport
                 state.set_scroll_offset(point(px(0.), px(-500.)), cx);
             });
             window.render_frame(cx);
             window.scroll(
                 ("input", editor.entity_id()),
+                // raw-px: a wheel notch downward
                 ScrollDelta::Pixels(point(px(0.), px(-80.))),
                 cx,
             );
@@ -454,9 +456,9 @@ mod tests {
         });
         let open = scroll_y(cx, false);
         assert!(
-            open < px(0.),
+            open < px(0.), // raw-px: still below the top of the text
             "a code editor keeps rows under the last line"
         );
-        assert_eq!(scroll_y(cx, true), px(0.));
+        assert_eq!(scroll_y(cx, true), px(0.)); // raw-px: the top of the text
     }
 }

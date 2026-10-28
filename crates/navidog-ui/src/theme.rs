@@ -37,6 +37,23 @@ pub fn init(cx: &mut App) {
     Theme::change(ThemeMode::Light, None, cx);
     // Show the bar when the pointer is over the scroll area.
     Theme::set_scrollbar_mode(ScrollbarMode::Hover, cx);
+    // The SQL grammar captures a column as `@field`. The theme has no such key,
+    // so the name stayed the body color. `property` is a real key.
+    paint_sql_columns();
+}
+
+/// Point the SQL column capture at `syntax.property`.
+fn paint_sql_columns() {
+    use gpui_kit::component::highlighter::LanguageRegistry;
+    let Some(mut sql) = LanguageRegistry::singleton().language("sql") else {
+        return;
+    };
+    let highlights = sql.highlights.replace("@field", "@property");
+    if highlights == sql.highlights.as_ref() {
+        return;
+    }
+    sql.highlights = highlights.into();
+    LanguageRegistry::singleton().register("sql", &sql);
 }
 
 /// Points the light and dark slots at one family. Call [`apply_appearance`] afterwards so
@@ -224,6 +241,57 @@ mod tests {
             );
             assert!(style.syntax.keyword.is_some(), "{mode:?}");
         }
+    }
+
+    /// A column reference takes the property color. The grammar calls it `field`,
+    /// which the theme does not know.
+    #[gpui_kit::test]
+    fn a_column_name_uses_the_property_color(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::component::highlighter::SyntaxHighlighter;
+        use gpui_kit::component::input::EditorState;
+        use gpui_kit::{AppContext as _, Context, IntoElement, Render, Window, WindowOptions};
+        struct Host;
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                gpui_kit::div()
+            }
+        }
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+        });
+        let sql = "select id from t";
+        let id = sql.find("id").unwrap();
+        let mut editor = None;
+        let handle = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                editor = Some(cx.new(|cx| {
+                    EditorState::new(window, cx)
+                        .language("sql")
+                        .default_value(sql)
+                }));
+                cx.new(|_| Host)
+            })
+            .unwrap()
+            .0
+        });
+        let editor = editor.unwrap();
+        let (column, property) = cx
+            .update_window(handle, |_, _, cx| {
+                let text = editor.read(cx).text().clone();
+                let mut highlighter = SyntaxHighlighter::new("sql");
+                highlighter.update(None, &text, None);
+                let theme = Theme::global(cx).highlight_theme.clone();
+                let painted = highlighter
+                    .styles(&(0..text.len()), theme.as_ref())
+                    .into_iter()
+                    .find(|(range, _)| range.start <= id && id < range.end)
+                    .and_then(|(_, style)| style.color);
+                (painted, theme.style.syntax.property)
+            })
+            .unwrap();
+        let property = gpui_kit::HighlightStyle::from(property.unwrap()).color;
+        assert_eq!(column, property);
     }
 
     /// Default uses gpui-kit's shadcn themes; Navidog restores the measured palette. Font stays 13pt.

@@ -318,7 +318,12 @@ impl TableDesigner {
         if self.busy || !self.loaded {
             return;
         }
-        let value = self.properties[ix].draft_value(cx);
+        let value = self.properties[ix].value(cx);
+        let value = if super::complete::property_is_sql(ix) {
+            navidog_sql::completion::one_line(&value)
+        } else {
+            value
+        };
         let Some(c) = self
             .draft
             .columns
@@ -640,11 +645,13 @@ impl TableDesigner {
             self.syncing = false;
             self.load_references(window, cx);
         }
-        self.write_entry(None, window, cx);
+        let flatten = super::complete::entry_is_sql(ix).then_some(ix);
+        self.write_entry(None, flatten, window, cx);
     }
     pub(super) fn write_entry(
         &mut self,
         unique: Option<bool>,
+        flatten: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -660,7 +667,18 @@ impl TableDesigner {
         let v: Vec<String> = self
             .entry_inputs
             .iter()
-            .map(|i| i.draft_value(cx))
+            .enumerate()
+            .map(|(i, input)| {
+                let value = input.value(cx);
+                // Only the field the user just edited loses its line breaks.
+                // Reading the others through `one_line` rewrote a CHECK or
+                // index predicate the user had not touched.
+                if flatten == Some(i) {
+                    navidog_sql::completion::one_line(&value)
+                } else {
+                    value
+                }
+            })
             .collect();
         e.name = v[0].clone();
         e.fields = v[1].clone();

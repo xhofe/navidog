@@ -29,7 +29,7 @@
           "string.escape": { "color": "#036A07" },
           "string.special": { "color": "#d21f07" },
           "type": { "color": "#6f42c1" },
-          "property": { "color": "#333333" },
+          "property": { "color": "#9A4D00" },
           "variable": { "color": "#333333" },
           "variable.special": { "color": "#C5060B" }
         }

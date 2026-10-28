@@ -720,6 +720,7 @@ impl TableDesigner {
     fn flush(&mut self, cx: &mut Context<Self>) {
         let previous = self.draft.clone();
         self.draft.name = self.table_name.read(cx).value().to_string();
+        let definition = self.definition.read(cx).value().to_string();
         if let Some(c) = self
             .draft
             .columns
@@ -727,7 +728,11 @@ impl TableDesigner {
             .find(|c| Some(c.id) == self.selected)
         {
             c.name = self.name.read(cx).value().to_string();
-            c.definition = navidog_sql::completion::one_line(&self.definition.read(cx).value());
+            // Selecting another column flushes this editor. A loaded definition
+            // can keep a newline inside a quoted literal; flatten only an edit.
+            if definition != c.definition {
+                c.definition = navidog_sql::completion::one_line(&definition);
+            }
         }
         self.draft.constraints = self
             .constraints

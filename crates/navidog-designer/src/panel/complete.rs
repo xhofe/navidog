@@ -34,15 +34,6 @@ impl Line {
         }
     }
 
-    /// Text written into the draft. A single-line SQL field drops pasted line breaks.
-    pub(super) fn draft_value(&self, cx: &App) -> String {
-        let value = self.value(cx);
-        match self {
-            Line::Sql(_) => completion::one_line(&value),
-            Line::Text(_) => value,
-        }
-    }
-
     pub(super) fn set_value(&self, value: impl Into<String>, window: &mut Window, cx: &mut App) {
         let value = value.into();
         match self {

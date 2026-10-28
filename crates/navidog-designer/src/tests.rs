@@ -1161,3 +1161,65 @@ fn missing_connection_confirms_before_discarding_a_dirty_draft(cx: &mut TestAppC
         assert!(!area.read(cx).is_empty(DockPlacement::Center, cx));
     });
 }
+
+#[gpui_kit::test]
+fn an_unedited_definition_and_check_keep_their_line_breaks(cx: &mut TestAppContext) {
+    use super::Page;
+    let (_guard, _) = isolate_home("keep-breaks");
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_app_state::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_ui::tabs::init(cx);
+        navidog_session::init(cx);
+        crate::init(cx);
+        remember(cx, "test", "sqlite");
+    });
+    let (handle, panel) = cx.update(|cx| {
+        let mut panel = None;
+        let window = gpui_kit::open_window(WindowOptions::default(), cx, |w, cx| {
+            let p = TableDesigner::new(Scope::new("test", "main", None), w, cx);
+            panel = Some(p.clone());
+            cx.new(|_| Host(p))
+        })
+        .unwrap();
+        (window.0, panel.unwrap())
+    });
+    cx.update_window(handle, |_, w, cx| {
+        panel.update(cx, |p, cx| {
+            let definition = "TEXT DEFAULT 'a\nb'";
+            p.draft.columns[0].definition = definition.into();
+            p.sync_column(w, cx);
+            p.flush(cx);
+            assert_eq!(p.draft.columns[0].definition, definition);
+
+            p.draft
+                .constraints
+                .push("CONSTRAINT chk CHECK (note = 'a\nb')".into());
+            p.page = Page::Checks;
+            p.entry_selected = Some(0);
+            p.sync_entry(w, cx);
+            assert_eq!(p.draft.columns[0].definition, definition);
+            assert!(
+                p.entry_inputs[9].value(cx).contains('\n'),
+                "loaded expression: {}",
+                p.entry_inputs[9].value(cx)
+            );
+            p.entry_inputs[0].set_value("renamed", w, cx);
+            p.entry_changed(0, w, cx);
+            let check = &p.draft.constraints[1];
+            assert!(check.contains("renamed"), "{check}");
+            assert!(check.contains('\n'), "{check}");
+
+            p.definition.update(cx, |s, cx| {
+                s.set_value("TEXT DEFAULT 'a\nb' /* edited */", w, cx)
+            });
+            p.flush(cx);
+            assert_eq!(
+                p.draft.columns[0].definition,
+                "TEXT DEFAULT 'a b' /* edited */"
+            );
+        })
+    })
+    .unwrap();
+}
