@@ -16,7 +16,9 @@ pub mod state;
 mod update;
 
 use gpui_kit::component::{TitleBar, WindowExt as _};
-use gpui_kit::{App, AppContext as _, Bounds, WindowBounds, WindowOptions};
+use gpui_kit::{
+    AnyWindowHandle, App, AppContext as _, Bounds, Entity, Global, WindowBounds, WindowOptions,
+};
 use navidog_app_state::settings::Settings;
 use navidog_ui::{NavidogAssets, tokens};
 use rust_i18n::t;
@@ -54,41 +56,39 @@ fn init_logging() -> (Settings, tracing_appender::non_blocking::WorkerGuard) {
 pub fn run() {
     let (settings, _log_guard) = init_logging();
     update::arm_smoke_watchdog();
-    gpui_kit::application()
-        .with_assets(NavidogAssets)
-        .run(move |cx| {
-            init_with_settings(cx, settings);
-            cx.set_app_identity("ci.nn.navidog", "Navidog");
-            set_dock_icon();
-            menus::bind_keys(cx);
-            menus::set_menus(cx);
-            // Checked menu items follow the settings; the query and table menus follow the active tab
-            cx.observe_global::<Settings>(menus::set_menus).detach();
-            cx.observe_global::<navidog_ui::tabs::ActiveMenu>(menus::set_menus)
-                .detach();
-            register_app_actions(cx);
-
-            let state = cx.global::<AppState>().clone();
-            let Some((window, view)) = open_main_window(state, cx) else {
-                tracing::error!("cannot open the main window");
-                cx.quit();
-                return;
-            };
-            // The recovery dialog needs the window root, which exists only after open_window returns.
-            let _ = window.update(cx, |_, window, cx| {
-                view.update(cx, |v, cx| v.check_recovery(window, cx));
-            });
-            cx.on_app_quit(move |cx| {
-                navidog_query::flush_on_quit(cx);
-                let view = view.clone();
-                let _ = window.update(cx, |_, window, cx| {
-                    view.update(cx, |v, cx| v.save_state(window, cx))
-                });
-                async {}
-            })
+    let app = gpui_kit::application().with_assets(NavidogAssets);
+    // `on_reopen` borrows the app; `run` takes it. The borrow ends on this line.
+    app.on_reopen(present_main_window);
+    app.run(move |cx| {
+        init_with_settings(cx, settings);
+        cx.set_app_identity("ci.nn.navidog", "Navidog");
+        set_dock_icon();
+        menus::bind_keys(cx);
+        menus::set_menus(cx);
+        // Checked menu items follow the settings; the query and table menus follow the active tab
+        cx.observe_global::<Settings>(menus::set_menus).detach();
+        cx.observe_global::<navidog_ui::tabs::ActiveMenu>(menus::set_menus)
             .detach();
-            cx.activate(true);
+        register_app_actions(cx);
+
+        let state = cx.global::<AppState>().clone();
+        let Some((window, view)) = open_main_window(state, true, cx) else {
+            tracing::error!("cannot open the main window");
+            cx.quit();
+            return;
+        };
+        // The recovery dialog needs the window root, which exists only after open_window returns.
+        let _ = window.update(cx, |_, window, cx| {
+            view.update(cx, |v, cx| v.check_recovery(window, cx));
         });
+        cx.on_app_quit(|cx| {
+            navidog_query::flush_on_quit(cx);
+            save_foreground_main(cx);
+            async {}
+        })
+        .detach();
+        cx.activate(true);
+    });
 }
 
 /// Initializes every layer (no platform UI such as the menu bar, so headless rendering uses it too).
@@ -165,25 +165,76 @@ pub fn main_window_options(state: &AppState, cx: &mut App) -> WindowOptions {
     }
 }
 
+/// The main window last opened. Quit saves this one, including after a Dock reopen
+/// replaced the window created at startup.
+struct ForegroundMain {
+    window: AnyWindowHandle,
+    view: Entity<MainWindow>,
+}
+
+impl Global for ForegroundMain {}
+
 fn open_main_window(
     state: AppState,
+    startup: bool,
     cx: &mut App,
-) -> Option<(gpui_kit::AnyWindowHandle, gpui_kit::Entity<MainWindow>)> {
+) -> Option<(AnyWindowHandle, Entity<MainWindow>)> {
     let options = main_window_options(&state, cx);
-    gpui_kit::open_window(options, cx, move |window, cx| {
+    let (window, view) = gpui_kit::open_window(options, cx, move |window, cx| {
         apply_theme(Some(window), cx);
         update::arm_smoke_window(window);
         let view = cx.new(|cx| MainWindow::new(state, window, cx));
-        if !update::is_smoke_test() {
-            update::startup_check(window, cx);
+        if startup {
+            if !update::is_smoke_test() {
+                update::startup_check(window, cx);
+            }
+            if Settings::global(cx).auto_connect_on_startup {
+                navidog_connection::auto_connect(window, cx);
+            }
+            view.update(cx, |v, cx| v.open_startup_tabs(window, cx));
         }
-        if Settings::global(cx).auto_connect_on_startup {
-            navidog_connection::auto_connect(window, cx);
-        }
-        view.update(cx, |v, cx| v.open_startup_tabs(window, cx));
         view
     })
-    .ok()
+    .ok()?;
+    cx.set_global(ForegroundMain {
+        window,
+        view: view.clone(),
+    });
+    Some((window, view))
+}
+
+fn save_foreground_main(cx: &mut App) {
+    let Some(main) = cx.try_global::<ForegroundMain>() else {
+        return;
+    };
+    let window = main.window;
+    let view = main.view.clone();
+    let _ = window.update(cx, |_, window, cx| {
+        view.update(cx, |v, cx| v.save_state(window, cx))
+    });
+}
+
+/// Brings the main window forward. A window that is still open, including a
+/// minimized one, is activated. With none left, opens one from the saved state
+/// and skips startup work (update check, auto-connect, startup tabs, recovery).
+/// The Dock icon and Window > Show Main Window both call this.
+pub fn present_main_window(cx: &mut App) {
+    // A closed window can still be the platform's active handle. Activating it
+    // fails; that is the same as having no window.
+    if let Some(window) = front_window(cx)
+        && window
+            .update(cx, |_, window, _| window.activate_window())
+            .is_ok()
+    {
+        cx.activate(true);
+        return;
+    }
+    let state = cx.global::<AppState>().clone();
+    if open_main_window(state, false, cx).is_none() {
+        tracing::error!("cannot open the main window");
+        return;
+    }
+    cx.activate(true);
 }
 
 /// The key window, else the frontmost, else any window GPUI still has open.
@@ -224,7 +275,7 @@ pub fn register_app_actions(cx: &mut App) {
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
-    cx.on_action(|_: &ShowMainWindow, cx| cx.activate(true));
+    cx.on_action(|_: &ShowMainWindow, cx| present_main_window(cx));
     cx.on_action(|_: &BringAllToFront, cx| cx.activate(true));
     cx.on_action(|_: &Preferences, cx| preferences::open(cx));
     cx.on_action(|_: &CheckForUpdates, cx| {
@@ -261,8 +312,9 @@ pub fn register_app_actions(cx: &mut App) {
     });
 }
 
-/// Dock icon for `cargo run`. A bundled `.app` also gets this artwork from
-/// `scripts/bundle-macos.sh`; gpui ignores `WindowOptions::icon` on macOS.
+/// Dock icon for `cargo run`. A bundled `.app` gets `navidog.icns` from
+/// `scripts/bundle-macos.sh` or `cargo bundle`. gpui ignores `WindowOptions::icon`
+/// on macOS, so the running Dock tile still comes from this image.
 #[cfg(target_os = "macos")]
 fn set_dock_icon() {
     use objc2::{AnyThread, MainThreadMarker};
