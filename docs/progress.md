@@ -202,7 +202,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 功能 | 状态 | 验证 | 说明 |
 | --- | --- | --- | --- |
 | F-QRY-001 查询编辑器 | 完成 | query editor 测试、snapshot | 行号、折叠、括号高亮、自动换行、缩放；编辑器偏好即时生效。不自动补右括号 |
-| F-QRY-002 代码补全 | 完成 | completion 单元测试、sqlite 测试、live 测试、outline 单元测试 | `.` 之后按数据库、表、别名给出候选；前缀、连续包含、跨字符三档排序（`mocfg` → `mount_cfgs`），命中的字符涂蓝；Tab 确认、Esc 打开；补全信息在连接目录的 `.outline/`。排序在 `navidog-sql`，筛选文本、命令列、代码段编辑框和表设计器共用。补全浮层没有图标（偏差） |
+| F-QRY-002 代码补全 | 完成 | completion 单元测试（含 `a_completed_word_gains_a_space_and_a_snippet_keeps_its_text`）、sqlite 测试、live 测试、outline 单元测试、`a_column_name_uses_the_property_color` | `.` 之后按数据库、表、别名给出候选；前缀、连续包含、跨字符三档排序（`mocfg` → `mount_cfgs`），命中的字符涂蓝；插入的词末尾加一个空格，代码段按原文插入。字段名记到主题的 `property` 色。Tab 确认、Esc 打开；补全信息在连接目录的 `.outline/`。排序在 `navidog-sql`，筛选文本、命令列、代码段编辑框和表设计器共用。补全浮层没有图标（偏差） |
 | F-QRY-003 查找与替换 | 完成 | find 单元测试、query editor 测试 | 模式下拉里有正则表达式、大小写符合、整个字；递增搜索始终开着，到末尾不回绕。查找框回车是下一个，替换框回车是替换当前并跳到下一个 |
 | F-QRY-004 SQL 格式 | 完成 | sql_format 单元测试、query editor 测试 | 缩排、注释、大小写、美化 SQL（sqlformat，记号序列不变）、简化 SQL，每条命令一步撤销 |
 | F-QRY-005 剪贴板堆栈 | 完成 | format 单元测试、query editor 测试 | 10 项，⇧⌘V 连按依次替换 |
@@ -229,10 +229,10 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 
 | 功能 | 状态 | 验证 | 说明 |
 | --- | --- | --- | --- |
-| F-DSG-001 表设计器：字段 | 部分 | designer headless 测试、snapshot、table_design 测试（含 `chosen_types_use_the_spelling_the_server_prints_back`）、`expression_completion_lists_draft_columns_and_definition_lists_types` | 八列字段网格与下方属性区；类型菜单使用该库回读的拼写，整数类型不编辑长度；长度/小数点/不是 null/主键/MySQL 注释及默认值、排序规则、字符集、无符号、零填充、ON UPDATE、自动递增、PG identity 模式和生成表达式控件。默认值、生成表达式、ON UPDATE 按草稿字段名和条件关键字补全，字段定义用整份关键字并另列类型名。拖放、完整方言属性和运行态尺寸对照未完成 |
+| F-DSG-001 表设计器：字段 | 部分 | designer headless 测试、snapshot、table_design 测试（含 `chosen_types_use_the_spelling_the_server_prints_back`）、`expression_completion_lists_draft_columns_and_definition_lists_types`、`an_unedited_definition_and_check_keep_their_line_breaks` | 八列字段网格与下方属性区；类型菜单使用该库回读的拼写，整数类型不编辑长度；长度/小数点/不是 null/主键/MySQL 注释及默认值、排序规则、字符集、无符号、零填充、ON UPDATE、自动递增、PG identity 模式和生成表达式控件。默认值、生成表达式、ON UPDATE 按草稿字段名和条件关键字补全，字段定义用整份关键字并另列类型名。拖放、完整方言属性和运行态尺寸对照未完成 |
 | F-DSG-002 表设计器：索引 | 部分 | 三服务端与 SQLite 实库、snapshot | 结构化索引列表、字段选择、方法、唯一、注释/部分索引条件表单；MySQL KEY 同页编辑；复杂索引属性保留到高级页 |
 | F-DSG-003 表设计器：外键 | 部分 | 三服务端实库、SQLite 级联 UI/外键校验/回滚测试、浅深色截图 | 独立外键列表及结构化表单；引用模式/表/字段从连接元数据级联选择，支持按序多字段、自引用草稿、异步过期隔离与失败重试；刷新图标至少转半圈；类型/唯一键兼容性由执行检查，完整方言属性待做 |
-| F-DSG-004 唯一与检查 | 部分 | SQL 计划测试、三服务端与 SQLite 实库 | 检查名称与表达式表单、索引唯一开关；MySQL 移除部分 CHECK 明确拒绝；唯一约束有单独定义并保留，完整方言属性待做 |
+| F-DSG-004 唯一与检查 | 部分 | SQL 计划测试、三服务端与 SQLite 实库、`an_unedited_definition_and_check_keep_their_line_breaks` | 检查名称与表达式表单、索引唯一开关；MySQL 移除部分 CHECK 明确拒绝；唯一约束有单独定义并保留，完整方言属性待做 |
 | F-DSG-007 表设计器：选项 | 部分 | 选项单元测试、三服务端与 SQLite 实库、designer UI、浅深色截图 | MySQL 23 项常用选项；PG 拥有者/表空间/继承/存储参数/UNLOGGED，含事务修改与并发检测；SQLite STRICT、WITHOUT ROWID（仅新表切换）。引擎私有属性经高级定义保留，未知参数变更明确拒绝 |
 | F-DSG-009 注释与 SQL 预览 | 完成 | designer headless（含预览页放弃修改后立即清掉 SQL）、PG 实库、浅深色 snapshot、注释计划测试 | 表/字段注释与只读 SQL 预览；PG 支持已有注释读取、修改、清空、重命名跟随、复制、旧草稿迁移、失败回滚和外部变化检查；SQLite 无数据库注释语法 |
 | F-DSG-010 表设计器：保存 | 完成 | table_design 实库、designer headless、tabs 测试 | 新建/差异迁移、先预览后执行、失败保留草稿、目录与补全刷新；保存和执行进行中只禁用，重新加载图标至少转半圈；不支持的迁移明确拒绝，详见 40 规格 |
