@@ -554,6 +554,7 @@ impl TableViewer {
                         .auto_close(false)
                         .searchable(false)
                         .placeholder(t!("viewer.where_hint").to_string()),
+                    cx,
                 )
             });
             let order = cx.new(|cx| {
@@ -566,6 +567,7 @@ impl TableViewer {
                         .auto_close(false)
                         .searchable(false)
                         .placeholder(t!("viewer.order_hint").to_string()),
+                    cx,
                 )
             });
             complete::attach(&filter, cx.entity().downgrade(), cx);

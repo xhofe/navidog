@@ -199,23 +199,46 @@ fn owned_tables(owned: &OwnedCatalog) -> Vec<Table<'_>> {
         .collect()
 }
 
-/// The word being typed and what to offer for it.
-pub fn complete(text: &str, offset: usize, src: &Sources) -> (Range<usize>, Vec<Hit>) {
-    let before = &text[..offset];
-    let word_len: usize = before
+/// The identifier around `offset`, including a `"` or `` ` `` pair already around it.
+/// The returned range is what accepting a row replaces, so a cursor in the middle
+/// of a word does not leave the suffix behind.
+fn edit_range(text: &str, offset: usize) -> (Range<usize>, usize) {
+    let word_len: usize = text[..offset]
         .chars()
         .rev()
         .take_while(|c| is_ident(*c))
         .map(char::len_utf8)
         .sum();
-    let start = offset - word_len;
-    let word = &text[start..offset];
-    let stmt_start = text[..start].rfind(';').map_or(0, |i| i + 1);
+    let ident_start = offset - word_len;
+    let suffix: usize = text[offset..]
+        .chars()
+        .take_while(|c| is_ident(*c))
+        .map(char::len_utf8)
+        .sum();
+    let mut start = ident_start;
+    let mut end = offset + suffix;
+    if let Some(quote) = text[..start].chars().next_back()
+        && matches!(quote, '"' | '`')
+    {
+        start -= quote.len_utf8();
+        if text[end..].starts_with(quote) {
+            end += quote.len_utf8();
+        }
+    }
+    (start..end, ident_start)
+}
+
+/// The word being typed and what to offer for it.
+pub fn complete(text: &str, offset: usize, src: &Sources) -> (Range<usize>, Vec<Hit>) {
+    let (range, ident_start) = edit_range(text, offset);
+    let before = &text[..offset];
+    let word = &text[ident_start..offset];
+    let stmt_start = text[..ident_start].rfind(';').map_or(0, |i| i + 1);
     let stmt_end = text[offset..].find(';').map_or(text.len(), |i| offset + i);
     let statement = &text[stmt_start..stmt_end];
     let known = aliases(statement, src.dialect);
     let mut out: Vec<Hit> = Vec::new();
-    let qualifier = before[..start].strip_suffix('.').map(|q| {
+    let qualifier = before[..ident_start].strip_suffix('.').map(|q| {
         let len: usize = q
             .chars()
             .rev()
@@ -321,12 +344,13 @@ pub fn complete(text: &str, offset: usize, src: &Sources) -> (Range<usize>, Vec<
             .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
     });
     (
-        start..offset,
+        range,
         ranked
             .into_iter()
             .map(|(_, _, mut hit)| {
                 // A snippet inserts its own text. Every other row is a word, and the
-                // next word needs a space in front of it.
+                // next word needs a space in front of it. The space sits after the
+                // dialect's quotes, because `range` already covers a quote pair.
                 if hit.kind != Kind::Snippet && !hit.insert.ends_with(' ') {
                     hit.insert.push(' ');
                 }
@@ -812,5 +836,62 @@ mod tests {
         .1;
         let snippet = hits.iter().find(|h| h.kind == Kind::Snippet).unwrap();
         assert_eq!(snippet.insert, "SELECT ${x}");
+    }
+
+    #[test]
+    fn a_completion_replaces_the_whole_identifier_and_keeps_space_outside_quotes() {
+        let snippets = [("mine".to_string(), "SELECT ${x}".to_string())];
+        let none = |_: &str| None;
+        let columns = [("first_name".to_string(), "text".to_string())];
+        let offer = |text: &str, offset: usize, in_scope: &[(String, String)]| {
+            complete(
+                text,
+                offset,
+                &Sources {
+                    dialect: &Plain,
+                    current: None,
+                    catalog: None,
+                    others: &none,
+                    snippets: &snippets,
+                    in_scope,
+                    extras: &[],
+                    keywords: Keywords::None,
+                },
+            )
+        };
+        let (range, hits) = offer("first_name", 3, &columns);
+        assert_eq!(range, 0..10);
+        assert_eq!(
+            hits.iter()
+                .find(|h| h.label == "first_name")
+                .unwrap()
+                .insert,
+            "first_name "
+        );
+        let (range, hits) = offer("\"first\"", 4, &columns);
+        assert_eq!(range, 0..7);
+        assert_eq!(
+            hits.iter()
+                .find(|h| h.label == "first_name")
+                .unwrap()
+                .insert,
+            "first_name "
+        );
+        let quoted = [("order".to_string(), String::new())];
+        let (range, hits) = offer("\"ord\"", 4, &quoted);
+        assert_eq!(range, 0..5);
+        assert_eq!(
+            hits.iter().find(|h| h.label == "order").unwrap().insert,
+            "\"order\" "
+        );
+        let (range, hits) = offer("mine", 2, &[]);
+        assert_eq!(range, 0..4);
+        assert_eq!(
+            hits.iter()
+                .find(|h| h.kind == Kind::Snippet)
+                .unwrap()
+                .insert,
+            "SELECT ${x}"
+        );
     }
 }

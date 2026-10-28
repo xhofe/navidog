@@ -111,6 +111,7 @@ pub(super) fn line(
                 .auto_close(false)
                 .searchable(false)
                 .default_value(value),
+            cx,
         )
     });
     attach(&editor, owner, mode, cx);
@@ -524,7 +525,7 @@ mod tests {
         );
         assert!(
             hits.iter()
-                .any(|h| h.kind == Kind::Type && h.insert == "INTEGER"),
+                .any(|h| h.kind == Kind::Type && h.insert == "INTEGER "),
             "{hits:?}"
         );
     }

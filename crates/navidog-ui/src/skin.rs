@@ -8,9 +8,9 @@ use gpui_kit::component::skeleton::Skeleton;
 use gpui_kit::component::{Icon, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, ElementId, Entity, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement, Rems, RenderOnce, SharedString, StatefulInteractiveElement as _,
-    Styled, Window, div, relative,
+    AnyElement, App, ClickEvent, Context, ElementId, Entity, FontWeight, Hsla,
+    InteractiveElement as _, IntoElement, ParentElement, Rems, RenderOnce, SharedString,
+    StatefulInteractiveElement as _, Styled, Window, div, relative,
 };
 
 use crate::tokens::{self, palette};
@@ -19,10 +19,14 @@ type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 /// A code editor used as one line. Code-editor mode reserves empty rows under
 /// the last line; that room is the hover scrollbar and what the wheel scrolls.
-pub fn single_line_state(state: EditorState) -> EditorState {
-    state
+/// The caller has already set the language to SQL. The clause highlighter
+/// paints column names in a fragment, which the statement grammar drops.
+pub fn single_line_state(state: EditorState, cx: &mut Context<EditorState>) -> EditorState {
+    let mut state = state
         .scroll_beyond_last_line(Some(0))
-        .cursor_surrounding_lines(Some(0))
+        .cursor_surrounding_lines(Some(0));
+    crate::theme::use_clause_highlighter(&mut state, cx);
+    state
 }
 
 /// A SQL editor that should look like `Input::small`. The code editor's own line
@@ -410,7 +414,7 @@ mod tests {
                             .language("sql")
                             .default_value("id > 10");
                         if limited {
-                            super::single_line_state(state)
+                            super::single_line_state(state, cx)
                         } else {
                             state
                         }
