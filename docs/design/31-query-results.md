@@ -269,7 +269,7 @@ SELECT * FROM nope
 - [ ] 解释：MySQL 8、MariaDB、PostgreSQL、SQLite 的各个视图都正确；调低耗时阈值后节点数字变红；统计信息的耗时合计等于根节点的成本。
 - [x] 历史日志查看器实时显示所有语句；仅显示错误、暂停和恢复、表头开关都生效；QueryExec.log 的格式正确，重启后清空。
 - [x] 命令列界面能执行多行语句、续行、翻历史、取消；输出的表格对齐。（`history_log_follows_the_log_and_the_console_runs_statements` 通过真实按键验证续行、历史、取消和取消后再次执行；`unicode_columns_align_by_display_width` 覆盖中日韩、全角和组合字符的列宽。）
-- [ ] 命令列输入区按查询编辑器同一套候选补全；菜单打开时回车不执行语句，方向键不翻历史。
+- [x] 命令列输入区按查询编辑器同一套候选补全；菜单打开时回车不执行语句，方向键不翻历史。（`console_enter_confirms_completion_instead_of_running`；见 [验收记录](../pr/acceptance-sql-field-completion.md)。）
 - [x] PostgreSQL 开 SSL（require）时，“停止”能取消正在执行的语句。
 - [x] MySQL 设置读取超时 2 秒后，`SELECT SLEEP(5)` 被取消并报告超时。
 - [ ] 消息页的措辞与 Navicat 并排核对。

@@ -180,4 +180,4 @@ pub struct ChangeSet {
 - [ ] 区域选择后复制粘贴，以及“复制为 INSERT/UPDATE”的输出格式正确。
 - [ ] 10 万行数据滚动流畅。
 - [x] 隐藏列投影拒绝会返回到查看器，列菜单只在成功时更新；拒绝保留活动编辑器和待提交值，空白新增草稿仍可隐藏/恢复列。回归入口为 grid `refused_column_visibility_keeps_pending_values_and_the_editor` 与 viewer `visibility_uses_accepted_updates_inserts_and_deletes`；本轮完整验证见架构基础验收记录。
-- [ ] WHERE 和 ORDER BY 按当前表字段、关键字和已载入的表补全，命中字符涂蓝；菜单关着时回车仍套用筛选，换行被收成空格。
+- [x] WHERE 和 ORDER BY 按当前表字段、关键字和已载入的表补全，命中字符涂蓝；菜单关着时回车仍套用筛选，换行被收成空格。（`where_text_collapses_a_pasted_line_break`、`a_closed_menu_applies_and_an_open_one_confirms_or_dismisses`；见 [验收记录](../pr/acceptance-sql-field-completion.md)。）

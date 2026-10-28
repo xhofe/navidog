@@ -51,7 +51,7 @@
 - [x] SQLite 保留索引、触发器、外键和数据；约束失败回滚；外部结构变化阻止保存。
 - [x] 保存先预览；执行失败保留草稿；关闭守卫和布局恢复；导航入口与目录刷新。
 - [x] 浅色/深色截图、headless UI 测试及 progress 第 5 节检查。
-- [ ] 表达式补全列出草稿字段名，字段定义补全列出方言类型名；改动仍写回草稿。
+- [x] 表达式补全列出草稿字段名，字段定义补全列出方言类型名；改动仍写回草稿。（`expression_completion_lists_draft_columns_and_definition_lists_types`、`edits_fields_previews_sql_and_restores_drafts`；见 [验收记录](../pr/acceptance-sql-field-completion.md)。）
 
 ## 5. 首版边界与后续
 

@@ -234,6 +234,6 @@ Navicat 的编辑器还需要以下能力，在外层补：
 - [x] 查找替换的正则表达式、大小写符合、整个字都生效；美化 SQL 前后记号序列不变；简化 SQL、注释、缩排、大小写都能一步撤销。
 - [x] 代码补全：`sakila.` 之后列出表，`FROM actor a` 里 `a.` 之后列出 actor 的字段；关掉自动更新后用磁盘上的缓存；清除之后没有表和字段候选。（候选逻辑有 live 测试和单元测试；磁盘缓存和清除见 `outline_on_disk_is_used_when_auto_update_is_off_and_clear_removes_it`）
 - [x] 代码段：新建带占位符的片段，通过补全插入后 Tab 依次选中占位符；预设的片段不能编辑。
-- [ ] 代码段编辑框按所选数据库类型补全关键字、内置函数和同类型片段名；类型为“全部”时不补全。
+- [x] 代码段编辑框按所选数据库类型补全关键字、内置函数和同类型片段名；类型为“全部”时不补全。（`an_untyped_snippet_offers_no_names_and_a_typed_one_keeps_its_driver`；见 [验收记录](../pr/acceptance-sql-field-completion.md)。）
 - [x] 保存的查询出现在导航树的“查询”分类下；重命名、复制、删除改的是文件；在外部改了文件，重新激活选项卡时提示重新加载。（文件操作和重新加载有测试；导航树见 `a_saved_query_is_listed_under_queries`）
 - [x] 强制结束进程再启动，弹出“恢复”窗口，恢复出的文本与结束前一致。
