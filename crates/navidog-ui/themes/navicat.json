@@ -29,7 +29,7 @@
           "string.escape": { "color": "#036A07" },
           "string.special": { "color": "#d21f07" },
           "type": { "color": "#6f42c1" },
-          "property": { "color": "#9A4D00" },
+          "property": { "color": "#C2410C" },
           "variable": { "color": "#333333" },
           "variable.special": { "color": "#C5060B" }
         }
@@ -155,7 +155,7 @@
           "string.escape": { "color": "#68DC7C" },
           "string.special": { "color": "#A3E09F" },
           "type": { "color": "#CBA6F7" },
-          "property": { "color": "#BCC4E0" },
+          "property": { "color": "#FF8A5B" },
           "variable.special": { "color": "#419CFF" }
         }
       },

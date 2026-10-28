@@ -216,9 +216,27 @@ pub fn apply_family(family: ThemeFamily, cx: &mut App) {
         tracing::error!("missing theme {dark_name}");
         return;
     };
+    // Default Light's field color is `#333333` and Default Dark's is `#BCC4E0`,
+    // both next to the body text. Use the same orange as the Navidog theme.
+    let (light, dark) = if matches!(family, ThemeFamily::Default) {
+        let mut light = (*light).clone();
+        let mut dark = (*dark).clone();
+        set_field_color(&mut light, "#C2410C");
+        set_field_color(&mut dark, "#FF8A5B");
+        (Rc::new(light), Rc::new(dark))
+    } else {
+        (light, dark)
+    };
     let theme = Theme::global_mut(cx);
     theme.light_theme = light;
     theme.dark_theme = dark;
+}
+
+fn set_field_color(config: &mut gpui_kit::component::ThemeConfig, hex: &str) {
+    let Some(highlight) = config.highlight.as_mut() else {
+        return;
+    };
+    highlight.syntax.property = serde_json::from_value(serde_json::json!({ "color": hex })).ok();
 }
 
 /// Keeps the rem base at 13pt. The Default theme omits `font.size`, and gpui's built-in size is 16.
@@ -457,6 +475,12 @@ mod tests {
             });
             cx.update(|cx| {
                 assert_eq!(Theme::global(cx).theme_name().as_ref(), name);
+                let field = if mode.is_dark() { "#ff8a5b" } else { "#c2410c" };
+                assert_eq!(
+                    syntax_color("property", cx).map(to_hex).as_deref(),
+                    Some(field),
+                    "{name}"
+                );
                 let colors = palette(cx);
                 if family == ThemeFamily::Navidog {
                     let expected = if mode.is_dark() {
