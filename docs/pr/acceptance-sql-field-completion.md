@@ -17,6 +17,8 @@
 | --- | --- |
 | `navidog-sql` completion 测试 | 通过，含当前表字段和额外类型名不必先写 `FROM`；条件关键字保留 `AND`/`OR`，不给 `SELECT`；`\r\n` 收成一个空格 |
 | `where_text_collapses_a_pasted_line_break` | 通过。菜单关着时回车套用筛选的判定在 `a_closed_menu_applies_and_an_open_one_confirms_or_dismisses` |
+| `a_single_line_sql_editor_does_not_scroll` | 通过。单行框把滚动范围夹到 0；普通代码编辑器仍能滚进末行下的空行 |
+| `query_pages_follow_the_editor` | 通过。编辑框改到主窗口遮罩后，测试窗口同样画出这一层 |
 | `console_enter_confirms_completion_instead_of_running` | 通过。菜单打开时方向键不翻历史，回车不执行 |
 | `an_untyped_snippet_offers_no_names_and_a_typed_one_keeps_its_driver` | 通过 |
 | `expression_completion_lists_draft_columns_and_definition_lists_types` | 通过。`edits_fields_previews_sql_and_restores_drafts` 仍从默认值框写回草稿 |
