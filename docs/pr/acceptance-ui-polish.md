@@ -28,7 +28,18 @@
 | `cargo test -p navidog-connection --lib failed_password_save_still_uses_credentials_once` | 通过 |
 | `cargo test -p navidog --test close_prompt` | 通过；同一进程里覆盖单表提交，以及两个脏查询的关闭全部、放弃后继续、取消后停止 |
 | `cargo clippy`（改动的 crate，`--all-targets -- -D warnings`） | 通过 |
-| `scripts/check-i18n.sh`、`scripts/check-dialect-branches.sh`、`scripts/check-raw-px.sh` | 通过 |
-| `cargo fmt`（改动的 crate） | 已格式化 |
+| `scripts/check-i18n.sh`、`scripts/check-dialect-branches.sh`、`scripts/check-raw-px.sh`、`scripts/check-deps.sh` | 通过 |
+| `cargo fmt --all --check` | 通过 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | 通过（2026-10-28 补跑，此前 CI 四平台都失败） |
+| `cargo test --workspace --no-fail-fast` | 通过，334 项，0 失败（2026-10-28 补跑） |
 
-全工作区 `cargo test --workspace`、截图和实库测试这次没有重跑。对象列表和测试连接底栏的并排目测仍按规格清单留着。
+截图和实库测试这次没有重跑。对象列表和测试连接底栏的并排目测仍按规格清单留着。
+
+## CI 修复（2026-10-28）
+
+Lint 工作流在 macOS（两种架构）、Linux 和 Windows 上同时止于 `-D warnings`；四个日志指向同一批问题：
+
+- `crates/navidog-navigator/src/objects.rs`：`hidden_selection` 的两处调用把已经是 `&Sessions` 的 `sessions` 又借了一层，`clippy::needless_borrow`。去掉多余的 `&`。
+- `crates/navidog-query/src/save.rs`：`NamePrompt` 新增的 `cancel: Rc<dyn Fn(&mut Window, &mut App)>` 触发 `clippy::type_complexity`，提成 `type Cancelled`，与同文件的 `Named` 及 `navidog-navigator` 的 `ToggleMaximize` 写法一致。这一处原先被前面的错误挡住，修掉前两处才暴露。
+
+两处都只改写法，行为不变。修复后按 CI 的顺序重跑了全工作区的 clippy 和测试；此前 CI 在 clippy 就停了，`test` 步骤的结论是空白的。
