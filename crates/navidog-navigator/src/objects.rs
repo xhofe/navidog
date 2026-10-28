@@ -253,6 +253,67 @@ impl ObjectsPanel {
         });
     }
 
+    fn hidden_selection(selection: &Selection, sessions: &Sessions, show_system: bool) -> bool {
+        if show_system {
+            return false;
+        }
+        let scope_hidden = |scope: &Scope| {
+            let Some(dialect) = sessions.dialect(&scope.connection) else {
+                return false;
+            };
+            dialect.is_system_database(&scope.database)
+                || scope
+                    .schema
+                    .as_deref()
+                    .is_some_and(|schema| dialect.is_system_schema(schema))
+        };
+        match selection {
+            Selection::Database(connection, name) => sessions
+                .dialect(connection)
+                .is_some_and(|dialect| dialect.is_system_database(name)),
+            Selection::Schema(scope) | Selection::Category(scope, _) => scope_hidden(scope),
+            Selection::Object(object) => {
+                scope_hidden(&object.scope)
+                    || sessions
+                        .dialect(&object.scope.connection)
+                        .is_some_and(|dialect| dialect.is_system_object(&object.name))
+            }
+            _ => false,
+        }
+    }
+
+    /// Drops workspace selections that the "show system objects" switch just hid, so the
+    /// objects toolbar cannot still delete or design them.
+    pub fn drop_hidden_selections(cx: &mut App) {
+        if Settings::global(cx).show_system_objects {
+            return;
+        }
+        let (primary, rest) = {
+            let workspace = Workspace::global(cx).read(cx);
+            let primary = workspace.selection().clone();
+            let rest: Vec<_> = workspace.selections().skip(1).cloned().collect();
+            let sessions = Sessions::global(cx).read(cx);
+            let hidden =
+                |selection: &Selection| Self::hidden_selection(selection, &sessions, false);
+            if !hidden(&primary) && rest.iter().all(|selection| !hidden(selection)) {
+                return;
+            }
+            let rest: Vec<_> = rest
+                .into_iter()
+                .filter(|selection| !hidden(selection))
+                .collect();
+            if hidden(&primary) {
+                let mut rest = rest.into_iter();
+                (rest.next().unwrap_or(Selection::None), rest.collect())
+            } else {
+                (primary, rest)
+            }
+        };
+        Workspace::global(cx).update(cx, |workspace, cx| {
+            workspace.select_many(primary, rest, cx);
+        });
+    }
+
     /// The row count of the last render, or `None` until the panel rendered once.
     pub(crate) fn cached_rows(cx: &App) -> Option<usize> {
         let current = Workspace::global(cx).read(cx).selection().clone();
@@ -379,6 +440,9 @@ impl ObjectsPanel {
                 }
             }
         }
+        if Self::hidden_selection(&selection, &sessions, show_system) {
+            return Content::Empty;
+        }
         match &selection {
             Selection::None => connections(None),
             Selection::Group(g) => connections(Some(g)),
@@ -404,14 +468,6 @@ impl ObjectsPanel {
                 ),
                 _ => Content::Empty,
             },
-            Selection::Database(c, d)
-                if !show_system
-                    && sessions
-                        .dialect(c)
-                        .is_some_and(|dialect| dialect.is_system_database(d)) =>
-            {
-                Content::Empty
-            }
             Selection::Database(c, d) => match sessions.dialect(c) {
                 Some(dialect) if dialect.features().has_schemas => match catalog.schemas(c, d) {
                     Some(Load::Ready(list)) => Content::Rows(
@@ -433,16 +489,6 @@ impl ObjectsPanel {
                 },
                 _ => objects(&Scope::new(c.clone(), d.clone(), None), ObjectKind::Table),
             },
-            Selection::Schema(scope)
-                if !show_system
-                    && scope.schema.as_deref().is_some_and(|schema| {
-                        sessions
-                            .dialect(&scope.connection)
-                            .is_some_and(|dialect| dialect.is_system_schema(schema))
-                    }) =>
-            {
-                Content::Empty
-            }
             other => match listed_kind(other) {
                 Some((scope, kind)) => objects(&scope, kind),
                 None => Content::Empty,

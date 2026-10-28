@@ -794,6 +794,7 @@ impl Render for MainWindow {
                     s.show_system_objects = !s.show_system_objects
                 });
                 crate::menus::set_menus(cx);
+                navidog_navigator::ObjectsPanel::drop_hidden_selections(cx);
                 navidog_navigator::ObjectsPanel::refresh_count(cx);
                 cx.refresh_windows();
             }))
