@@ -479,6 +479,9 @@ prefs:
   color_keyword:
     en: Keyword
     zh-CN: 关键字
+  color_field:
+    en: Field
+    zh-CN: 字段
   color_comment:
     en: Comment
     zh-CN: 注释

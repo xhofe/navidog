@@ -250,6 +250,20 @@ mod macos {
         shot(&mut cx, "viewer.png");
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
+            window.click("toggle-filter", cx);
+        })
+        .unwrap();
+        shot(&mut cx, "viewer-filter.png");
+        cx.update(|cx| Theme::change(ThemeMode::Dark, None, cx));
+        shot(&mut cx, "viewer-filter-dark.png");
+        cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("toggle-filter", cx);
+        })
+        .unwrap();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
             window.click("viewer-find", cx);
             window.dispatch_action(Box::new(navidog_grid::ShowReplace), cx);
         })

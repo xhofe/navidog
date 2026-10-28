@@ -281,10 +281,19 @@ impl TableViewer {
             .items_center()
             .px_2()
             .gap_2()
+            .overflow_hidden()
             .child(label("WHERE"))
-            .child(Input::new(&self.view.filter).small().flex_1().min_w_0())
+            .child(
+                navidog_ui::skin::single_line_sql(&self.view.filter)
+                    .flex_1()
+                    .min_w_0(),
+            )
             .child(label("ORDER BY"))
-            .child(Input::new(&self.view.order).small().flex_1().min_w_0())
+            .child(
+                navidog_ui::skin::single_line_sql(&self.view.order)
+                    .flex_1()
+                    .min_w_0(),
+            )
     }
 
     pub(super) fn render_rule(&self, index: usize, cx: &mut Context<Self>) -> impl IntoElement {

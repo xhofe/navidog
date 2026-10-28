@@ -2490,3 +2490,111 @@ fn a_dirty_result_keeps_its_sort_arrow(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui_kit::test]
+fn console_enter_confirms_completion_instead_of_running(cx: &mut TestAppContext) {
+    let (_guard, home) = isolate_home("console-complete");
+    let file = home.join("console-complete.db");
+    sql(&file, "CREATE TABLE c(id INTEGER PRIMARY KEY)");
+    let id = cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_app_state::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_session::init(cx);
+        navidog_grid::init(cx);
+        crate::init(cx);
+        ConnectionStore::global(cx).update(cx, |s, cx| {
+            s.set_key(Key::random());
+            let mut c = Connection::new("sqlite");
+            c.name = "console-complete".into();
+            c.general.file = Some(file.to_string_lossy().into_owned());
+            let id = c.id.clone();
+            s.upsert(c, &[], cx).unwrap();
+            id
+        })
+    });
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        Sessions::global(cx).update(cx, |s, cx| s.open(id.clone(), Secrets::default(), cx))
+    });
+    wait(cx, "the connection", |cx| {
+        cx.update(|cx| Sessions::global(cx).read(cx).state(&id).is_open())
+    });
+    struct Host {
+        console: Entity<crate::Console>,
+    }
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(self.console.clone())
+        }
+    }
+    let (handle, console) = cx.update(|cx| {
+        let mut console = None;
+        let h = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+            let view = crate::Console::new(id.clone(), Some("main".into()), window, cx);
+            console = Some(view.clone());
+            cx.new(|_| Host { console: view })
+        })
+        .unwrap();
+        (h.0, console.unwrap())
+    });
+    wait(cx, "the console session", |cx| {
+        cx.update(|cx| console.read(cx).has_session())
+    });
+    enter_console(cx, handle, &console, "SELECT 1;");
+    wait(cx, "the console output", |cx| {
+        cx.update(|cx| console.read(cx).output_text().contains("1 row in set"))
+    });
+    let before = cx.update(|cx| console.read(cx).output_text());
+    cx.update_window(handle, |_, window, cx| {
+        let input = console.read(cx).input_state();
+        input.update(cx, |s, cx| {
+            s.set_value("SEL", window, cx);
+            s.focus(window, cx);
+            s.show_completions(window, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(
+            console
+                .read(cx)
+                .input_state()
+                .read(cx)
+                .completion_menu_state()
+                .open,
+            "typing a prefix should open the menu"
+        );
+    });
+    cx.update_window(handle, |_, window, cx| {
+        let input = console.read(cx).input_state();
+        input.update(cx, |s, cx| s.focus(window, cx));
+        window.render_frame(cx);
+        window.press("up", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|cx| console.read(cx).input_state().read(cx).value().to_string()),
+        "SEL",
+        "an open menu must not walk history"
+    );
+    cx.update_window(handle, |_, window, cx| {
+        let input = console.read(cx).input_state();
+        input.update(cx, |s, cx| s.focus(window, cx));
+        window.render_frame(cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (text, output) = cx.update(|cx| {
+        (
+            console.read(cx).input_state().read(cx).value().to_string(),
+            console.read(cx).output_text(),
+        )
+    });
+    assert_eq!(output, before, "enter must not run the statement");
+    assert!(!text.contains('\n'), "{text}");
+    assert_ne!(text, "SEL", "{text}");
+}

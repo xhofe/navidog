@@ -89,7 +89,8 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        window.click("designer-field-default", cx);
+        let id = panel.read(cx).properties[4].entity_id();
+        window.click(("input", id), cx);
         window.input("'guest'", cx);
     })
     .unwrap();
@@ -141,7 +142,7 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
         assert!(
             p.preview.is_none(),
             "length={:?} definition={:?} errors={:?} page={:?}",
-            p.properties[1].read(cx).value(),
+            p.properties[1].value(cx),
             p.draft.columns[1].definition,
             p.invalid_inputs,
             p.page == super::Page::Preview
@@ -179,9 +180,9 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
                 .unwrap();
             cx.run_until_parked();
             cx.update_window(handle, |_, w, cx| {
-                let input = panel.read(cx).entry_inputs[0].read(cx);
+                let input = panel.read(cx).entry_inputs[0].text();
                 assert!(
-                    gpui_kit::Focusable::focus_handle(input, cx).is_focused(w),
+                    gpui_kit::Focusable::focus_handle(&input, cx).is_focused(w),
                     "disabled method picker must not open its menu or steal input focus"
                 );
             })
@@ -262,7 +263,8 @@ fn edits_fields_previews_sql_and_restores_drafts(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        window.click("designer-field-default", cx);
+        let id = panel.read(cx).properties[4].entity_id();
+        window.click(("input", id), cx);
         window.press("cmd-d", cx);
     })
     .unwrap();
@@ -573,7 +575,7 @@ fn cascades_real_reference_metadata_and_preserves_drafts(cx: &mut TestAppContext
     cx.update(|cx| {
         let p = panel.read(cx);
         assert_eq!(p.reference_values(6, cx), vec!["a", "b"]);
-        assert_eq!(p.entry_inputs[6].read(cx).value(), "");
+        assert_eq!(p.entry_inputs[6].value(cx), "");
         assert!(!p.invalid_inputs.is_empty());
     });
     cx.update_window(handle, |_, w, cx| w.click("designer-save", cx))
@@ -653,7 +655,7 @@ fn cascades_real_reference_metadata_and_preserves_drafts(cx: &mut TestAppContext
     cx.update(|cx| {
         let p = panel.read(cx);
         assert_eq!(p.reference_values(6, cx), vec!["id", "field_2"]);
-        assert_eq!(p.entry_inputs[6].read(cx).value(), "");
+        assert_eq!(p.entry_inputs[6].value(cx), "");
     });
 }
 
@@ -879,7 +881,8 @@ fn postgres_comments_edit_in_the_grid_preview_and_restore(cx: &mut TestAppContex
         .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, w, cx| {
-        w.click("designer-field-default", cx);
+        let id = panel.read(cx).properties[4].entity_id();
+        w.click(("input", id), cx);
         w.press("cmd-d", cx);
     })
     .unwrap();
@@ -944,7 +947,7 @@ fn reload_rebuilds_entry_forms_and_clears_validation(cx: &mut TestAppContext) {
             assert!(!p.dirty());
             assert!(p.active_cell.is_none());
             assert_eq!(p.entry_selected, Some(0));
-            assert_eq!(p.entry_inputs[0].read(cx).value(), "a");
+            assert_eq!(p.entry_inputs[0].value(cx), "a");
         })
     })
     .unwrap();
@@ -974,7 +977,7 @@ fn reload_rebuilds_entry_forms_and_clears_validation(cx: &mut TestAppContext) {
                 w,
                 cx,
             );
-            assert_eq!(p.entry_inputs[1].read(cx).value(), "");
+            assert_eq!(p.entry_inputs[1].value(cx), "");
             p.choose_value(
                 &ChooseValue {
                     target: 11,
@@ -983,7 +986,7 @@ fn reload_rebuilds_entry_forms_and_clears_validation(cx: &mut TestAppContext) {
                 w,
                 cx,
             );
-            assert_eq!(p.entry_inputs[1].read(cx).value(), "\"id\"");
+            assert_eq!(p.entry_inputs[1].value(cx), "\"id\"");
         })
     })
     .unwrap();
@@ -1157,4 +1160,66 @@ fn missing_connection_confirms_before_discarding_a_dirty_draft(cx: &mut TestAppC
         assert!(area.read(cx).panel(panel_id).is_none());
         assert!(!area.read(cx).is_empty(DockPlacement::Center, cx));
     });
+}
+
+#[gpui_kit::test]
+fn an_unedited_definition_and_check_keep_their_line_breaks(cx: &mut TestAppContext) {
+    use super::Page;
+    let (_guard, _) = isolate_home("keep-breaks");
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_app_state::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_ui::tabs::init(cx);
+        navidog_session::init(cx);
+        crate::init(cx);
+        remember(cx, "test", "sqlite");
+    });
+    let (handle, panel) = cx.update(|cx| {
+        let mut panel = None;
+        let window = gpui_kit::open_window(WindowOptions::default(), cx, |w, cx| {
+            let p = TableDesigner::new(Scope::new("test", "main", None), w, cx);
+            panel = Some(p.clone());
+            cx.new(|_| Host(p))
+        })
+        .unwrap();
+        (window.0, panel.unwrap())
+    });
+    cx.update_window(handle, |_, w, cx| {
+        panel.update(cx, |p, cx| {
+            let definition = "TEXT DEFAULT 'a\nb'";
+            p.draft.columns[0].definition = definition.into();
+            p.sync_column(w, cx);
+            p.flush(cx);
+            assert_eq!(p.draft.columns[0].definition, definition);
+
+            p.draft
+                .constraints
+                .push("CONSTRAINT chk CHECK (note = 'a\nb')".into());
+            p.page = Page::Checks;
+            p.entry_selected = Some(0);
+            p.sync_entry(w, cx);
+            assert_eq!(p.draft.columns[0].definition, definition);
+            assert!(
+                p.entry_inputs[9].value(cx).contains('\n'),
+                "loaded expression: {}",
+                p.entry_inputs[9].value(cx)
+            );
+            p.entry_inputs[0].set_value("renamed", w, cx);
+            p.entry_changed(0, w, cx);
+            let check = &p.draft.constraints[1];
+            assert!(check.contains("renamed"), "{check}");
+            assert!(check.contains('\n'), "{check}");
+
+            p.definition.update(cx, |s, cx| {
+                s.set_value("TEXT DEFAULT 'a\nb' /* edited */", w, cx)
+            });
+            p.flush(cx);
+            assert_eq!(
+                p.draft.columns[0].definition,
+                "TEXT DEFAULT 'a b' /* edited */"
+            );
+        })
+    })
+    .unwrap();
 }

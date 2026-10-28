@@ -1,6 +1,14 @@
+use std::ops::Range;
+use std::rc::Rc;
+
+use gpui_kit::component::highlighter::SyntaxHighlighter;
+use gpui_kit::component::input::{
+    EditorState, FoldRange, HighlightStyleResolver, InputEdit, InputHighlighter,
+    InputHighlighterFactory, Rope,
+};
 use gpui_kit::component::scroll::ScrollbarMode;
 use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
-use gpui_kit::{App, Window};
+use gpui_kit::{App, Context, HighlightStyle, SharedString, Window};
 
 const NAVICAT_THEME: &str = include_str!("../themes/navicat.json");
 pub const LIGHT: &str = "Navicat Light";
@@ -37,6 +45,159 @@ pub fn init(cx: &mut App) {
     Theme::change(ThemeMode::Light, None, cx);
     // Show the bar when the pointer is over the scroll area.
     Theme::set_scrollbar_mode(ScrollbarMode::Hover, cx);
+    // The SQL grammar captures a column as `@field`. The theme has no such key,
+    // so the name stayed the body color. `property` is a real key.
+    paint_sql_columns();
+}
+
+/// Point the SQL column capture at `syntax.property`.
+///
+/// A leading `(identifier)` capture paints identifier nodes that are not
+/// columns. Later captures (table `@type`, function, alias) still win.
+/// A clause fragment never builds those nodes; [`ClauseHighlighter`] paints
+/// the words the grammar drops.
+fn paint_sql_columns() {
+    use gpui_kit::component::highlighter::LanguageRegistry;
+    let Some(mut sql) = LanguageRegistry::singleton().language("sql") else {
+        return;
+    };
+    let mut highlights = sql.highlights.replace("@field", "@property");
+    const BARE: &str = "(identifier) @property\n";
+    if !highlights.contains(BARE) {
+        highlights.insert_str(0, BARE);
+    }
+    if highlights == sql.highlights.as_ref() {
+        return;
+    }
+    sql.highlights = highlights.into();
+    LanguageRegistry::singleton().register("sql", &sql);
+}
+
+/// SQL highlighting for a one-line clause.
+///
+/// tree-sitter-sequel only builds a `field` node inside a statement, and its
+/// error recovery does not even keep the identifier. Words that the syntax
+/// styles left uncolored become `property`. Keywords, strings, comments and
+/// names that already have a color stay as they are.
+///
+/// ponytail: each edit builds a new highlighter. A clause is one row, so a
+/// full reparse is cheaper than threading tree-sitter's `InputEdit` through.
+/// Forward the editor's edit if these boxes ever hold a whole script.
+struct ClauseHighlighter {
+    inner: SyntaxHighlighter,
+    text: String,
+}
+
+impl ClauseHighlighter {
+    fn new() -> Self {
+        Self {
+            inner: SyntaxHighlighter::new("sql"),
+            text: String::new(),
+        }
+    }
+
+    fn sync(&mut self, text: &Rope) {
+        let next = text.to_string();
+        if next == self.text {
+            return;
+        }
+        self.inner = SyntaxHighlighter::new("sql");
+        self.inner.update(None, text, None);
+        self.text = next;
+    }
+}
+
+impl InputHighlighter for ClauseHighlighter {
+    fn language(&self) -> SharedString {
+        "sql".into()
+    }
+
+    fn update(
+        &mut self,
+        _edit: Option<InputEdit>,
+        text: &Rope,
+        _folding: bool,
+        _window: &mut Window,
+        _cx: &mut Context<EditorState>,
+    ) {
+        self.sync(text);
+    }
+
+    fn styles(
+        &self,
+        range: &Range<usize>,
+        resolver: &dyn HighlightStyleResolver,
+    ) -> Vec<(Range<usize>, HighlightStyle)> {
+        let styles = self.inner.styles(range, resolver);
+        let Some(property) = resolver.style("property") else {
+            return styles;
+        };
+        paint_uncolored_words(&self.text, styles, property)
+    }
+
+    fn fold_ranges(&self, _: &Rope) -> Vec<FoldRange> {
+        Vec::new()
+    }
+}
+
+/// Install [`ClauseHighlighter`] on a one-line SQL editor. Callers set the
+/// language to `sql` first. A different language would get no highlighter,
+/// because this replaces the editor's factory.
+pub(crate) fn use_clause_highlighter(state: &mut EditorState, cx: &mut Context<EditorState>) {
+    let factory: InputHighlighterFactory = Rc::new(|language| {
+        language
+            .eq_ignore_ascii_case("sql")
+            .then(|| Box::new(ClauseHighlighter::new()) as Box<dyn InputHighlighter>)
+    });
+    state.set_highlighter_factory(factory, cx);
+}
+
+/// Words the SQL grammar did not color. Quoted identifiers count; keywords do
+/// not, so a dropped `AND` stays the body color instead of a field.
+fn bare_ident_ranges(text: &str) -> Vec<Range<usize>> {
+    navidog_sql::span::spans(text, navidog_sql::span::Lex::GENERIC)
+        .into_iter()
+        .filter(|span| match span.kind {
+            navidog_sql::span::SpanKind::QuotedIdent => true,
+            navidog_sql::span::SpanKind::Word => !navidog_sql::keywords::COMMON
+                .iter()
+                .any(|keyword| keyword.eq_ignore_ascii_case(span.text(text))),
+            _ => false,
+        })
+        .map(|span| span.range)
+        .collect()
+}
+
+fn paint_uncolored_words(
+    text: &str,
+    styles: Vec<(Range<usize>, HighlightStyle)>,
+    property: HighlightStyle,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let words = bare_ident_ranges(text);
+    let mut out = Vec::with_capacity(styles.len());
+    for (range, style) in styles {
+        if style.color.is_some() || range.is_empty() {
+            out.push((range, style));
+            continue;
+        }
+        let mut cursor = range.start;
+        for word in &words {
+            let start = word.start.max(range.start);
+            let end = word.end.min(range.end);
+            if start >= end {
+                continue;
+            }
+            if cursor < start {
+                out.push((cursor..start, style));
+            }
+            out.push((start..end, property));
+            cursor = end;
+        }
+        if cursor < range.end {
+            out.push((cursor..range.end, style));
+        }
+    }
+    out
 }
 
 /// Points the light and dark slots at one family. Call [`apply_appearance`] afterwards so
@@ -55,9 +216,27 @@ pub fn apply_family(family: ThemeFamily, cx: &mut App) {
         tracing::error!("missing theme {dark_name}");
         return;
     };
+    // Default Light's field color is `#333333` and Default Dark's is `#BCC4E0`,
+    // both next to the body text. Use the same orange as the Navidog theme.
+    let (light, dark) = if matches!(family, ThemeFamily::Default) {
+        let mut light = (*light).clone();
+        let mut dark = (*dark).clone();
+        set_field_color(&mut light, "#C2410C");
+        set_field_color(&mut dark, "#FF8A5B");
+        (Rc::new(light), Rc::new(dark))
+    } else {
+        (light, dark)
+    };
     let theme = Theme::global_mut(cx);
     theme.light_theme = light;
     theme.dark_theme = dark;
+}
+
+fn set_field_color(config: &mut gpui_kit::component::ThemeConfig, hex: &str) {
+    let Some(highlight) = config.highlight.as_mut() else {
+        return;
+    };
+    highlight.syntax.property = serde_json::from_value(serde_json::json!({ "color": hex })).ok();
 }
 
 /// Keeps the rem base at 13pt. The Default theme omits `font.size`, and gpui's built-in size is 16.
@@ -78,9 +257,10 @@ pub fn apply_appearance(dark: Option<bool>, window: Option<&mut Window>, cx: &mu
 }
 
 /// Syntax color keys the Editor preferences can override (F-PREF-004).
-pub const SYNTAX_KEYS: [&str; 6] = [
+pub const SYNTAX_KEYS: [&str; 7] = [
     "text",
     "keyword",
+    "property",
     "comment",
     "string",
     "number",
@@ -104,6 +284,7 @@ pub fn apply_syntax_colors(colors: &std::collections::BTreeMap<String, String>, 
             "text" => theme.style.editor_foreground = Some(color),
             "background" => theme.style.editor_background = Some(color),
             "keyword" => syntax.keyword = style(),
+            "property" => syntax.property = style(),
             "comment" => {
                 syntax.comment = style();
                 syntax.comment_doc = style();
@@ -127,6 +308,7 @@ pub fn syntax_color(key: &str, cx: &App) -> Option<gpui_kit::Hsla> {
         "text" => style.editor_foreground,
         "background" => style.editor_background,
         "keyword" => pick(style.syntax.keyword),
+        "property" => pick(style.syntax.property),
         "comment" => pick(style.syntax.comment),
         "string" => pick(style.syntax.string),
         "number" => pick(style.syntax.number),
@@ -189,12 +371,17 @@ mod tests {
             init(cx);
             let colors = std::collections::BTreeMap::from([
                 ("keyword".to_string(), "#ff0000".to_string()),
+                ("property".to_string(), "#9a4d00".to_string()),
                 ("background".to_string(), "#000000".to_string()),
             ]);
             apply_syntax_colors(&colors, cx);
             assert_eq!(
                 syntax_color("keyword", cx).map(to_hex).as_deref(),
                 Some("#ff0000")
+            );
+            assert_eq!(
+                syntax_color("property", cx).map(to_hex).as_deref(),
+                Some("#9a4d00")
             );
             assert_eq!(
                 syntax_color("background", cx).map(to_hex).as_deref(),
@@ -226,6 +413,42 @@ mod tests {
         }
     }
 
+    /// A column reference takes the property color. A clause fragment has no
+    /// `field` node; the one-line highlighter paints that bare word. A table
+    /// name keeps `type`, and a string or operator stays uncolored.
+    #[gpui_kit::test]
+    fn a_column_name_uses_the_property_color(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::component::input::{InputHighlighter, Rope};
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let theme = Theme::global(cx).highlight_theme.clone();
+            let color_at = |sql: &str, needle: &str| {
+                let mut highlighter = ClauseHighlighter::new();
+                let rope = Rope::from(sql);
+                highlighter.sync(&rope);
+                let at = sql.find(needle).unwrap();
+                InputHighlighter::styles(&highlighter, &(0..rope.len()), theme.as_ref())
+                    .into_iter()
+                    .find(|(range, _)| range.start <= at && at < range.end)
+                    .and_then(|(_, style)| style.color)
+            };
+            let property =
+                gpui_kit::HighlightStyle::from(theme.style.syntax.property.unwrap()).color;
+            let keyword = gpui_kit::HighlightStyle::from(theme.style.syntax.keyword.unwrap()).color;
+            let ty = gpui_kit::HighlightStyle::from(theme.style.syntax.type_.unwrap()).color;
+            assert_eq!(color_at("select id from t", "id"), property);
+            assert_eq!(color_at("id = 1 AND first_name", "id"), property);
+            assert_eq!(color_at("id = 1 AND first_name", "first_name"), property);
+            assert_eq!(color_at("id = 1 AND first_name", "AND"), keyword);
+            assert_ne!(color_at("id = 1 AND first_name", "="), property);
+            assert_ne!(color_at("id = 1 AND first_name", "1"), property);
+            assert_ne!(color_at("id = 'abc'", "abc"), property);
+            assert_eq!(color_at("SELECT id FROM actor", "actor"), ty);
+            assert_ne!(color_at("SELECT id FROM actor", "actor"), property);
+        });
+    }
+
     /// Default uses gpui-kit's shadcn themes; Navidog restores the measured palette. Font stays 13pt.
     #[gpui_kit::test]
     fn switching_family_swaps_the_theme_and_palette(cx: &mut gpui_kit::TestAppContext) {
@@ -252,6 +475,12 @@ mod tests {
             });
             cx.update(|cx| {
                 assert_eq!(Theme::global(cx).theme_name().as_ref(), name);
+                let field = if mode.is_dark() { "#ff8a5b" } else { "#c2410c" };
+                assert_eq!(
+                    syntax_color("property", cx).map(to_hex).as_deref(),
+                    Some(field),
+                    "{name}"
+                );
                 let colors = palette(cx);
                 if family == ThemeFamily::Navidog {
                     let expected = if mode.is_dark() {

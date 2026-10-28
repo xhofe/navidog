@@ -1,23 +1,32 @@
 //! Console (31-query-results.md §7, F-QRY-014): a mysql / psql style prompt on its own session.
 //! Enter runs the input once it ends with the statement terminator; ↑ and ↓ walk the history.
 
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
+use anyhow::Result;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, TabGroup, panel_handle,
     register_panel,
 };
-use gpui_kit::component::input::{Editor, EditorState, Enter, MoveDown, MoveUp};
+use gpui_kit::component::input::{
+    CompletionProvider, Editor, EditorState, Enter, InputEvent, MoveDown, MoveUp, Rope,
+};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, Styled as _,
-    Subscription, Task, WeakEntity, Window, div,
+    Subscription, Task, WeakEntity, Window, div, px,
 };
+use lsp_types::{CompletionContext, CompletionResponse};
+use navidog_app_state::settings::Settings;
+use navidog_app_state::snippets::Snippets;
 use navidog_app_state::store::ConnectionStore;
 use navidog_db::{CancelHandle, DbError, ResultSet};
+use navidog_model::object::Scope;
+use navidog_session::outline::OutlineCache;
 use navidog_session::sessions::{Sessions, SessionsEvent, SharedSession, run_on};
 use navidog_sql::dialect::Dialect;
 use navidog_ui::assets::lucide;
@@ -133,6 +142,8 @@ pub struct Console {
     history: Vec<String>,
     /// Position while walking the history with ↑ / ↓
     history_ix: Option<usize>,
+    /// An arrow key moved the completion menu since it opened.
+    menu_moved: bool,
     session: Option<SharedSession>,
     cancel: Option<CancelHandle>,
     dialect: Option<Arc<dyn Dialect>>,
@@ -233,25 +244,40 @@ impl Console {
                 .auto_close(false)
         });
         cx.new(|cx: &mut Context<Self>| {
-            let subs = vec![cx.subscribe_in(
-                &Sessions::global(cx),
-                window,
-                |this, _, e: &SessionsEvent, window, cx| match e {
-                    SessionsEvent::Opened(id)
-                        if *id == this.connection && this.session.is_none() =>
-                    {
-                        this.connect(window, cx)
+            let console = cx.entity().downgrade();
+            input.update(cx, |e, _| {
+                e.lsp_mut().completion_provider = Some(Rc::new(ConsoleProvider { console }));
+                e.lsp_mut()
+                    .set_completion_highlighter(Rc::new(crate::completion::highlight_label));
+                // raw-px: room for "column · type" labels, same as the query editor
+                e.lsp_mut().completion_menu.max_width = px(420.);
+            });
+            let subs = vec![
+                cx.subscribe_in(&input, window, |this, _, e: &InputEvent, _, _| {
+                    if matches!(e, InputEvent::Change) {
+                        this.menu_moved = false;
                     }
-                    // Bound to its session: it closes with the connection, like a table viewer
-                    SessionsEvent::Closed(id) if *id == this.connection => this.close_tab(cx),
-                    SessionsEvent::Reopening(id) if *id == this.connection => {
-                        if let Some(s) = this.session.take() {
-                            navidog_grid::commit::close_session(s);
+                }),
+                cx.subscribe_in(
+                    &Sessions::global(cx),
+                    window,
+                    |this, _, e: &SessionsEvent, window, cx| match e {
+                        SessionsEvent::Opened(id)
+                            if *id == this.connection && this.session.is_none() =>
+                        {
+                            this.connect(window, cx)
                         }
-                    }
-                    _ => {}
-                },
-            )];
+                        // Bound to its session: it closes with the connection, like a table viewer
+                        SessionsEvent::Closed(id) if *id == this.connection => this.close_tab(cx),
+                        SessionsEvent::Reopening(id) if *id == this.connection => {
+                            if let Some(s) = this.session.take() {
+                                navidog_grid::commit::close_session(s);
+                            }
+                        }
+                        _ => {}
+                    },
+                ),
+            ];
             let mut this = Self {
                 focus_handle: cx.focus_handle(),
                 connection,
@@ -261,6 +287,7 @@ impl Console {
                 input,
                 history: Vec::new(),
                 history_ix: None,
+                menu_moved: false,
                 session: None,
                 cancel: None,
                 dialect: None,
@@ -277,12 +304,20 @@ impl Console {
     }
 
     fn connect(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        let sessions = Sessions::global(cx).read(cx);
-        if !sessions.state(&self.connection).is_open() {
+        let (open, dialect, job) = {
+            let sessions = Sessions::global(cx).read(cx);
+            (
+                sessions.state(&self.connection).is_open(),
+                sessions.dialect(&self.connection),
+                sessions.new_session(&self.connection, self.database.as_deref()),
+            )
+        };
+        if !open {
             return;
         }
-        self.dialect = sessions.dialect(&self.connection);
-        let Some(job) = sessions.new_session(&self.connection, self.database.as_deref()) else {
+        self.dialect = dialect;
+        self.ensure_outline(cx);
+        let Some(job) = job else {
             return;
         };
         let (dialect, database) = (self.dialect.clone(), self.database.clone());
@@ -474,6 +509,27 @@ impl Console {
         self.append(out, cx);
     }
 
+    fn ensure_outline(&mut self, cx: &mut Context<Self>) {
+        let Some(database) = self.database.clone().filter(|d| !d.is_empty()) else {
+            return;
+        };
+        let scope = Scope::new(self.connection.clone(), database, None);
+        let auto = Settings::global(cx).auto_update_outline;
+        OutlineCache::global(cx).update(cx, |c, cx| c.ensure(&scope, auto, cx));
+    }
+
+    fn completion_open(&self, cx: &App) -> bool {
+        self.input.read(cx).completion_menu_state().open
+    }
+
+    fn accepts_completion(&self, cx: &App) -> bool {
+        Settings::global(cx).auto_select_first || self.menu_moved
+    }
+
+    fn input_focused(&self, window: &Window, cx: &App) -> bool {
+        self.input.read(cx).focus_handle(cx).is_focused(window)
+    }
+
     fn clear_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.input.update(cx, |e, cx| e.set_value("", window, cx));
     }
@@ -551,16 +607,47 @@ impl Render for Console {
             .bg(p.control_bg)
             .on_action(cx.listener(|this, _: &Stop, _, _| this.stop()))
             .capture_action(cx.listener(|this, _: &Enter, window, cx| {
+                if this.input_focused(window, cx) && this.completion_open(cx) {
+                    match console_enter(true, this.accepts_completion(cx)) {
+                        ConsoleEnter::Accept => {
+                            this.input.update(cx, |e, cx| {
+                                e.route_overlay_action(
+                                    Box::new(Enter {
+                                        secondary: false,
+                                        shift: false,
+                                    }),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }
+                        ConsoleEnter::Dismiss => {
+                            this.input
+                                .update(cx, |e, cx| e.dismiss_completion_overlay(cx));
+                        }
+                        ConsoleEnter::Run => return,
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
                 if this.on_enter(window, cx) {
                     cx.stop_propagation();
                 }
             }))
             .capture_action(cx.listener(|this, _: &MoveUp, window, cx| {
+                if history_yields(this.completion_open(cx)) {
+                    this.menu_moved = true;
+                    return;
+                }
                 if this.walk_history(true, window, cx) {
                     cx.stop_propagation();
                 }
             }))
             .capture_action(cx.listener(|this, _: &MoveDown, window, cx| {
+                if history_yields(this.completion_open(cx)) {
+                    this.menu_moved = true;
+                    return;
+                }
                 if this.walk_history(false, window, cx) {
                     cx.stop_propagation();
                 }
@@ -598,6 +685,92 @@ impl Render for Console {
     }
 }
 
+/// Enter while the completion menu is open confirms or dismisses it, and does not run SQL.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ConsoleEnter {
+    Run,
+    Accept,
+    Dismiss,
+}
+
+pub(crate) fn console_enter(menu_open: bool, accepts: bool) -> ConsoleEnter {
+    if !menu_open {
+        ConsoleEnter::Run
+    } else if accepts {
+        ConsoleEnter::Accept
+    } else {
+        ConsoleEnter::Dismiss
+    }
+}
+
+/// ↑ and ↓ move the menu instead of walking history while it is open.
+pub(crate) fn history_yields(menu_open: bool) -> bool {
+    menu_open
+}
+
+struct ConsoleProvider {
+    console: WeakEntity<Console>,
+}
+
+impl CompletionProvider for ConsoleProvider {
+    fn completions(
+        &self,
+        text: &Rope,
+        offset: usize,
+        _: CompletionContext,
+        _: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<CompletionResponse>> {
+        let Some(console) = self.console.upgrade() else {
+            return Task::ready(Ok(CompletionResponse::Array(Vec::new())));
+        };
+        let (dialect, connection, database) = {
+            let c = console.read(cx);
+            (c.dialect.clone(), c.connection.clone(), c.database.clone())
+        };
+        let Some(dialect) = dialect else {
+            return Task::ready(Ok(CompletionResponse::Array(Vec::new())));
+        };
+        let driver = ConnectionStore::global(cx)
+            .read(cx)
+            .get(&connection)
+            .map(|c| c.driver.clone())
+            .unwrap_or_default();
+        let snippets: Vec<(String, String)> = Snippets::global(cx)
+            .read(cx)
+            .all()
+            .filter(|s| s.applies_to(&driver))
+            .map(|s| (s.name.clone(), s.code.clone()))
+            .collect();
+        let scope = database
+            .as_ref()
+            .filter(|d| !d.is_empty())
+            .map(|db| Scope::new(connection, db.clone(), None));
+        let current = if dialect.features().has_schemas {
+            dialect.default_schema().map(str::to_string)
+        } else {
+            database.filter(|d| !d.is_empty())
+        };
+        Task::ready(Ok(crate::completion::response(
+            &crate::completion::Request {
+                text,
+                offset,
+                dialect: dialect.as_ref(),
+                scope: scope.as_ref(),
+                current: current.as_deref(),
+                snippets: &snippets,
+                in_scope: &[],
+                extras: &[],
+            },
+            cx,
+        )))
+    }
+
+    fn is_completion_trigger(&self, _: usize, new_text: &str, cx: &mut App) -> bool {
+        Settings::global(cx).code_completion && navidog_sql::completion::is_trigger(new_text)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -627,6 +800,12 @@ mod tests {
         );
         assert!(complete("SELECT 1;  ", ";"));
         assert!(!complete("SELECT 1", ";"));
+        assert_eq!(console_enter(false, true), ConsoleEnter::Run);
+        assert_eq!(console_enter(false, false), ConsoleEnter::Run);
+        assert_eq!(console_enter(true, true), ConsoleEnter::Accept);
+        assert_eq!(console_enter(true, false), ConsoleEnter::Dismiss);
+        assert!(history_yields(true));
+        assert!(!history_yields(false));
         assert!(complete("END$$", "$$"));
     }
 

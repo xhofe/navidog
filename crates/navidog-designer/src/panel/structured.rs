@@ -164,7 +164,7 @@ impl TableDesigner {
             let editing = row.zip(self.active_cell).and_then(|(r, c)| {
                 let property = |property: ColumnProperty| {
                     let row = property_row(property);
-                    (self.properties[row].clone(), PROPERTY_IDS[row])
+                    (self.properties[row].text(), PROPERTY_IDS[row])
                 };
                 let (input, id) = match c {
                     FIELD_NAME => (self.name.clone(), "designer-field-name"),
@@ -291,11 +291,11 @@ impl TableDesigner {
             self.refresh_grid(cx);
             let input = match col {
                 0 => Some(self.name.clone()),
-                1 => Some(self.properties[0].clone()),
-                2 => Some(self.properties[1].clone()),
-                3 => Some(self.properties[2].clone()),
+                1 => Some(self.properties[0].text()),
+                2 => Some(self.properties[1].text()),
+                3 => Some(self.properties[2].text()),
                 7 if self.dialect.features().supports_column_comments => {
-                    Some(self.properties[3].clone())
+                    Some(self.properties[3].text())
                 }
                 _ => None,
             };
@@ -318,7 +318,12 @@ impl TableDesigner {
         if self.busy || !self.loaded {
             return;
         }
-        let value = self.properties[ix].read(cx).value().to_string();
+        let value = self.properties[ix].value(cx);
+        let value = if super::complete::property_is_sql(ix) {
+            navidog_sql::completion::one_line(&value)
+        } else {
+            value
+        };
         let Some(c) = self
             .draft
             .columns
@@ -624,7 +629,7 @@ impl TableDesigner {
             e.on_update,
             e.expression,
         ]) {
-            input.update(cx, |s, cx| s.set_value(value, window, cx));
+            input.set_value(value, window, cx);
         }
         self.syncing = false;
         if self.page == Page::ForeignKeys {
@@ -635,16 +640,18 @@ impl TableDesigner {
         if self.page == Page::ForeignKeys && [REFERENCE_SCHEMA, REFERENCE_TABLE].contains(&ix) {
             self.syncing = true;
             for dependent in (ix + 1)..=REFERENCE_FIELDS {
-                self.entry_inputs[dependent].update(cx, |s, cx| s.set_value("", window, cx));
+                self.entry_inputs[dependent].set_value("", window, cx);
             }
             self.syncing = false;
             self.load_references(window, cx);
         }
-        self.write_entry(None, window, cx);
+        let flatten = super::complete::entry_is_sql(ix).then_some(ix);
+        self.write_entry(None, flatten, window, cx);
     }
     pub(super) fn write_entry(
         &mut self,
         unique: Option<bool>,
+        flatten: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -660,7 +667,18 @@ impl TableDesigner {
         let v: Vec<String> = self
             .entry_inputs
             .iter()
-            .map(|i| i.read(cx).value().to_string())
+            .enumerate()
+            .map(|(i, input)| {
+                let value = input.value(cx);
+                // Only the field the user just edited loses its line breaks.
+                // Reading the others through `one_line` rewrote a CHECK or
+                // index predicate the user had not touched.
+                if flatten == Some(i) {
+                    navidog_sql::completion::one_line(&value)
+                } else {
+                    value
+                }
+            })
             .collect();
         e.name = v[0].clone();
         e.fields = v[1].clone();
@@ -817,7 +835,7 @@ impl TableDesigner {
                 return;
             };
             self.syncing = true;
-            input.update(cx, |s, cx| s.set_value(action.value.clone(), window, cx));
+            input.set_value(action.value.clone(), window, cx);
             self.syncing = false;
             self.property_changed(ix, window, cx);
         } else {
@@ -827,7 +845,7 @@ impl TableDesigner {
             };
             let value = if ix == 1 || ix == REFERENCE_FIELDS {
                 let field = self.dialect.quote_ident(&action.value);
-                let old = input.read(cx).value().to_string();
+                let old = input.value(cx);
                 let fields = split_field_list(&old, self.dialect.as_ref()).unwrap_or_default();
                 if fields
                     .iter()
@@ -848,7 +866,7 @@ impl TableDesigner {
                 action.value.clone()
             };
             self.syncing = true;
-            input.update(cx, |s, cx| s.set_value(value, window, cx));
+            input.set_value(value, window, cx);
             self.syncing = false;
             self.entry_changed(ix, window, cx);
         }

@@ -197,6 +197,7 @@ impl Preferences {
             match key {
                 "text" => t!("prefs.color_text"),
                 "keyword" => t!("prefs.color_keyword"),
+                "property" => t!("prefs.color_field"),
                 "comment" => t!("prefs.color_comment"),
                 "string" => t!("prefs.color_string"),
                 "number" => t!("prefs.color_number"),

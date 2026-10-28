@@ -78,6 +78,18 @@ impl Render for TableViewer {
                 this.reload_committed(true, window, cx)
             }))
             .on_action(cx.listener(|this, _: &StopLoad, _, _| this.stop()))
+            .capture_action(cx.listener(|this, _: &Enter, window, cx| {
+                this.on_sql_line_enter(window, cx);
+            }))
+            .capture_action(cx.listener(|this, _: &IndentInline, window, cx| {
+                this.on_sql_line_tab(window, cx);
+            }))
+            .capture_action(cx.listener(|this, _: &MoveUp, _, cx| {
+                this.note_sql_menu_moved(cx);
+            }))
+            .capture_action(cx.listener(|this, _: &MoveDown, _, cx| {
+                this.note_sql_menu_moved(cx);
+            }))
             .on_action(
                 cx.listener(|this, _: &SortAscending, _, cx| this.sort_focused(Some(true), cx)),
             )

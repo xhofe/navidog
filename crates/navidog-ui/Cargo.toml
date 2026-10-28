@@ -9,6 +9,7 @@ description = "Design tokens, theme, and shared widgets for navidog."
 
 [dependencies]
 gpui-kit.workspace = true
+navidog-sql = { path = "../navidog-sql" }
 tracing.workspace = true
 rust-i18n.workspace = true
 hex.workspace = true

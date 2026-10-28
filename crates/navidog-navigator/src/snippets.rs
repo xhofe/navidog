@@ -1,19 +1,33 @@
 //! Code snippets page of the info pane and the snippet dialogs (30-query-editor.md §5, F-INFO-005).
 
+use std::ops::Range;
+use std::rc::Rc;
+
+use anyhow::Result;
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Editor, EditorState, Input, InputState};
+use gpui_kit::component::input::{
+    CompletionProvider, Editor, EditorState, Input, InputState, Rope, RopeExt as _,
+};
 use gpui_kit::component::native_menu::NativeMenu;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, AppContext as _, ClickEvent, Context, Entity, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Window, div,
+    AnyElement, App, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Global,
+    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Render,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, deferred,
+    div, px,
+};
+use lsp_types::{
+    CompletionContext, CompletionItem, CompletionResponse, CompletionTextEdit, TextEdit,
 };
 use navidog_app_state::actions::InsertText;
+use navidog_app_state::settings::Settings;
 use navidog_app_state::snippets::{Snippet, Snippets};
 use navidog_app_state::store::ConnectionStore;
 use navidog_app_state::workspace::Workspace;
+use navidog_session::DriverRegistry;
+use navidog_sql::completion::{self, Hit, Kind, Sources};
 use navidog_ui::assets::lucide;
 use navidog_ui::skin::{FormRow, heading, truncated};
 use navidog_ui::{palette, tokens};
@@ -466,20 +480,117 @@ pub(crate) fn open_editor(
                     EditorState::new(window, cx)
                         .language("sql")
                         .line_number(false)
+                        .auto_close(false)
                 });
                 e.update(cx, |e, cx| e.set_value(code, window, cx));
+                let provider = Rc::new(SnippetProvider {
+                    editor: cx.entity().downgrade(),
+                });
+                e.update(cx, |state, _| {
+                    state.lsp_mut().completion_provider = Some(provider);
+                    state
+                        .lsp_mut()
+                        .set_completion_highlighter(Rc::new(highlight_label));
+                    // raw-px: room for a kind label beside the name
+                    state.lsp_mut().completion_menu.max_width = px(420.);
+                });
                 e
             },
             driver: s.driver.clone(),
             id: s.id.clone(),
         }
     });
-    window.open_dialog(cx, move |dialog, window, _| {
-        dialog
-            .w(tokens::snippet::POPOVER_WIDTH.to_pixels(window.rem_size()))
-            .close_button(false)
-            .child(view.clone())
+    let previous = window.focused(cx);
+    let form = SnippetForm::global(cx);
+    form.update(cx, |form, cx| {
+        form.editor = Some(view.clone());
+        form.previous = previous;
+        cx.notify();
     });
+    view.update(cx, |editor, cx| {
+        editor.name.update(cx, |name, cx| name.focus(window, cx));
+    });
+}
+
+pub struct SnippetForm {
+    editor: Option<Entity<SnippetEditor>>,
+    previous: Option<FocusHandle>,
+}
+
+struct GlobalSnippetForm(Entity<SnippetForm>);
+impl Global for GlobalSnippetForm {}
+
+impl SnippetForm {
+    fn global(cx: &App) -> Entity<Self> {
+        cx.global::<GlobalSnippetForm>().0.clone()
+    }
+}
+
+pub(crate) fn init(cx: &mut App) {
+    let entity = cx.new(|_| SnippetForm {
+        editor: None,
+        previous: None,
+    });
+    cx.set_global(GlobalSnippetForm(entity));
+}
+
+fn dismiss_form(window: &mut Window, cx: &mut App) {
+    let previous = SnippetForm::global(cx).update(cx, |form, cx| {
+        form.editor = None;
+        cx.notify();
+        form.previous.take()
+    });
+    if let Some(handle) = previous {
+        window.focus(&handle, cx);
+    }
+}
+
+/// The snippet editor sits in the main window, not in a dialog. A dialog is a
+/// deferred layer above the completion menu, so the menu would paint behind it.
+pub fn snippet_form_entity(cx: &App) -> Entity<SnippetForm> {
+    SnippetForm::global(cx)
+}
+
+pub fn snippet_form(cx: &App) -> AnyElement {
+    let Some(editor) = SnippetForm::global(cx).read(cx).editor.clone() else {
+        return div().into_any_element();
+    };
+    let p = palette(cx);
+    deferred(
+        div()
+            .id("snippet-form")
+            .absolute()
+            .inset_0()
+            .occlude()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().overlay)
+            .on_mouse_down(MouseButton::Left, |_, window, cx| dismiss_form(window, cx))
+            .on_key_down(|event: &KeyDownEvent, window, cx| {
+                if event.keystroke.key == "escape" {
+                    dismiss_form(window, cx);
+                    cx.stop_propagation();
+                }
+            })
+            .child(
+                v_flex()
+                    .id("snippet-form-card")
+                    .occlude()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .w(tokens::snippet::POPOVER_WIDTH.rems())
+                    .max_h_full()
+                    .overflow_y_scroll()
+                    .bg(p.window_bg)
+                    .border_1()
+                    .border_color(p.separator)
+                    .rounded(cx.theme().radius_lg)
+                    .p_3()
+                    .child(editor),
+            ),
+    )
+    .priority(0)
+    .into_any_element()
 }
 
 struct SnippetEditor {
@@ -528,7 +639,7 @@ impl SnippetEditor {
             preset: false,
         };
         Snippets::global(cx).update(cx, |s, cx| s.upsert(snippet, cx));
-        window.close_dialog(cx);
+        dismiss_form(window, cx);
     }
 
     fn rewrite_code(
@@ -643,7 +754,7 @@ impl Render for SnippetEditor {
                         Button::new("snippet-cancel")
                             .small()
                             .label(t!("snippet.cancel").to_string())
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                            .on_click(|_, window, cx| dismiss_form(window, cx)),
                     )
                     .child(
                         Button::new("snippet-save")
@@ -654,5 +765,134 @@ impl Render for SnippetEditor {
                             .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
                     ),
             )
+    }
+}
+
+/// Snippet names offered while editing. An empty driver ("All") offers nothing.
+fn same_driver<'a>(
+    driver: &str,
+    snippets: impl Iterator<Item = &'a Snippet>,
+) -> Vec<(String, String)> {
+    if driver.is_empty() {
+        return Vec::new();
+    }
+    snippets
+        .filter(|s| s.applies_to(driver))
+        .map(|s| (s.name.clone(), s.code.clone()))
+        .collect()
+}
+
+fn detail(hit: &Hit) -> String {
+    match hit.kind {
+        Kind::Keyword => t!("snippet.kind_keyword").to_string(),
+        Kind::Builtin => t!("snippet.kind_builtin").to_string(),
+        Kind::Snippet => t!("snippet.kind_snippet").to_string(),
+        _ => hit.label.clone(),
+    }
+}
+
+fn highlight_label(query: &str, item: &CompletionItem) -> Vec<Range<usize>> {
+    completion::highlight(query, &item.label)
+}
+
+struct SnippetProvider {
+    editor: WeakEntity<SnippetEditor>,
+}
+
+impl CompletionProvider for SnippetProvider {
+    fn completions(
+        &self,
+        text: &Rope,
+        offset: usize,
+        _: CompletionContext,
+        _: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<CompletionResponse>> {
+        let Some(editor) = self.editor.upgrade() else {
+            return Task::ready(Ok(CompletionResponse::Array(Vec::new())));
+        };
+        let driver = editor.read(cx).driver.clone();
+        let Some(dialect) = DriverRegistry::dialect(cx, &driver) else {
+            return Task::ready(Ok(CompletionResponse::Array(Vec::new())));
+        };
+        let snippets = same_driver(&driver, Snippets::global(cx).read(cx).all());
+        let raw = text.to_string();
+        let (from, window_text) = completion::window(&raw, offset);
+        let (range, list) = completion::complete(
+            &window_text,
+            offset - from,
+            &Sources {
+                dialect: dialect.as_ref(),
+                current: None,
+                catalog: None,
+                others: &|_| None,
+                snippets: &snippets,
+                in_scope: &[],
+                extras: &[],
+                keywords: completion::Keywords::All,
+            },
+        );
+        let lsp_range = lsp_types::Range {
+            start: text.offset_to_position(range.start + from),
+            end: text.offset_to_position(range.end + from),
+        };
+        let items = list
+            .into_iter()
+            .take(200)
+            .map(|c| {
+                let detail = detail(&c);
+                CompletionItem {
+                    label: c.label,
+                    detail: Some(detail),
+                    text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                        range: lsp_range,
+                        new_text: c.insert,
+                    })),
+                    ..CompletionItem::default()
+                }
+            })
+            .collect();
+        Task::ready(Ok(CompletionResponse::Array(items)))
+    }
+
+    fn is_completion_trigger(&self, _: usize, new_text: &str, cx: &mut App) -> bool {
+        let Some(editor) = self.editor.upgrade() else {
+            return false;
+        };
+        // The trigger runs inside the code editor's update. Read the dialog, not that editor.
+        !editor.read(cx).driver.is_empty()
+            && Settings::global(cx).code_completion
+            && completion::is_trigger(new_text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(name: &str, driver: &str) -> Snippet {
+        Snippet {
+            id: name.into(),
+            name: name.into(),
+            driver: driver.into(),
+            tags: Vec::new(),
+            note: String::new(),
+            code: format!("-- {name}"),
+            preset: false,
+        }
+    }
+
+    #[test]
+    fn an_untyped_snippet_offers_no_names_and_a_typed_one_keeps_its_driver() {
+        let all = sample("any", "");
+        let mysql = sample("mine", "mysql");
+        let postgres = sample("pg", "postgres");
+        let rows = [&all, &mysql, &postgres];
+        assert!(same_driver("", rows.into_iter()).is_empty());
+        let names: Vec<_> = same_driver("mysql", rows.into_iter())
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(names, ["any", "mine"]);
     }
 }

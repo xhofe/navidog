@@ -8,3 +8,4 @@ repository.workspace = true
 
 [dependencies]
 navidog-model = { path = "../navidog-model" }
+regex.workspace = true

@@ -5107,7 +5107,9 @@ dependencies = [
 name = "navidog-designer"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "gpui-kit",
+ "lsp-types",
  "navidog-app-state",
  "navidog-db",
  "navidog-model",
@@ -5127,8 +5129,10 @@ dependencies = [
 name = "navidog-grid"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "chrono",
  "gpui-kit",
+ "lsp-types",
  "navidog-app-state",
  "navidog-db",
  "navidog-model",
@@ -5195,8 +5199,10 @@ dependencies = [
 name = "navidog-navigator"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "chrono",
  "gpui-kit",
+ "lsp-types",
  "navidog-app-state",
  "navidog-db",
  "navidog-model",
@@ -5302,6 +5308,7 @@ name = "navidog-sql"
 version = "0.0.1"
 dependencies = [
  "navidog-model",
+ "regex",
 ]
 
 [[package]]
@@ -5342,6 +5349,7 @@ version = "0.0.1"
 dependencies = [
  "gpui-kit",
  "hex",
+ "navidog-sql",
  "rust-i18n",
  "serde_json",
  "tracing",
