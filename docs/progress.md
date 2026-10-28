@@ -190,7 +190,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | F-DATA-010 原始数据模式 | 完成 | dialect 单元测试、model 单元测试 | 字符串列显示为带引号的 SQL 字面量；之后输入的非空文本按表达式写入 |
 | F-DATA-004 事务 | 完成 | live 测试、viewer UI 测试 | 偏好设置可在打开表时自动开始事务。事务里每批修改用保存点包住 |
 | F-DATA-005 区域选择与复制粘贴 | 完成 | model 单元测试、grid UI 测试 | 表头点击或菜单可选中整列。拖动表头经过单元格不改选区。焦点不在网格时，右键会先聚焦再弹出菜单，菜单项才能生效。表头右键在捕获阶段停掉 DataTable 的空浮层，避免它抢走焦点 |
-| F-DATA-006 筛选与排序窗格 | 完成 | filter 单元测试、`where_text_collapses_a_pasted_line_break` | 创建工具、文本模式、右键快速筛选。文本模式的 WHERE 和 ORDER BY 用单行 SQL 编辑器补全当前表字段、关键字和已载入的表。括号只包住全部条件；在列表的值不含逗号 |
+| F-DATA-006 筛选与排序窗格 | 完成 | filter 单元测试、`where_text_collapses_a_pasted_line_break` | 创建工具、文本模式、右键快速筛选。文本模式的 WHERE 和 ORDER BY 用单行 SQL 编辑器补全当前表字段、条件关键字（`AND`/`OR` 等，不含 `SELECT`）和已载入的表。括号只包住全部条件；在列表的值不含逗号 |
 | F-DATA-007 查找与替换 | 部分 | model 单元测试 | 查找栏是模式下拉（查找 / 替换 / 查找列）加输入框、上一个、下一个、完成。查找框回车是下一个，替换框回车是替换当前并跳到下一个。递增搜索在模式菜单里，默认关。不跨页 |
 | F-DATA-008 导航栏与分页 | 完成 | live 测试、viewer ownership 测试、query_refresh UI 测试、snapshot | 刷新按钮在加载时旋转，至少半圈；外部查询后自动更新当前页、总数及字段，保留筛选排序分页；编辑和事务阻止自动刷新并提示 |
 | F-DATA-009 格式设置 | 完成 | model 单元测试、dialect 单元测试、grid UI 测试、column_widths 单元测试、viewer 投影回归 | 隐藏列、行高、冻结到此列、冻结列、解除所有冻结列、恢复默认顺序、拖拽列顺序、数字右对齐。隐藏列投影拒绝时保留菜单、列与待提交值；成功后才更新菜单。打开表按内容定列宽；拖过的列按表保存在连接目录的 `.column-widths.json`，只记下拖动过的列。列顺序和冻结只在打开的查看器里保留 |
@@ -215,7 +215,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | F-QRY-012 历史日志 | 完成 | log 单元测试、history 测试、snapshot | 仅显示错误、暂停、表头开关 |
 | F-QRY-014 命令列界面 | 完成 | console 单元测试、console 测试、Unicode 列宽测试、`console_enter_confirms_completion_instead_of_running` | mysql / psql 的输出样式；输入区与查询编辑器同一套补全，菜单打开时回车不执行、方向键不翻历史。普通 SQL 完成后与查询面板共用刷新通知，关闭窗口不丢通知，未完成的输入不通知；不支持客户端命令（偏差） |
 | F-INFO-004 预览 | 完成 | 目测 | |
-| F-INFO-005 代码段 | 完成 | info 测试、`an_untyped_snippet_offers_no_names_and_a_typed_one_keeps_its_driver` | 标签筛选、搜索、右键菜单、拖到编辑器。编辑框按所选数据库类型补全关键字、内置函数和同类型片段名；类型为“全部”时不补全 |
+| F-INFO-005 代码段 | 完成 | info 测试、`an_untyped_snippet_offers_no_names_and_a_typed_one_keeps_its_driver` | 标签筛选、搜索、右键菜单、拖到编辑器。编辑框按所选数据库类型补全关键字、内置函数和同类型片段名，画在主窗口遮罩上以免菜单被挡住；类型为“全部”时不补全 |
 | F-INFO-006 标识符 | 完成 | info 测试 | 双击或拖动插入名称 |
 | F-APP-016 自动恢复 | 完成 | recovery 单元测试、query editor 测试 | 正常退出不询问（偏差） |
 | F-APP-017 日志文件（SQL 日志） | 完成 | log 单元测试 | QueryExec.log 每次启动清空 |
@@ -229,7 +229,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 
 | 功能 | 状态 | 验证 | 说明 |
 | --- | --- | --- | --- |
-| F-DSG-001 表设计器：字段 | 部分 | designer headless 测试、snapshot、table_design 测试（含 `chosen_types_use_the_spelling_the_server_prints_back`）、`expression_completion_lists_draft_columns_and_definition_lists_types` | 八列字段网格与下方属性区；类型菜单使用该库回读的拼写，整数类型不编辑长度；长度/小数点/不是 null/主键/MySQL 注释及默认值、排序规则、字符集、无符号、零填充、ON UPDATE、自动递增、PG identity 模式和生成表达式控件。默认值、生成表达式、ON UPDATE 和高级字段定义按草稿字段名补全，字段定义另列类型名。拖放、完整方言属性和运行态尺寸对照未完成 |
+| F-DSG-001 表设计器：字段 | 部分 | designer headless 测试、snapshot、table_design 测试（含 `chosen_types_use_the_spelling_the_server_prints_back`）、`expression_completion_lists_draft_columns_and_definition_lists_types` | 八列字段网格与下方属性区；类型菜单使用该库回读的拼写，整数类型不编辑长度；长度/小数点/不是 null/主键/MySQL 注释及默认值、排序规则、字符集、无符号、零填充、ON UPDATE、自动递增、PG identity 模式和生成表达式控件。默认值、生成表达式、ON UPDATE 按草稿字段名和条件关键字补全，字段定义用整份关键字并另列类型名。拖放、完整方言属性和运行态尺寸对照未完成 |
 | F-DSG-002 表设计器：索引 | 部分 | 三服务端与 SQLite 实库、snapshot | 结构化索引列表、字段选择、方法、唯一、注释/部分索引条件表单；MySQL KEY 同页编辑；复杂索引属性保留到高级页 |
 | F-DSG-003 表设计器：外键 | 部分 | 三服务端实库、SQLite 级联 UI/外键校验/回滚测试、浅深色截图 | 独立外键列表及结构化表单；引用模式/表/字段从连接元数据级联选择，支持按序多字段、自引用草稿、异步过期隔离与失败重试；刷新图标至少转半圈；类型/唯一键兼容性由执行检查，完整方言属性待做 |
 | F-DSG-004 唯一与检查 | 部分 | SQL 计划测试、三服务端与 SQLite 实库 | 检查名称与表达式表单、索引唯一开关；MySQL 移除部分 CHECK 明确拒绝；唯一约束有单独定义并保留，完整方言属性待做 |
