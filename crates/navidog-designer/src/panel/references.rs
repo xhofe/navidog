@@ -118,6 +118,7 @@ impl TableDesigner {
                         .list_objects(&scope, ObjectKind::Table)
                         .await?
                         .into_iter()
+                        .filter(|t| !r.dialect().is_system_object(&t.name))
                         .map(|t| t.name)
                         .collect();
                     let fields = if tables.contains(&table) {

@@ -27,8 +27,8 @@ impl Appearance {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeFamily {
-    #[default]
     Navidog,
+    #[default]
     Default,
 }
 
@@ -63,8 +63,8 @@ impl Language {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RowShade {
-    None,
     #[default]
+    None,
     Alternate,
     EveryThird,
 }
@@ -143,12 +143,16 @@ fn system_prefers_chinese(lang: &str) -> bool {
     sys_locale::get_locale().is_some_and(|locale| locale.starts_with("zh"))
 }
 
+fn default_show_system_objects() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub version: u32,
     pub appearance: Appearance,
-    /// Navidog (Navicat) or gpui-kit's Default (shadcn). Missing means Navidog.
+    /// Navidog (Navicat) or gpui-kit's Default (shadcn). Missing means Default.
     pub theme: ThemeFamily,
     pub language: Language,
     /// Open the connections marked "auto connect" at startup
@@ -157,6 +161,9 @@ pub struct Settings {
     pub show_schema_objects: bool,
     /// General: show fields, indexes, foreign keys and triggers under tables in the navigator
     pub show_table_children: bool,
+    /// General: list system databases, schemas and `sqlite_` objects. Missing means shown.
+    #[serde(default = "default_show_system_objects")]
+    pub show_system_objects: bool,
     /// Tabs: open editors in a new window instead of a new tab
     pub open_in_new_window: bool,
     /// Tabs: editors reopened at startup (the startup screen), as dock panel states
@@ -242,11 +249,12 @@ impl Default for Settings {
         Self {
             version: 1,
             appearance: Appearance::System,
-            theme: ThemeFamily::Navidog,
+            theme: ThemeFamily::Default,
             language: Language::System,
             auto_connect_on_startup: true,
             show_schema_objects: true,
             show_table_children: true,
+            show_system_objects: true,
             open_in_new_window: false,
             startup_tabs: Vec::new(),
             limit_records: true,
@@ -256,7 +264,7 @@ impl Default for Settings {
             click_to_edit: false,
             use_default_grid_font: true,
             grid_font_pt: 13.,
-            row_shade: RowShade::Alternate,
+            row_shade: RowShade::None,
             object_hidden_columns: Default::default(),
             continue_on_error: false,
             keep_results: false,
@@ -379,7 +387,7 @@ mod tests {
     fn keeps_unknown_fields_and_defaults_missing_ones() {
         let s: Settings = serde_json::from_str(r#"{"appearance":"dark","future":1}"#).unwrap();
         assert_eq!(s.appearance, Appearance::Dark);
-        assert_eq!(s.theme, ThemeFamily::Navidog);
+        assert_eq!(s.theme, ThemeFamily::Default);
         assert_eq!(s.language, Language::System);
         assert!(s.auto_connect_on_startup);
         assert!(s.show_schema_objects);
@@ -388,17 +396,21 @@ mod tests {
         assert!(!s.click_to_edit);
         assert!(s.use_default_grid_font);
         assert_eq!(s.grid_font_pt, 13.);
-        assert_eq!(s.row_shade, RowShade::Alternate);
+        assert_eq!(s.row_shade, RowShade::None);
+        assert!(s.show_system_objects);
         let back = serde_json::to_string(&s).unwrap();
         assert!(back.contains("\"future\":1"));
     }
 
     #[test]
-    fn theme_defaults_to_navidog_and_reads_default() {
+    fn theme_defaults_to_default_and_reads_navidog() {
         let missing: Settings = serde_json::from_str(r#"{"appearance":"dark"}"#).unwrap();
-        assert_eq!(missing.theme, ThemeFamily::Navidog);
-        let chosen: Settings = serde_json::from_str(r#"{"theme":"default"}"#).unwrap();
-        assert_eq!(chosen.theme, ThemeFamily::Default);
+        assert_eq!(missing.theme, ThemeFamily::Default);
+        assert!(missing.show_system_objects);
+        let chosen: Settings = serde_json::from_str(r#"{"theme":"navidog"}"#).unwrap();
+        assert_eq!(chosen.theme, ThemeFamily::Navidog);
+        let hidden: Settings = serde_json::from_str(r#"{"show_system_objects":false}"#).unwrap();
+        assert!(!hidden.show_system_objects);
     }
 
     #[test]

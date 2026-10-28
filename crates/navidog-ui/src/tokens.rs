@@ -505,9 +505,10 @@ pub fn palette(cx: &App) -> Palette {
     p.row_alt = t.list_even;
     // Washes under the normal foreground. Solid `primary` is near-white in dark mode, so light
     // text disappears; Tree also replaces a row background with `list_active` and keeps this text.
+    // Same fill the tree's selected row uses, so a hand-painted row and `.selected()` match.
     p.row_selected = t.list_active;
     p.accent = t.primary;
-    p.selection = t.list_active_border;
+    p.selection = t.list_active;
     p.selection_text = t.foreground;
     p.selection_inactive = t.muted;
     p.disabled_text = t.muted_foreground;

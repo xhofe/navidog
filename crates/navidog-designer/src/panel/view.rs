@@ -586,7 +586,9 @@ impl Render for TableDesigner {
                         .child(t!("designer.reload_required").to_string()),
                 )
             })
-            .when(self.needs_reload || !self.loaded, |v| {
+            // While the first load is running, reload returns immediately. Offer it again only
+            // after that load finishes without data, or when a save asks for a reload.
+            .when(self.needs_reload || (!self.loaded && !self.busy), |v| {
                 let spinning = self.reload_spin.spinning(self.reloading);
                 v.child(
                     navidog_ui::refresh_spin::refresh_button(

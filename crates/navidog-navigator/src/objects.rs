@@ -116,10 +116,18 @@ pub(crate) fn join_profile(parts: &[(String, String)]) -> String {
         .join(" · ")
 }
 
+fn displayed_property(key: &str, value: &str) -> String {
+    if key == "data_length" {
+        navidog_util::format::format_bytes(value)
+    } else {
+        value.to_string()
+    }
+}
+
 fn profile_line(properties: &[(String, String)]) -> String {
     let parts = properties
         .iter()
-        .map(|(k, v)| (t!(format!("col.{k}")).to_string(), v.clone()))
+        .map(|(k, v)| (t!(format!("col.{k}")).to_string(), displayed_property(k, v)))
         .collect::<Vec<_>>();
     join_profile(&parts)
 }
@@ -192,7 +200,7 @@ impl ObjectsPanel {
             ];
             Self {
                 focus_handle: cx.focus_handle(),
-                view: ViewMode::List,
+                view: ViewMode::Detail,
                 sort: None,
                 scroll: UniformListScrollHandle::new(),
                 last_rows: None,
@@ -231,6 +239,80 @@ impl ObjectsPanel {
         };
     }
 
+    /// Recomputes the status-bar count after a setting change that does not move the selection.
+    pub fn refresh_count(cx: &mut App) {
+        let Some(panel) = cx
+            .try_global::<SharedObjects>()
+            .and_then(|shared| shared.0.upgrade())
+        else {
+            return;
+        };
+        panel.update(cx, |this, cx| {
+            this.recount(cx);
+            cx.notify();
+        });
+    }
+
+    fn hidden_selection(selection: &Selection, sessions: &Sessions, show_system: bool) -> bool {
+        if show_system {
+            return false;
+        }
+        let scope_hidden = |scope: &Scope| {
+            let Some(dialect) = sessions.dialect(&scope.connection) else {
+                return false;
+            };
+            dialect.is_system_database(&scope.database)
+                || scope
+                    .schema
+                    .as_deref()
+                    .is_some_and(|schema| dialect.is_system_schema(schema))
+        };
+        match selection {
+            Selection::Database(connection, name) => sessions
+                .dialect(connection)
+                .is_some_and(|dialect| dialect.is_system_database(name)),
+            Selection::Schema(scope) | Selection::Category(scope, _) => scope_hidden(scope),
+            Selection::Object(object) => {
+                scope_hidden(&object.scope)
+                    || sessions
+                        .dialect(&object.scope.connection)
+                        .is_some_and(|dialect| dialect.is_system_object(&object.name))
+            }
+            _ => false,
+        }
+    }
+
+    /// Drops workspace selections that the "show system objects" switch just hid, so the
+    /// objects toolbar cannot still delete or design them.
+    pub fn drop_hidden_selections(cx: &mut App) {
+        if Settings::global(cx).show_system_objects {
+            return;
+        }
+        let (primary, rest) = {
+            let workspace = Workspace::global(cx).read(cx);
+            let primary = workspace.selection().clone();
+            let rest: Vec<_> = workspace.selections().skip(1).cloned().collect();
+            let sessions = Sessions::global(cx).read(cx);
+            let hidden = |selection: &Selection| Self::hidden_selection(selection, sessions, false);
+            if !hidden(&primary) && rest.iter().all(|selection| !hidden(selection)) {
+                return;
+            }
+            let rest: Vec<_> = rest
+                .into_iter()
+                .filter(|selection| !hidden(selection))
+                .collect();
+            if hidden(&primary) {
+                let mut rest = rest.into_iter();
+                (rest.next().unwrap_or(Selection::None), rest.collect())
+            } else {
+                (primary, rest)
+            }
+        };
+        Workspace::global(cx).update(cx, |workspace, cx| {
+            workspace.select_many(primary, rest, cx);
+        });
+    }
+
     /// The row count of the last render, or `None` until the panel rendered once.
     pub(crate) fn cached_rows(cx: &App) -> Option<usize> {
         let current = Workspace::global(cx).read(cx).selection().clone();
@@ -260,6 +342,13 @@ impl ObjectsPanel {
         };
         let vgroups = VirtualGroups::global(cx).read(cx);
         let grouping = !crate::navigator::view_options(cx).hide_object_groups;
+        let show_system = Settings::global(cx).show_system_objects;
+        let system_object = |connection: &str, name: &str| {
+            !show_system
+                && sessions
+                    .dialect(connection)
+                    .is_some_and(|dialect| dialect.is_system_object(name))
+        };
 
         let connections = |group: Option<&str>| {
             if store.connections().is_empty() {
@@ -304,14 +393,25 @@ impl ObjectsPanel {
                 };
                 let mut rows = Vec::new();
                 let mut grouped = std::collections::HashSet::new();
+                let visible = |name: &str| !system_object(&scope.connection, name);
                 if grouping {
                     for g in vgroups.groups_for(scope, kind) {
-                        rows.push(row(RowIcon::Folder, g.name.clone(), Selection::None));
-                        for o in g
+                        let members: Vec<_> = g
                             .members
                             .iter()
+                            .filter(|m| visible(m))
                             .filter_map(|m| list.iter().find(|o| &o.name == m))
-                        {
+                            .collect();
+                        let only_hidden = members.is_empty()
+                            && g.members.iter().any(|m| {
+                                list.iter()
+                                    .any(|o| &o.name == m && system_object(&scope.connection, m))
+                            });
+                        if only_hidden {
+                            continue;
+                        }
+                        rows.push(row(RowIcon::Folder, g.name.clone(), Selection::None));
+                        for o in members {
                             grouped.insert(o.name.as_str());
                             rows.push(object_row(o, 1));
                         }
@@ -319,7 +419,7 @@ impl ObjectsPanel {
                 }
                 rows.extend(
                     list.iter()
-                        .filter(|o| !grouped.contains(o.name.as_str()))
+                        .filter(|o| visible(&o.name) && !grouped.contains(o.name.as_str()))
                         .map(|o| object_row(o, 0)),
                 );
                 Content::Rows(rows, Some((scope.clone(), kind)))
@@ -339,6 +439,9 @@ impl ObjectsPanel {
                 }
             }
         }
+        if Self::hidden_selection(&selection, sessions, show_system) {
+            return Content::Empty;
+        }
         match &selection {
             Selection::None => connections(None),
             Selection::Group(g) => connections(Some(g)),
@@ -346,6 +449,12 @@ impl ObjectsPanel {
                 ConnState::Open { databases, .. } => Content::Rows(
                     databases
                         .iter()
+                        .filter(|d| {
+                            show_system
+                                || !sessions
+                                    .dialect(c)
+                                    .is_some_and(|dialect| dialect.is_system_database(d))
+                        })
                         .map(|d| {
                             row(
                                 RowIcon::Lucide("database"),
@@ -362,6 +471,7 @@ impl ObjectsPanel {
                 Some(dialect) if dialect.features().has_schemas => match catalog.schemas(c, d) {
                     Some(Load::Ready(list)) => Content::Rows(
                         list.iter()
+                            .filter(|s| show_system || !dialect.is_system_schema(s))
                             .map(|s| {
                                 let scope = Scope::new(c.clone(), d.clone(), Some(s.clone()));
                                 row(
@@ -748,7 +858,7 @@ impl ObjectsPanel {
                                     .properties
                                     .iter()
                                     .find(|(k, _)| k == c)
-                                    .map(|(_, v)| v.clone())
+                                    .map(|(_, v)| displayed_property(c, v))
                                     .unwrap_or_default();
                                 let id = SharedString::from(format!("obj-prop-{ix}-{ci}"));
                                 line = line.child(

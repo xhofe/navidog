@@ -634,6 +634,7 @@ impl NavigatorPanel {
             filtering,
             show_children: Settings::global(cx).show_table_children,
             show_objects: Settings::global(cx).show_schema_objects,
+            show_system: Settings::global(cx).show_system_objects,
         };
         let items = if self.view.hide_groups {
             let mut conns: Vec<_> = builder
@@ -820,7 +821,19 @@ impl Render for NavigatorPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Snapshot the multi-selection for this frame; no cached field can lag
         // behind a click that has already updated the workspace.
-        let marked: HashSet<SharedString> = Self::selected_ids(cx).into_iter().collect();
+        let mut marked: HashSet<SharedString> = Self::selected_ids(cx).into_iter().collect();
+        // A field or folder under a table shares that table's workspace selection. The focused
+        // row is the one that looks selected; the parent table does not get a second highlight.
+        let focused = self
+            .tree
+            .read(cx)
+            .selected_item()
+            .map(|item| item.id.clone());
+        if let Some(Node::TableFolder(object, _) | Node::TableItem(object, _, _)) =
+            focused.as_deref().and_then(Node::parse)
+        {
+            marked.remove(&Node::Object(object).id());
+        }
         // Other panes read the catalog while they render, so gpui skips its
         // observers and only redraws those panes. This tree is a snapshot, and
         // would keep showing skeleton rows until the next click. Reading the

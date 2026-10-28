@@ -4,6 +4,7 @@
 use super::*;
 
 use gpui_kit::StatefulInteractiveElement as _;
+use gpui_kit::component::ActiveTheme as _;
 
 pub struct GridDelegate {
     pub model: GridModel,
@@ -538,7 +539,17 @@ impl TableDelegate for GridDelegate {
             )
             .when(hit && !selected, |d| d.bg(p.selection_inactive))
             .when_some(tone.filter(|_| !selected), |d, color| d.text_color(color))
-            .when(selected, |d| d.bg(p.selection).text_color(p.selection_text));
+            .when(selected, |d| {
+                // The row wash and the cell fill share `list_active` on the Default theme, so a
+                // selected cell disappears into its row. The border color stays distinct there.
+                // Navicat keeps the measured selection blue, which is already darker than the row.
+                let fill = if cx.theme().theme_name().starts_with("Navicat") {
+                    p.selection
+                } else {
+                    cx.theme().list_active_border
+                };
+                d.bg(fill).text_color(p.selection_text)
+            });
         if let Some(input) = editing {
             let font = grid_text_size(cx);
             // Transparent, so the selected-row color shows through. The text selection

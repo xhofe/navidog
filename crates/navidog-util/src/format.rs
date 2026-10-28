@@ -11,6 +11,28 @@ pub fn encode_hex(text: &str) -> String {
         .join(" ")
 }
 
+/// `data_length` as Navicat shows it: 1024-based, exact values without a fraction (`16 KB`).
+pub fn format_bytes(text: &str) -> String {
+    let Ok(n) = text.trim().parse::<u64>() else {
+        return text.to_string();
+    };
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = n as f64;
+    let mut unit = 0;
+    while value >= 1024. && unit + 1 < UNITS.len() {
+        value /= 1024.;
+        unit += 1;
+    }
+    if unit == 0 {
+        return format!("{n} B");
+    }
+    if value.fract() == 0. {
+        format!("{} {}", value as u64, UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
 /// `None` when the hex is malformed or the bytes are not UTF-8.
 pub fn decode_hex(text: &str) -> Option<String> {
     let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
@@ -36,6 +58,14 @@ mod tests {
         assert!(decode_hex("zz").is_none());
         assert!(decode_hex("f").is_none());
         assert!(decode_hex("ff").is_none());
+    }
+
+    #[test]
+    fn byte_sizes_use_1024_and_drop_a_zero_fraction() {
+        assert_eq!(format_bytes("16384"), "16 KB");
+        assert_eq!(format_bytes("1536"), "1.5 KB");
+        assert_eq!(format_bytes("12"), "12 B");
+        assert_eq!(format_bytes("n/a"), "n/a");
     }
 
     #[test]

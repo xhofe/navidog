@@ -186,6 +186,7 @@ impl QueryEditor {
             return;
         }
         let this = cx.entity();
+        let panel = PanelId::from(cx.entity_id());
         let name = self.display_name();
         window.open_alert_dialog(cx, move |alert, _, _| {
             let (save, discard, enter) = (this.clone(), this.clone(), this.clone());
@@ -196,12 +197,19 @@ impl QueryEditor {
                     enter.update(cx, |e, cx| e.save_and_close(window, cx));
                     true
                 })
+                .on_cancel(move |_, _, cx| {
+                    tabs::abort_pending_dirty_closes(panel, cx);
+                    true
+                })
                 .footer(navidog_ui::skin::close_prompt_footer(
                     "query-close",
                     t!("query.cancel").to_string(),
                     t!("query.dont_save").to_string(),
                     t!("query.save").to_string(),
-                    |_, window, cx| window.close_dialog(cx),
+                    move |_, window, cx| {
+                        tabs::abort_pending_dirty_closes(panel, cx);
+                        window.close_dialog(cx);
+                    },
                     move |_, window, cx| {
                         window.close_dialog(cx);
                         discard.update(cx, |e, cx| {

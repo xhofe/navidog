@@ -236,6 +236,11 @@ impl TableViewer {
             }
             Err(e) => {
                 self.after_commit = AfterCommit::None;
+                // The tab stays open, so a later close of this viewer must not resume Close All.
+                navidog_ui::tabs::abort_pending_dirty_closes(
+                    gpui_kit::component::dock::PanelId::from(cx.entity_id()),
+                    cx,
+                );
                 self.view.status = e.clone().into();
                 window.open_alert_dialog(cx, move |alert, _, _| {
                     alert

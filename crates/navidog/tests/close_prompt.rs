@@ -8,7 +8,7 @@ use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{AnyWindowHandle, AppContext as _, ElementId, Focusable as _, TestAppContext};
 use navidog::main_window::MainWindow;
 use navidog::state::AppState;
-use navidog_app_state::actions::OpenObject;
+use navidog_app_state::actions::{NewQuery, OpenObject};
 use navidog_app_state::store::ConnectionStore;
 use navidog_db::{ConnectParams, Secrets, connect, runtime};
 use navidog_model::connection::Connection;
@@ -16,7 +16,12 @@ use navidog_model::crypto::Key;
 use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_session::sessions::Sessions;
 use navidog_sqlite::SqliteDriver;
-use navidog_ui::tabs::{self, CloseTab};
+use navidog_ui::tabs::{self, Close, CloseTab, CloseTabs};
+
+fn home_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 use navidog_ui::tokens;
 
 fn fit(rem: gpui_kit::Pixels, header: &str, values: &[&str]) -> gpui_kit::Pixels {
@@ -78,6 +83,8 @@ fn has(cx: &mut TestAppContext, handle: AnyWindowHandle, id: impl Into<ElementId
 
 #[gpui_kit::test]
 fn closing_a_tab_with_an_edit_asks_and_commits(cx: &mut TestAppContext) {
+    let _guard = home_lock();
+    cx.update(|cx| cx.set_reduce_motion(true));
     let home = std::env::temp_dir().join(format!("navidog-close-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).unwrap();
@@ -194,6 +201,77 @@ fn closing_a_tab_with_an_edit_asks_and_commits(cx: &mut TestAppContext) {
     assert_eq!(
         sql(&file, "SELECT name FROM t WHERE id = 1"),
         [vec![Some("z".to_string())]]
+    );
+
+    // Close All asks each dirty query, and Cancel stops the rest. Same process, so this
+    // stays in the test above: `init` cannot run twice.
+    let dispatch = |cx: &mut TestAppContext, action: Box<dyn gpui_kit::Action>| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.focus(&main.focus_handle(cx), cx);
+            window.dispatch_action(action, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    let dirty = |cx: &mut TestAppContext, text: &str| {
+        let text = text.to_string();
+        cx.update_window(handle, |_, window, cx| {
+            navidog_query::active_editor(cx)
+                .expect("query editor")
+                .update(cx, |editor, cx| editor.set_text(&text, window, cx));
+        })
+        .unwrap();
+    };
+    dispatch(cx, Box::new(NewQuery));
+    dirty(cx, "select 1");
+    dispatch(cx, Box::new(NewQuery));
+    dirty(cx, "select 2");
+    let tabs_before = tab_count(cx);
+
+    dispatch(
+        cx,
+        Box::new(CloseTabs {
+            panel: None,
+            which: Close::All,
+        }),
+    );
+    assert!(
+        has(cx, handle, "query-close-discard"),
+        "the first dirty query asks"
+    );
+    assert_eq!(
+        tab_count(cx),
+        tabs_before,
+        "nothing dirty closes before an answer"
+    );
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("query-close-discard", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(tab_count(cx), tabs_before - 1, "discard closes that query");
+    assert!(
+        has(cx, handle, "query-close-discard"),
+        "the next dirty query asks"
+    );
+
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("query-close-keep", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        tab_count(cx),
+        tabs_before - 1,
+        "cancel leaves the remaining query"
+    );
+    assert!(
+        !has(cx, handle, "query-close-discard"),
+        "cancel stops the rest of the prompts"
     );
     let _ = std::fs::remove_dir_all(&home);
 }

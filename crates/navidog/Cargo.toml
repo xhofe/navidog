@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Database client."
+description = "An open-source alternative to Navicat, written in Rust"
 
 [dependencies]
 navidog-session = { path = "../navidog-session" }
@@ -54,7 +54,7 @@ identifier = "ci.nn.navidog"
 icon = ["icons/navidog.icns"]
 category = "public.app-category.developer-tools"
 osx_minimum_system_version = "15.0"
-short_description = "A database client."
+short_description = "An open-source alternative to Navicat, written in Rust"
 
 # Paths are relative to this crate. The workspace target dir is two levels up.
 [package.metadata.deb]
@@ -62,7 +62,7 @@ name = "navidog"
 section = "database"
 priority = "optional"
 depends = "$auto"
-extended-description = "A database client for MySQL, MariaDB, PostgreSQL and SQLite."
+extended-description = "An open-source alternative to Navicat, written in Rust. MySQL, MariaDB, PostgreSQL and SQLite."
 assets = [
     ["../../target/release/navidog", "usr/bin/", "755"],
     ["assets/navidog.desktop", "usr/share/applications/navidog.desktop", "644"],

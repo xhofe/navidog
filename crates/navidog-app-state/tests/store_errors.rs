@@ -7,7 +7,7 @@ use navidog_model::crypto::CryptoError;
 fn store_errors_have_english_and_chinese_messages() {
     let previous_locale = rust_i18n::locale().to_string();
     let cases = [
-        (StoreError::Locked, "Navidog is locked.", "需要先解锁："),
+        (StoreError::Locked, "Navidog is locked.", "需要先输入主密码"),
         (
             StoreError::NotFound,
             "The connection or group could not be found.",

@@ -9,11 +9,12 @@ mod validation;
 #[cfg(test)]
 mod tests;
 
+use gpui_kit::component::Disableable as _;
 use gpui_kit::component::Sizable as _;
+use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputState, Textarea, TextareaState};
 use gpui_kit::component::select::SelectState;
-use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{IndexPath, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -65,15 +66,43 @@ pub fn open_from_uri(uri: navidog_app_state::uri::DatabaseUri, window: &mut Wind
     open(conn, Some([uri.password, None, None]), window, cx);
 }
 
+fn has_saved_secret(conn: &Connection) -> bool {
+    SecretField::ALL.into_iter().any(|field| match field {
+        SecretField::Password => conn.general.password.is_some(),
+        SecretField::SshPassword => conn.ssh.password.is_some(),
+        SecretField::SshPassphrase => conn.ssh.passphrase.is_some(),
+    })
+}
+
 pub fn open_edit(id: String, window: &mut Window, cx: &mut App) {
     let store = ConnectionStore::global(cx);
     let Some(conn) = store.read(cx).get(&id).cloned() else {
         return;
     };
-    // Editing fills in the saved secrets; when locked they stay empty and saving keeps the old values
-    let secrets =
-        SecretField::ALL.map(|f| store.update(cx, |s, _| s.reveal(&id, f)).ok().flatten());
-    open(conn, Some(secrets), window, cx);
+    // A connection with nothing encrypted can be edited while the store is locked.
+    // One that has saved secrets stays closed if unlocking fails: the form could not
+    // write those fields back.
+    if !store.read(cx).is_locked() || !has_saved_secret(&conn) {
+        let secrets = if store.read(cx).is_locked() {
+            [None, None, None]
+        } else {
+            SecretField::ALL.map(|f| store.update(cx, |s, _| s.reveal(&id, f)).ok().flatten())
+        };
+        open(conn, Some(secrets), window, cx);
+        return;
+    }
+    crate::request_unlock(window, cx, move |ok, window, cx| {
+        if !ok {
+            return;
+        }
+        let store = ConnectionStore::global(cx);
+        let Some(conn) = store.read(cx).get(&id).cloned() else {
+            return;
+        };
+        let secrets =
+            SecretField::ALL.map(|f| store.update(cx, |s, _| s.reveal(&id, f)).ok().flatten());
+        open(conn, Some(secrets), window, cx);
+    });
 }
 
 fn open(conn: Connection, secrets: Option<[Option<String>; 3]>, window: &mut Window, cx: &mut App) {
@@ -173,6 +202,9 @@ struct ConnectionForm {
     ssh_passphrase: Text,
     remark: Entity<TextareaState>,
     testing: Option<test_connection::ConnectionTest>,
+    /// Bumped when a test starts or is cancelled, so an older waiter cannot overwrite the status.
+    test_generation: u64,
+    test_outcome: Option<test_connection::TestOutcome>,
     error: Option<SharedString>,
 }
 
@@ -364,6 +396,8 @@ impl ConnectionForm {
                 cx.new(|cx| TextareaState::new(window, cx).default_value(value))
             },
             testing: None,
+            test_generation: 0,
+            test_outcome: None,
             error: None,
             draft: conn,
         }
@@ -478,7 +512,12 @@ impl Render for ConnectionForm {
             ],
         };
         let testing = self.testing.is_some();
+        let outcome = self.test_outcome.clone();
+        let form = cx.entity().downgrade();
+        let p = palette(cx);
         v_flex()
+            .w_full()
+            .min_w_0()
             .gap_3()
             .child(navidog_ui::skin::heading(title))
             .child(
@@ -495,34 +534,66 @@ impl Render for ConnectionForm {
             )
             .child(
                 v_flex()
+                    .w_full()
+                    .min_w_0()
                     .min_h(tokens::conn_form::BODY_HEIGHT.rems())
                     .px(tokens::form::MARGIN.rems())
                     .gap(tokens::form::ROW_GAP.rems())
                     .children(body),
             )
             .when_some(self.error.clone(), |this, e| {
-                this.child(div().text_color(palette(cx).danger).child(e))
+                this.child(
+                    div()
+                        .px(tokens::form::MARGIN.rems())
+                        .text_color(p.danger)
+                        .child(e),
+                )
+            })
+            .when(testing, |this| {
+                let form = form.clone();
+                this.child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .px(tokens::form::MARGIN.rems())
+                        .child(
+                            Alert::info("test-status", t!("conn.test_in_progress").to_string())
+                                .small()
+                                .on_close(move |_, _, cx| {
+                                    let _ = form.update(cx, |this, cx| this.cancel_test(cx));
+                                }),
+                        ),
+                )
+            })
+            .when_some(outcome.filter(|_| !testing), |this, outcome| {
+                let form = form.clone();
+                let alert = match outcome {
+                    test_connection::TestOutcome::Ok(text) => {
+                        Alert::success("test-status", text.to_string())
+                    }
+                    test_connection::TestOutcome::Failed(text) => {
+                        Alert::error("test-status", text.to_string())
+                    }
+                };
+                this.child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .px(tokens::form::MARGIN.rems())
+                        .child(alert.small().on_close(move |_, _, cx| {
+                            let _ = form.update(cx, |this, cx| this.dismiss_test_outcome(cx));
+                        })),
+                )
             })
             .child(
                 h_flex()
+                    .w_full()
+                    .min_w_0()
                     .justify_between()
                     .child(
                         Button::new("test")
-                            .accessibility_label(
-                                if testing {
-                                    t!("conn.test_cancel")
-                                } else {
-                                    t!("conn.test")
-                                }
-                                .to_string(),
-                            )
-                            .child(
-                                h_flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .when(testing, |row| row.child(Spinner::new().small()))
-                                    .child(t!("conn.test").to_string()),
-                            )
+                            .label(t!("conn.test").to_string())
+                            .disabled(testing)
                             .on_click(cx.listener(|this, _, window, cx| this.test(window, cx))),
                     )
                     .child(

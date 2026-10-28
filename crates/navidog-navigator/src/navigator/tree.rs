@@ -13,6 +13,7 @@ pub(super) struct TreeBuilder<'a> {
     pub(super) filtering: bool,
     pub(super) show_children: bool,
     pub(super) show_objects: bool,
+    pub(super) show_system: bool,
 }
 
 /// Groups, connections, databases, schemas, categories and virtual groups.
@@ -207,7 +208,7 @@ impl TreeBuilder<'_> {
             return Some(self.item(node, db.to_string(), Vec::new()));
         };
         let view = &self.panel.view;
-        if (!view.show_hidden && dialect.is_system_database(db))
+        if (!self.show_system && dialect.is_system_database(db))
             || (view.only_active && !self.panel.expanded.contains(&node.id()))
         {
             return None;
@@ -216,7 +217,7 @@ impl TreeBuilder<'_> {
             match self.catalog.schemas(conn, db) {
                 Some(Load::Ready(list)) => list
                     .iter()
-                    .filter(|s| view.show_hidden || !dialect.is_system_schema(s))
+                    .filter(|s| self.show_system || !dialect.is_system_schema(s))
                     .map(|s| {
                         let scope = Scope::new(conn, db, Some(s.clone()));
                         self.item(
@@ -254,6 +255,7 @@ impl TreeBuilder<'_> {
                         let names: Vec<&str> = list
                             .iter()
                             .map(|o| o.name.as_str())
+                            .filter(|n| self.show_system || !dialect.is_system_object(n))
                             .filter(|n| self.matches(n))
                             .collect();
                         let mut items = Vec::new();
@@ -269,7 +271,13 @@ impl TreeBuilder<'_> {
                                         self.object_item(scope, kind, m)
                                     })
                                     .collect();
-                                if self.filtering && members.is_empty() && !self.matches(&g.name) {
+                                let only_hidden = members.is_empty()
+                                    && g.members.iter().any(|m| {
+                                        list.iter().any(|o| {
+                                            o.name == *m && dialect.is_system_object(&o.name)
+                                        })
+                                    });
+                                if only_hidden && !(self.filtering && self.matches(&g.name)) {
                                     continue;
                                 }
                                 let vg = Node::VGroup(scope.clone(), kind, g.id.clone());

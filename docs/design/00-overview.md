@@ -50,7 +50,7 @@ navidog 用 [gpui-kit](https://gpui-kit.com/zh-CN/docs/) 全家桶（GPUI、`gpu
 **产品**
 1. 基线：Navicat Premium 17.3.5 macOS 版，浅色、深色都复刻。
 2. “像素级”的含义：不做截图对比。尺寸取自 nib 和 AX，颜色取自 AppKit 语义色；每个 token 标明来源；里程碑验收时并排目测。
-3. 不提取 Navicat 的图标和 logo。使用 Lucide 加自绘近似 SVG，尺寸和位置一致，图形不照抄；logo 用 navidog 自己的。
+3. 不提取 Navicat 的图标和 logo。界面图标用 Lucide；四种数据库图标用已授权的第三方 SVG（MySQL 为 Tabler，MariaDB、PostgreSQL、SQLite 为 Devicon），尺寸和位置与参考一致，图形不照抄 Navicat。logo 用 navidog 自己的。
 4. 功能范围：所有功能都写进[功能清单](01-feature-inventory.md)，分里程碑实现。范围覆盖 MySQL、PostgreSQL、SQLite 适用的全部功能，外加 AI 助手和替代 Navicat Cloud 的同步功能。其他数据库的专属功能也完整写进 [db/](db/)。
 5. 一期数据库：MySQL/MariaDB、PostgreSQL、SQLite。
 6. 平台：macOS 首发并做像素校准（最低 macOS 15，gpui-kit 的要求）；Windows 和 Linux 保持可编译，不承诺视觉。

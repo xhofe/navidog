@@ -351,7 +351,7 @@ pub fn set_menus(cx: &mut App) {
             checked(
                 t!("menu.show_hidden").to_string(),
                 Box::new(ToggleShowHidden),
-                state.view.show_hidden,
+                settings.show_system_objects,
             ),
             checked(
                 t!("menu.hide_object_groups").to_string(),

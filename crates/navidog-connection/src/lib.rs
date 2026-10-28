@@ -11,7 +11,12 @@ pub mod profile;
 mod reload;
 mod secrets;
 
-pub use secrets::resolve;
+pub use form::open_new;
+pub use secrets::{request_unlock, resolve};
+
+pub fn open_type_picker(window: &mut Window, cx: &mut App) {
+    picker::open(window, cx);
+}
 
 use std::sync::Arc;
 
@@ -63,15 +68,36 @@ pub fn bind_actions<E: InteractiveElement>(el: E) -> E {
             let Some(id) = selected_connection(cx) else {
                 return;
             };
-            let store = ConnectionStore::global(cx);
-            let result = store.update(cx, |s, cx| s.duplicate(&id, &t!("conn.copy_suffix"), cx));
-            if let Err(e) = result {
-                show_error(
-                    t!("conn.duplicate_failed").into(),
-                    e.localized_message().into(),
-                    window,
-                    cx,
-                );
+            let run = move |id: String, window: &mut Window, cx: &mut App| {
+                let suffix = t!("conn.copy_suffix").to_string();
+                let result =
+                    ConnectionStore::global(cx).update(cx, |s, cx| s.duplicate(&id, &suffix, cx));
+                if let Err(e) = result {
+                    show_error(
+                        t!("conn.duplicate_failed").into(),
+                        e.localized_message().into(),
+                        window,
+                        cx,
+                    );
+                }
+            };
+            if ConnectionStore::global(cx).read(cx).is_locked() {
+                request_unlock(window, cx, move |ok, window, cx| {
+                    if ok {
+                        run(id, window, cx);
+                    } else {
+                        show_error(
+                            t!("conn.duplicate_failed").into(),
+                            navidog_app_state::store::StoreError::Locked
+                                .localized_message()
+                                .into(),
+                            window,
+                            cx,
+                        );
+                    }
+                });
+            } else {
+                run(id, window, cx);
             }
         })
         .on_action(|_: &DeleteConnection, window, cx| delete_selected(window, cx))

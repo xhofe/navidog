@@ -7,11 +7,11 @@ use gpui_kit::component::radio::{Radio, RadioGroup};
 use gpui_kit::component::select::Select;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
-    TestSupportExt as _, div,
+    AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
 };
 use navidog_model::connection::{AttachedDatabase, DatabaseItem};
-use navidog_ui::skin::{FormRow, form_note};
+use navidog_ui::skin::{FormRow, form_note, truncated};
 use navidog_ui::{palette, tokens};
 use rust_i18n::t;
 
@@ -319,47 +319,74 @@ impl ConnectionForm {
         let p = palette(cx);
         let list = |rows: Vec<AnyElement>| {
             v_flex()
-                .w(tokens::form::LIST_WIDTH.rems())
+                .id("conn-db-list")
+                .w_full()
+                .min_w_0()
                 .h(tokens::form::LIST_HEIGHT.rems())
+                .overflow_y_scroll()
                 .border_1()
                 .border_color(p.separator)
                 .bg(p.control_bg)
                 .children(rows)
         };
-        let header = |cols: Vec<String>| {
-            h_flex()
+        let check_col = tokens::form::FIELD_WIDTH_SHORT;
+        let header = |first_fixed: bool, cols: Vec<String>| {
+            let mut row = h_flex()
+                .w_full()
+                .min_w_0()
                 .h(tokens::form::LIST_HEADER_HEIGHT.rems())
                 .px_2()
-                .gap_4()
+                .gap_2()
                 .border_b_1()
                 .border_color(p.separator)
-                .text_color(p.label)
-                .children(cols.into_iter().map(|c| div().child(c)))
+                .text_color(p.label);
+            for (ix, col) in cols.into_iter().enumerate() {
+                let cell = div().min_w_0().overflow_hidden().child(col);
+                row = row.child(if first_fixed && ix == 0 {
+                    cell.w(check_col.rems()).flex_none()
+                } else {
+                    cell.flex_1()
+                });
+            }
+            row
         };
         if self.draft.supports_network() {
             let items = self.draft.databases.items.clone();
             let mut rows = vec![
-                header(vec![
-                    t!("conn.col_auto_open").to_string(),
-                    t!("conn.col_name").to_string(),
-                ])
+                header(
+                    true,
+                    vec![
+                        t!("conn.col_auto_open").to_string(),
+                        t!("conn.col_name").to_string(),
+                    ],
+                )
                 .into_any_element(),
             ];
             for (ix, item) in items.iter().enumerate() {
                 rows.push(
                     h_flex()
+                        .w_full()
+                        .min_w_0()
                         .h(tokens::form::LIST_ROW_HEIGHT.rems())
                         .px_2()
-                        .gap_4()
+                        .gap_2()
                         .child(
-                            Checkbox::new(("auto-open", ix))
-                                .checked(item.auto_open)
-                                .on_click(cx.listener(move |this, v: &bool, _, cx| {
-                                    this.draft.databases.items[ix].auto_open = *v;
-                                    cx.notify();
-                                })),
+                            div().w(check_col.rems()).flex_none().child(
+                                Checkbox::new(("auto-open", ix))
+                                    .checked(item.auto_open)
+                                    .on_click(cx.listener(move |this, v: &bool, _, cx| {
+                                        this.draft.databases.items[ix].auto_open = *v;
+                                        cx.notify();
+                                    })),
+                            ),
                         )
-                        .child(item.name.clone())
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .child(item.name.clone()),
+                        )
                         .into_any_element(),
                 );
             }
@@ -375,8 +402,10 @@ impl ConnectionForm {
                 FormRow::bare(list(rows)).into_any_element(),
                 FormRow::bare(
                     h_flex()
+                        .w_full()
+                        .min_w_0()
                         .gap_1()
-                        .child(Input::new(&self.new_db).w(tokens::form::FIELD_WIDTH.rems()))
+                        .child(Input::new(&self.new_db).flex_1().min_w_0())
                         .child(Button::new("db-add").label("+").on_click(cx.listener(
                             |this, _, window, cx| {
                                 let name = Self::value(&this.new_db, cx);
@@ -403,20 +432,33 @@ impl ConnectionForm {
             ]
         } else {
             let mut rows = vec![
-                header(vec![
-                    t!("conn.col_name").to_string(),
-                    t!("conn.col_file").to_string(),
-                ])
+                header(
+                    false,
+                    vec![
+                        t!("conn.col_name").to_string(),
+                        t!("conn.col_file").to_string(),
+                    ],
+                )
                 .into_any_element(),
             ];
             for item in &self.draft.databases.attached {
                 rows.push(
                     h_flex()
+                        .w_full()
+                        .min_w_0()
                         .h(tokens::form::LIST_ROW_HEIGHT.rems())
                         .px_2()
-                        .gap_4()
-                        .child(item.name.clone())
-                        .child(item.file.clone())
+                        .gap_2()
+                        .child(
+                            truncated(("attach-name", rows.len() as u64), item.name.clone())
+                                .flex_1()
+                                .min_w_0(),
+                        )
+                        .child(
+                            truncated(("attach-file", rows.len() as u64), item.file.clone())
+                                .flex_1()
+                                .min_w_0(),
+                        )
                         .into_any_element(),
                 );
             }

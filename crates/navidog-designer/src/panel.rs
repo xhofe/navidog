@@ -131,20 +131,25 @@ impl MissingConnection {
 
     fn ask_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let weak = cx.entity().downgrade();
-        confirm_discard(window, cx, move |window, cx| {
-            if let Ok(id) = weak.update(cx, |this, cx| {
-                this.close_approved = true;
-                PanelId::from(cx.entity_id())
-            }) {
-                window.dispatch_action(
-                    Box::new(tabs::CloseTabs {
-                        panel: Some(id),
-                        which: tabs::Close::This,
-                    }),
-                    cx,
-                );
-            }
-        });
+        confirm_discard(
+            PanelId::from(cx.entity_id()),
+            window,
+            cx,
+            move |window, cx| {
+                if let Ok(id) = weak.update(cx, |this, cx| {
+                    this.close_approved = true;
+                    PanelId::from(cx.entity_id())
+                }) {
+                    window.dispatch_action(
+                        Box::new(tabs::CloseTabs {
+                            panel: Some(id),
+                            which: tabs::Close::This,
+                        }),
+                        cx,
+                    );
+                }
+            },
+        );
     }
 }
 
@@ -1082,24 +1087,30 @@ impl TableDesigner {
             return;
         }
         let weak = cx.entity().downgrade();
-        confirm_discard(window, cx, move |window, cx| {
-            if let Ok(id) = weak.update(cx, |this, cx| {
-                this.close_approved = true;
-                PanelId::from(cx.entity_id())
-            }) {
-                window.dispatch_action(
-                    Box::new(tabs::CloseTabs {
-                        panel: Some(id),
-                        which: tabs::Close::This,
-                    }),
-                    cx,
-                );
-            }
-        });
+        confirm_discard(
+            PanelId::from(cx.entity_id()),
+            window,
+            cx,
+            move |window, cx| {
+                if let Ok(id) = weak.update(cx, |this, cx| {
+                    this.close_approved = true;
+                    PanelId::from(cx.entity_id())
+                }) {
+                    window.dispatch_action(
+                        Box::new(tabs::CloseTabs {
+                            panel: Some(id),
+                            which: tabs::Close::This,
+                        }),
+                        cx,
+                    );
+                }
+            },
+        );
     }
 }
 
 fn confirm_discard(
+    panel: PanelId,
     window: &mut Window,
     cx: &mut App,
     on_discard: impl Fn(&mut Window, &mut App) + 'static,
@@ -1110,6 +1121,10 @@ fn confirm_discard(
         let on_discard = on_discard.clone();
         dialog
             .title(t!("designer.close_title").to_string())
+            .on_cancel(move |_, _, cx| {
+                tabs::abort_pending_dirty_closes(panel, cx);
+                true
+            })
             .child(t!("designer.close_body").to_string())
             .footer(
                 h_flex()
@@ -1118,7 +1133,10 @@ fn confirm_discard(
                     .child(
                         Button::new("designer-close-cancel")
                             .label(t!("designer.cancel").to_string())
-                            .on_click(|_, w, cx| w.close_dialog(cx)),
+                            .on_click(move |_, w, cx| {
+                                tabs::abort_pending_dirty_closes(panel, cx);
+                                w.close_dialog(cx);
+                            }),
                     )
                     .child(
                         Button::new("designer-close-discard")

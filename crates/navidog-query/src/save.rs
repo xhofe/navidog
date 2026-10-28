@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::dock::PanelId;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -66,6 +67,7 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 type Named = Rc<dyn Fn(String, &mut Window, &mut App)>;
+type Cancelled = Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// "Query Name" prompt; the name must be usable in `scope` (30 §7).
 struct NamePrompt {
@@ -74,6 +76,7 @@ struct NamePrompt {
     current: Option<String>,
     invalid: bool,
     done: Named,
+    cancel: Cancelled,
 }
 
 fn ask_name(
@@ -82,6 +85,7 @@ fn ask_name(
     current: Option<String>,
     window: &mut Window,
     cx: &mut App,
+    on_cancel: impl Fn(&mut Window, &mut App) + 'static,
     done: impl Fn(String, &mut Window, &mut App) + 'static,
 ) {
     let input = cx.new(|cx| InputState::new(window, cx).default_value(initial));
@@ -95,12 +99,18 @@ fn ask_name(
         current,
         invalid: false,
         done: Rc::new(done),
+        cancel: Rc::new(on_cancel),
     });
     window.open_dialog(cx, move |dialog, window, _| {
+        let view_cancel = view.clone();
         confirm_with(
             dialog
                 .w(tokens::dialog::SMALL_WIDTH.to_pixels(window.rem_size()))
-                .close_button(false),
+                .close_button(false)
+                .on_cancel(move |_, window, cx| {
+                    view_cancel.update(cx, |this, cx| this.cancel(window, cx));
+                    true
+                }),
             &view,
             NamePrompt::ok,
         )
@@ -118,6 +128,12 @@ impl NamePrompt {
         }
         window.close_dialog(cx);
         (self.done)(name, window, cx);
+    }
+
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let cancel = self.cancel.clone();
+        window.close_dialog(cx);
+        cancel(window, cx);
     }
 }
 
@@ -143,7 +159,7 @@ impl Render for NamePrompt {
                     .child(
                         Button::new("query-name-cancel")
                             .label(t!("query.cancel").to_string())
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                            .on_click(cx.listener(|this, _, window, cx| this.cancel(window, cx))),
                     )
                     .child(
                         Button::new("query-name-ok")
@@ -164,11 +180,15 @@ impl QueryEditor {
                 if self.write(&queries::path(&o.scope, &o.name), window, cx) {
                     Workspace::global(cx).update(cx, |w, cx| w.queries_changed(cx));
                     self.after_save(close, window, cx);
+                } else if close {
+                    self.abort_close_queue(cx);
                 }
             }
             QuerySource::External(path) => {
                 if self.write(&path, window, cx) {
                     self.after_save(close, window, cx);
+                } else if close {
+                    self.abort_close_queue(cx);
                 }
             }
             QuerySource::Untitled(_) => match self.target.scope() {
@@ -198,29 +218,44 @@ impl QueryEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let panel = PanelId::from(cx.entity_id());
         let this = cx.entity().downgrade();
         let initial = match &self.source {
             QuerySource::Untitled(_) => String::new(),
             _ => self.display_name().trim_end_matches(".sql").to_string(),
         };
         let target = scope.clone();
-        ask_name(scope, initial, None, window, cx, move |name, window, cx| {
-            let object = ObjectRef {
-                scope: target.clone(),
-                kind: ObjectKind::Query,
-                name,
-            };
-            let _ = this.update(cx, |e, cx| {
-                if e.write(&queries::path(&object.scope, &object.name), window, cx) {
-                    e.source = QuerySource::Saved(object.clone());
-                    e.target.connection = Some(object.scope.connection.clone());
-                    e.target.database = Some(object.scope.database.clone());
-                    e.target.schema = object.scope.schema.clone();
-                    Workspace::global(cx).update(cx, |w, cx| w.queries_changed(cx));
-                    e.after_save(close, window, cx);
+        ask_name(
+            scope,
+            initial,
+            None,
+            window,
+            cx,
+            move |_, cx| {
+                if close {
+                    navidog_ui::tabs::abort_pending_dirty_closes(panel, cx);
                 }
-            });
-        });
+            },
+            move |name, window, cx| {
+                let object = ObjectRef {
+                    scope: target.clone(),
+                    kind: ObjectKind::Query,
+                    name,
+                };
+                let _ = this.update(cx, |e, cx| {
+                    if e.write(&queries::path(&object.scope, &object.name), window, cx) {
+                        e.source = QuerySource::Saved(object.clone());
+                        e.target.connection = Some(object.scope.connection.clone());
+                        e.target.database = Some(object.scope.database.clone());
+                        e.target.schema = object.scope.schema.clone();
+                        Workspace::global(cx).update(cx, |w, cx| w.queries_changed(cx));
+                        e.after_save(close, window, cx);
+                    } else if close {
+                        e.abort_close_queue(cx);
+                    }
+                });
+            },
+        );
     }
 
     /// The system save panel. `rebind` makes the tab edit the new file afterwards.
@@ -241,16 +276,26 @@ impl QueryEditor {
         let picked = cx.prompt_for_new_path(&dir, Some(&suggested));
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(path))) = picked.await else {
+                if close {
+                    let _ = this.update(cx, |e, cx| e.abort_close_queue(cx));
+                }
                 return;
             };
             let _ = this.update_in(cx, |e, window, cx| {
-                if e.write(&path, window, cx) && rebind {
+                let wrote = e.write(&path, window, cx);
+                if wrote && rebind {
                     e.source = QuerySource::External(path);
                     e.after_save(close, window, cx);
+                } else if close && !wrote {
+                    e.abort_close_queue(cx);
                 }
             });
         })
         .detach();
+    }
+
+    fn abort_close_queue(&mut self, cx: &mut Context<Self>) {
+        navidog_ui::tabs::abort_pending_dirty_closes(PanelId::from(cx.entity_id()), cx);
     }
 
     /// Writes the text; a failure is shown and leaves the editor as it was.

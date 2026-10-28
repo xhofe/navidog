@@ -262,7 +262,7 @@ mod tests {
                     assert_eq!(colors, expected, "{name}");
                 } else {
                     assert_eq!(colors.window_bg, cx.theme().background, "{name}");
-                    assert_eq!(colors.selection, cx.theme().list_active_border, "{name}");
+                    assert_eq!(colors.selection, cx.theme().list_active, "{name}");
                     assert_eq!(colors.selection_text, cx.theme().foreground, "{name}");
                     assert_eq!(colors.row_selected, cx.theme().list_active, "{name}");
                     assert_eq!(cx.theme().font_size, gpui_kit::px(13.), "{name}"); // raw-px: layout rem base

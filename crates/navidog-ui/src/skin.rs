@@ -239,9 +239,11 @@ impl RenderOnce for FormRow {
         };
         let hug = self.hug;
         h_flex()
+            .w_full()
+            .min_w_0()
             .min_h(height.rems())
             .gap(tokens::form::LABEL_GAP.rems())
-            .when(hug, |row| row.w_full().min_w_0())
+            .when(hug, |row| row.min_w_0())
             // A hugged row with no label (a checkbox, an error) starts at the left edge.
             // The connection form keeps an empty column so those rows line up with the fields.
             .when(!hug || self.label.is_some(), |row| {

@@ -66,6 +66,7 @@ debug 构建平均为 2.0ms 和 4.8ms。多选、拖进组、拖到空白处回�
 - **查询后的更新**：同一连接的查询或命令列执行完成后，重新请求已加载的数据库列表、模式、对象、字段、表下元素和 DDL 缓存；已打开的视图等 DDL 选项卡随缓存结果更新。只重新加载已有缓存项，不主动展开整棵树；不同连接互不影响。新的请求替代旧请求，过期结果不得覆盖新数据。
 - **显示模式下的对象**（F-PREF-002）：默认开启，导航树在数据库（没有模式的方言）或模式下显示对象分类。关闭后树停在数据库或模式，对象只在对象选项卡里看。切换后立刻生效。
 - **显示表下的对象**（F-PREF-002）：默认开启。关掉后表下面不列出字段、索引、外键和触发器。
+- **显示系统对象**（F-PREF-002）：默认开启。关掉后导航树和对象列表不显示系统库（MySQL / MariaDB 的 `information_schema`、`mysql`、`performance_schema`、`sys`）、系统模式（PostgreSQL 的 `pg_catalog`、`information_schema`）以及 SQLite 里 `sqlite_` 前缀的对象。查看菜单的「显示隐藏项目」读写同一项设置，不另存一份。代码补全的「包括系统对象」仍是编辑器自己的开关。
 - **分类集合**：每种方言的分类集合由驱动通过 `Relational::object_kinds()` 声明，界面只负责渲染。
 - **对象节点**：双击表，在对象窗格中打开表查看器（M2 第二部分，见 [21-table-viewer.md](21-table-viewer.md)）；双击其他对象，打开对应的设计器（M4），M2 中先打开只读的 DDL 选项卡。
 - **展开**：单击只选中，不展开。双击和 Return：关闭的连接会打开，对象会打开，其余节点展开或折叠。行首箭头同样展开或折叠（关闭的连接会打开），但表只展开其下的字段、索引、外键和触发器，不打开表查看器。方向键右展开（关闭的连接会打开），左折叠。
@@ -100,7 +101,7 @@ pub struct Scope { pub database: String, pub schema: Option<String> }
 
 | 内容 | MySQL / MariaDB | PostgreSQL | SQLite |
 | --- | --- | --- | --- |
-| 表 | `information_schema.TABLES`（`TABLE_TYPE='BASE TABLE'`），带 `TABLE_ROWS`、`DATA_LENGTH`、`ENGINE`、`CREATE_TIME`、`TABLE_COMMENT` | `pg_class` 加 `pg_namespace`（`relkind in ('r','p')`）、`obj_description`、`pg_total_relation_size` | `sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'` |
+| 表 | `information_schema.TABLES`（`TABLE_TYPE='BASE TABLE'`），带 `TABLE_ROWS`、`DATA_LENGTH`、`ENGINE`、`CREATE_TIME`、`UPDATE_TIME`、`TABLE_COLLATION`、`TABLE_COMMENT` | `pg_class` 加 `pg_namespace`（`relkind in ('r','p')`）、`obj_description`、`pg_total_relation_size` | `sqlite_schema WHERE type='table'`。`sqlite_` 前缀的表仍查出来，界面在「显示系统对象」关闭时滤掉 |
 | 视图 | `information_schema.VIEWS` | `pg_views` | `sqlite_schema WHERE type='view'` |
 | 实体化视图 | 无 | `pg_matviews` | 无 |
 | 函数和过程 | `information_schema.ROUTINES` | `pg_proc`（`prokind`） | 无 |
@@ -111,15 +112,15 @@ pub struct Scope { pub database: String, pub schema: Option<String> }
 ## 4. 对象选项卡
 
 - **对象工具栏**：高度为 `object_toolbar.height`。按钮随分类变化，以表为例：打开表、设计表、新建表、删除表、导入向导、导出向导。没实现的按钮显示为禁用。
-- **三种视图**：列表（默认）、详细信息、ER 图表（M7）。通过对象工具栏右侧的分段按钮切换，选择会按连接分别记住。
-- **详细信息视图**：用 `DataTable`，表头高 `list.header.height`，可按列排序；“查看 > 选择列”打开列选择弹窗，选择按对象类型分别保存。
+- **三种视图**：详细信息（默认）、列表、ER 图表（M7）。通过对象工具栏右侧的分段按钮切换。
+- **详细信息视图**：表头高 `list.header.height`，可按列排序；“查看 > 选择列”打开列选择弹窗，选择按对象类型分别保存。列是该对象类型在目录里的固定属性（MySQL 表为名称、行、数据长度、引擎、创建日期、修改日期、排序规则、注释），空值留空，不因为整列为空就拿掉这一列。`data_length` 按 1024 显示成 `16 KB` 这种形式，排序仍用原始字节数。PostgreSQL 和 SQLite 只显示该方言查到的列，不补引擎、日期或排序规则。列表视图只显示名称。
 - **表概况**（F-OBJ-007）：“查看 > 显示表概况”。勾选后，对象列表底部显示当前选中对象已加载的属性（行数、数据长度、引擎等），键名与详细信息视图的列名相同，不另查一次目录。没有属性的选择不显示这条。
 - **其他**：空白处的右键菜单，与导航窗格里分类节点的右键菜单相同；状态栏显示“N 个项目”或“N 个项目（已选择 M 个）”。
 
 ## 5. 编辑器选项卡
 
 - 对象窗格的中央 `TabPanel` 中，“对象”选项卡固定在第一个：拖到别的位置会回到最左。选项卡条横向滚动时它仍会跟着走（gpui-kit 的 `TabBar` 把整条一起滚动，不能把单个选项卡留在滚动区域外）。编辑器选项卡（表查看器、DDL、以及之后的查询编辑器和设计器）依次加在后面，标题前显示对象图标；设置了连接颜色时，选项卡底部显示该颜色的细条。
-- 右键选项卡：关闭、关闭其他、关闭右侧、弹出为新窗口、加到收藏夹、加到启动画面。
+- 右键选项卡：关闭、关闭其他、关闭右侧、关闭全部、弹出为新窗口、加到收藏夹、加到启动画面。关闭其他、关闭右侧、关闭全部时，每个有未保存修改的选项卡按从左到右依次询问；取消停止后续询问，已经关掉的选项卡不恢复。保存或不保存之后继续下一个。
 - 弹出为新窗口：用 `gpui_kit::open_window` 打开一个只包含该编辑器的窗口；关闭窗口时，询问是否放回主窗口。
 - 偏好设置的“选项卡”页：选择在新选项卡还是新窗口中打开，以及启动画面列表（F-PREF-003）。
 

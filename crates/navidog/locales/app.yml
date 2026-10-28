@@ -584,6 +584,9 @@ prefs:
   show_table_children:
     en: Show objects under tables
     zh-CN: 显示表下的对象
+  show_system_objects:
+    en: Show system objects
+    zh-CN: 显示系统对象
   tabs:
     en: Tabs
     zh-CN: 选项卡
@@ -761,8 +764,8 @@ about:
     en: "Version %{version}"
     zh-CN: "版本 %{version}"
   description:
-    en: A database client built with GPUI Kit, modeled after Navicat.
-    zh-CN: 基于 GPUI Kit 构建、复刻 Navicat 的数据库客户端。
+    en: An open-source alternative to Navicat, written in Rust
+    zh-CN: 用 Rust 编写的 Navicat 开源替代。
 dialog:
   ok:
     en: OK

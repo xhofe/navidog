@@ -232,6 +232,19 @@ pub fn register_app_actions(cx: &mut App) {
     });
     cx.on_action(|_: &OpenHelp, cx| cx.open_url(REPO));
     cx.on_action(|_: &ReportIssue, cx| cx.open_url(&format!("{REPO}/issues/new")));
+    cx.on_action(|_: &navidog_app_state::actions::NewConnection, cx| {
+        cx.stop_propagation();
+        on_front_window(cx, |window, cx| {
+            navidog_connection::open_type_picker(window, cx)
+        });
+    });
+    cx.on_action(|a: &navidog_app_state::actions::NewConnectionOf, cx| {
+        cx.stop_propagation();
+        let driver = a.driver.clone();
+        on_front_window(cx, move |window, cx| {
+            navidog_connection::open_new(driver, window, cx);
+        });
+    });
     cx.on_action(|_: &About, cx| {
         on_front_window(cx, |window, cx| {
             window.open_alert_dialog(cx, |alert, _, _| {

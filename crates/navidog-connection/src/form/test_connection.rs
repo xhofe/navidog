@@ -1,10 +1,15 @@
 use super::*;
 
-use gpui_kit::component::WindowExt as _;
 use gpui_kit::{Context, SharedString, Task, Window};
 use navidog_db::{ConnectParams, runtime};
 use navidog_session::DriverRegistry;
 use rust_i18n::t;
+
+#[derive(Clone)]
+pub(super) enum TestOutcome {
+    Ok(SharedString),
+    Failed(SharedString),
+}
 
 /// The UI waiter plus a handle that actually stops the database probe.
 /// Dropping the waiter only detaches the Tokio task.
@@ -16,12 +21,26 @@ pub(super) struct ConnectionTest {
 }
 
 impl ConnectionForm {
-    pub(crate) fn test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn cancel_test(&mut self, cx: &mut Context<Self>) {
+        self.test_generation = self.test_generation.wrapping_add(1);
         if let Some(running) = self.testing.take() {
             running.abort.abort();
-            cx.notify();
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn dismiss_test_outcome(&mut self, cx: &mut Context<Self>) {
+        self.test_outcome = None;
+        cx.notify();
+    }
+
+    pub(crate) fn test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.testing.is_some() {
             return;
         }
+        self.test_outcome = None;
+        self.test_generation = self.test_generation.wrapping_add(1);
+        let generation = self.test_generation;
         let conn = match self.collect(cx) {
             Ok(c) => c,
             Err(e) => {
@@ -41,19 +60,20 @@ impl ConnectionForm {
                 .await
                 .map_err(|e| e.to_string())
                 .and_then(|r| r.map_err(|e| crate::db_text(&e)));
-            let _ = this.update_in(cx, |this, window, cx| {
+            let _ = this.update_in(cx, |this, _, cx| {
+                if this.test_generation != generation {
+                    return;
+                }
                 this.testing = None;
-                cx.notify();
-                let (title, body): (SharedString, SharedString) = match result {
-                    Ok(version) => (t!("conn.test_ok").to_string().into(), version.into()),
-                    Err(e) => (t!("conn.test_failed").to_string().into(), e.into()),
-                };
-                window.open_alert_dialog(cx, move |alert, _, _| {
-                    alert
-                        .title(title.clone())
-                        .description(body.clone())
-                        .ok_text(t!("conn.ok").to_string())
+                this.test_outcome = Some(match result {
+                    Ok(version) => TestOutcome::Ok(
+                        t!("conn.test_ok_version", version = version)
+                            .to_string()
+                            .into(),
+                    ),
+                    Err(e) => TestOutcome::Failed(e.into()),
                 });
+                cx.notify();
             });
         });
         self.testing = Some(ConnectionTest { task, abort });
