@@ -293,8 +293,7 @@ impl ObjectsPanel {
             let primary = workspace.selection().clone();
             let rest: Vec<_> = workspace.selections().skip(1).cloned().collect();
             let sessions = Sessions::global(cx).read(cx);
-            let hidden =
-                |selection: &Selection| Self::hidden_selection(selection, &sessions, false);
+            let hidden = |selection: &Selection| Self::hidden_selection(selection, sessions, false);
             if !hidden(&primary) && rest.iter().all(|selection| !hidden(selection)) {
                 return;
             }
@@ -440,7 +439,7 @@ impl ObjectsPanel {
                 }
             }
         }
-        if Self::hidden_selection(&selection, &sessions, show_system) {
+        if Self::hidden_selection(&selection, sessions, show_system) {
             return Content::Empty;
         }
         match &selection {

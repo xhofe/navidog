@@ -67,6 +67,7 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 type Named = Rc<dyn Fn(String, &mut Window, &mut App)>;
+type Cancelled = Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// "Query Name" prompt; the name must be usable in `scope` (30 §7).
 struct NamePrompt {
@@ -75,7 +76,7 @@ struct NamePrompt {
     current: Option<String>,
     invalid: bool,
     done: Named,
-    cancel: Rc<dyn Fn(&mut Window, &mut App)>,
+    cancel: Cancelled,
 }
 
 fn ask_name(
