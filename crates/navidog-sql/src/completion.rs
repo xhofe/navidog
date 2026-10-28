@@ -365,7 +365,10 @@ fn highlight_contains(query: &str, label: &str) -> Vec<Range<usize>> {
         }
         let byte_start = label[start].0;
         let (last_index, last_char) = label[start + query.len() - 1];
-        return vec![byte_start..last_index + last_char.len_utf8()];
+        let end = last_index + last_char.len_utf8();
+        // One matched span. `vec![start..end]` is the range itself, not a vec of indexes.
+        #[allow(clippy::single_range_in_vec_init)]
+        return vec![byte_start..end];
     }
     Vec::new()
 }
@@ -495,59 +498,31 @@ mod tests {
         }
     }
 
-    fn sample() -> (
-        Vec<String>,
-        Vec<(String, bool, Vec<(String, String)>)>,
-        Vec<String>,
-    ) {
-        (
-            vec!["sakila".into(), "world".into()],
-            vec![
-                (
-                    "actor".into(),
-                    false,
-                    vec![
-                        ("actor_id".into(), "smallint".into()),
-                        ("first_name".into(), "varchar(45)".into()),
-                    ],
-                ),
-                (
-                    "actor_info".into(),
-                    true,
-                    vec![("actor_id".into(), "smallint".into())],
-                ),
-            ],
-            vec!["get_customer_balance".into()],
-        )
-    }
-
     struct Held {
         schemas: Vec<String>,
         columns: Vec<Vec<(String, String)>>,
         functions: Vec<String>,
     }
 
-    fn hold(
-        sample: (
-            Vec<String>,
-            Vec<(String, bool, Vec<(String, String)>)>,
-            Vec<String>,
-        ),
-    ) -> (Held, Vec<(String, bool)>) {
-        let columns: Vec<_> = sample.1.iter().map(|t| t.2.clone()).collect();
-        let names: Vec<_> = sample.1.iter().map(|t| (t.0.clone(), t.1)).collect();
+    fn hold() -> (Held, Vec<(String, bool)>) {
         (
             Held {
-                schemas: sample.0,
-                columns,
-                functions: sample.2,
+                schemas: vec!["sakila".into(), "world".into()],
+                columns: vec![
+                    vec![
+                        ("actor_id".into(), "smallint".into()),
+                        ("first_name".into(), "varchar(45)".into()),
+                    ],
+                    vec![("actor_id".into(), "smallint".into())],
+                ],
+                functions: vec!["get_customer_balance".into()],
             },
-            names,
+            vec![("actor".into(), false), ("actor_info".into(), true)],
         )
     }
 
     fn labels(text: &str, in_scope: &[(String, String)], extras: &[Hit]) -> Vec<String> {
-        let (held, names) = hold(sample());
+        let (held, names) = hold();
         let tables: Vec<Table> = names
             .iter()
             .zip(held.columns.iter())
@@ -598,7 +573,7 @@ mod tests {
     #[test]
     fn dot_after_database_lists_tables_and_after_alias_lists_columns() {
         let none = |_: &str| None;
-        let (held, names) = hold(sample());
+        let (held, names) = hold();
         let tables: Vec<Table> = names
             .iter()
             .zip(held.columns.iter())

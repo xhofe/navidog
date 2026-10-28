@@ -8,7 +8,8 @@ use gpui_kit::component::dock::{
     register_panel,
 };
 use gpui_kit::component::input::{
-    Editor, EditorState, Escape, Input, InputEvent, InputState, Textarea, TextareaState,
+    Editor, EditorState, Enter, Escape, IndentInline, Input, InputEvent, InputState, MoveDown,
+    MoveUp, Textarea, TextareaState,
 };
 use gpui_kit::component::native_menu::NativeMenu;
 use gpui_kit::component::resizable::{resizable_panel, v_resizable};
@@ -44,6 +45,7 @@ use crate::filter::{self, Filter, Rule, Sort};
 use crate::grid::{GridEvent, HideColumn, ResultGrid, ToggleRawData, ToggleRowId};
 
 mod cell_editor;
+mod complete;
 mod external_refresh;
 mod filter_pane;
 mod find;
@@ -196,8 +198,12 @@ pub struct TableSession {
 pub(crate) struct TableView {
     pub(crate) focus_handle: FocusHandle,
     pub(crate) grid: Entity<ResultGrid>,
-    pub(crate) filter: Entity<InputState>,
-    pub(crate) order: Entity<InputState>,
+    pub(crate) filter: Entity<EditorState>,
+    pub(crate) order: Entity<EditorState>,
+    /// An arrow key moved the WHERE completion menu since it opened.
+    pub(crate) filter_menu_moved: bool,
+    /// An arrow key moved the ORDER BY completion menu since it opened.
+    pub(crate) order_menu_moved: bool,
     pub(crate) limit_input: Entity<InputState>,
     pub(crate) show_filter: bool,
     /// Visual builder. Text mode keeps editing `filter` and `order` directly.
@@ -539,11 +545,27 @@ impl TableViewer {
         cx.new(|cx: &mut Context<Self>| {
             let grid = cx.new(|cx| ResultGrid::new(window, cx));
             let filter = cx.new(|cx| {
-                InputState::new(window, cx).placeholder(t!("viewer.where_hint").to_string())
+                EditorState::new(window, cx)
+                    .language("sql")
+                    .line_number(false)
+                    .folding(false)
+                    .soft_wrap(false)
+                    .auto_close(false)
+                    .searchable(false)
+                    .placeholder(t!("viewer.where_hint").to_string())
             });
             let order = cx.new(|cx| {
-                InputState::new(window, cx).placeholder(t!("viewer.order_hint").to_string())
+                EditorState::new(window, cx)
+                    .language("sql")
+                    .line_number(false)
+                    .folding(false)
+                    .soft_wrap(false)
+                    .auto_close(false)
+                    .searchable(false)
+                    .placeholder(t!("viewer.order_hint").to_string())
             });
+            complete::attach(&filter, cx.entity().downgrade(), cx);
+            complete::attach(&order, cx.entity().downgrade(), cx);
             let limit_input = cx.new(|cx| {
                 InputState::new(window, cx)
                     .default_value(Settings::global(cx).records_per_page.to_string())
@@ -556,13 +578,27 @@ impl TableViewer {
                     .language("json")
                     .line_number(false)
             });
-            let apply_on_enter = |this: &mut Self,
-                                  _: &Entity<InputState>,
-                                  e: &InputEvent,
-                                  window: &mut Window,
-                                  cx: &mut Context<Self>| {
-                if matches!(e, InputEvent::PressEnter { .. }) {
-                    this.apply_filter(window, cx);
+            let flatten = |this: &mut Self,
+                           input: &Entity<EditorState>,
+                           e: &InputEvent,
+                           window: &mut Window,
+                           cx: &mut Context<Self>| {
+                if !matches!(e, InputEvent::Change) {
+                    return;
+                }
+                if input.entity_id() == this.view.filter.entity_id() {
+                    this.view.filter_menu_moved = false;
+                } else {
+                    this.view.order_menu_moved = false;
+                }
+                let value = input.read(cx).value().to_string();
+                let flat = navidog_sql::completion::one_line(&value);
+                if flat != value {
+                    // set_value from this handler re-enters the editor that is emitting Change.
+                    let input = input.clone();
+                    cx.defer_in(window, move |_, window, cx| {
+                        input.update(cx, |s, cx| s.set_value(flat, window, cx));
+                    });
                 }
             };
             let subs = vec![
@@ -583,8 +619,8 @@ impl TableViewer {
                         this.replace_current(cx);
                     }
                 }),
-                cx.subscribe_in(&filter, window, apply_on_enter),
-                cx.subscribe_in(&order, window, apply_on_enter),
+                cx.subscribe_in(&filter, window, flatten),
+                cx.subscribe_in(&order, window, flatten),
                 cx.subscribe_in(
                     &limit_input,
                     window,
@@ -724,6 +760,8 @@ impl TableViewer {
                     grid,
                     filter,
                     order,
+                    filter_menu_moved: false,
+                    order_menu_moved: false,
                     limit_input,
                     find_input,
                     replace_input,

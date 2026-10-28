@@ -289,6 +289,30 @@ viewer:
   find_incremental:
     en: Incremental
     zh-CN: 递增搜索
+  kind_column:
+    en: Field
+    zh-CN: 字段
+  kind_table:
+    en: Table
+    zh-CN: 表
+  kind_view:
+    en: View
+    zh-CN: 视图
+  kind_schema:
+    en: Schema
+    zh-CN: 模式
+  kind_database:
+    en: Database
+    zh-CN: 数据库
+  kind_function:
+    en: Function
+    zh-CN: 函数
+  kind_builtin:
+    en: Built-in Function
+    zh-CN: 内置函数
+  kind_keyword:
+    en: Keyword
+    zh-CN: 关键字
   where_hint:
     en: "WHERE condition, e.g. id > 10"
     zh-CN: "WHERE 条件，例如 id > 10"

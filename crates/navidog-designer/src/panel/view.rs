@@ -151,6 +151,28 @@ impl TableDesigner {
                 )
             })
     }
+    fn line_control(
+        &self,
+        line: &complete::Line,
+        id: &str,
+        disabled: bool,
+    ) -> gpui_kit::AnyElement {
+        match line {
+            complete::Line::Text(editor) => Input::new(editor)
+                .id(id.to_string())
+                .small()
+                .disabled(disabled)
+                .flex_1()
+                .into_any_element(),
+            complete::Line::Sql(editor) => Editor::new(editor)
+                .small()
+                .h(tokens::find::CONTROL_HEIGHT.rems())
+                .disabled(disabled)
+                .flex_1()
+                .min_w_0()
+                .into_any_element(),
+        }
+    }
     fn property_row(
         &self,
         ix: usize,
@@ -164,13 +186,7 @@ impl TableDesigner {
                 .w(tokens::form::FIELD_WIDTH.rems())
                 .max_w_full()
                 .min_w_0()
-                .child(
-                    Input::new(&self.properties[ix])
-                        .id(PROPERTY_IDS[ix])
-                        .small()
-                        .disabled(disabled)
-                        .flex_1(),
-                )
+                .child(self.line_control(&self.properties[ix], PROPERTY_IDS[ix], disabled))
                 .when(
                     matches!(
                         PROPERTIES[ix],
@@ -327,16 +343,11 @@ impl TableDesigner {
                                 .w(tokens::form::FIELD_WIDTH.rems())
                                 .max_w_full()
                                 .min_w_0()
-                                .child(
-                                    Input::new(&self.entry_inputs[ix])
-                                        .id(SharedString::from(format!(
-                                            "designer-entry-{}",
-                                            ENTRY_KEYS[ix]
-                                        )))
-                                        .small()
-                                        .disabled(control_disabled)
-                                        .flex_1(),
-                                )
+                                .child(self.line_control(
+                                    &self.entry_inputs[ix],
+                                    &format!("designer-entry-{}", ENTRY_KEYS[ix]),
+                                    control_disabled,
+                                ))
                                 .when(
                                     matches!(
                                         ENTRY_KEYS[ix],
@@ -500,6 +511,12 @@ impl Render for TableDesigner {
                 cx.listener(|this, action: &ChooseValue, w, cx| this.choose_value(action, w, cx)),
             )
             .on_action(cx.listener(|this, _: &TogglePrimary, w, cx| this.toggle_primary(w, cx)))
+            .capture_action(cx.listener(|this, _: &Enter, w, cx| this.on_sql_enter(w, cx)))
+            .capture_action(cx.listener(|this, _: &IndentInline, w, cx| this.on_sql_tab(w, cx)))
+            .capture_action(cx.listener(|this, _: &MoveUp, w, cx| this.note_sql_menu_moved(w, cx)))
+            .capture_action(
+                cx.listener(|this, _: &MoveDown, w, cx| this.note_sql_menu_moved(w, cx)),
+            )
             .child(self.render_toolbar(cx))
             .when(self.baseline.is_none(), |v| {
                 v.child(
@@ -626,8 +643,8 @@ impl Render for TableDesigner {
                                     .child(t!("designer.advanced_help").to_string()),
                             )
                             .child(
-                                Input::new(&self.definition)
-                                    .id("designer-field-definition")
+                                Editor::new(&self.definition)
+                                    .h(tokens::find::CONTROL_HEIGHT.rems())
                                     .disabled(disabled || self.selected.is_none()),
                             )
                             .child(

@@ -14,8 +14,10 @@ use lsp_types::{
 use navidog_app_state::settings::Settings;
 use navidog_app_state::snippets::Snippets;
 use navidog_app_state::store::ConnectionStore;
+use navidog_model::object::Scope;
 use navidog_session::outline::OutlineCache;
 use navidog_sql::completion::{self, Catalog, Hit, Kind, OwnedCatalog, OwnedTable, Sources, Table};
+use navidog_sql::dialect::Dialect;
 use rust_i18n::t;
 
 use crate::editor::QueryEditor;
@@ -46,6 +48,119 @@ pub(crate) struct Provider {
     pub offered: Rc<RefCell<Vec<String>>>,
 }
 
+/// What one caret asks the shared ranker for.
+#[derive(Copy, Clone)]
+pub(crate) struct Request<'a> {
+    pub text: &'a Rope,
+    pub offset: usize,
+    pub dialect: &'a dyn Dialect,
+    /// Database (PostgreSQL: schema) whose outline is ready.
+    pub scope: Option<&'a Scope>,
+    pub current: Option<&'a str>,
+    pub snippets: &'a [(String, String)],
+    pub in_scope: &'a [(String, String)],
+    pub extras: &'a [Hit],
+}
+
+/// Menu rows for one caret.
+pub(crate) fn response(req: &Request<'_>, cx: &App) -> CompletionResponse {
+    let Request {
+        text,
+        offset,
+        dialect,
+        scope,
+        current,
+        snippets,
+        in_scope,
+        extras,
+    } = *req;
+    let cache = OutlineCache::global(cx);
+    let cache = cache.read(cx);
+    let outline = scope.and_then(|s| cache.ready(s));
+    let tables: Vec<Table> = outline
+        .as_ref()
+        .map(|o| {
+            o.tables
+                .iter()
+                .map(|t| Table {
+                    name: &t.name,
+                    view: t.view,
+                    columns: &t.columns,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let catalog = outline.as_ref().map(|o| Catalog {
+        schemas: &o.schemas,
+        tables: &tables,
+        functions: &o.functions,
+    });
+    let others = |name: &str| -> Option<OwnedCatalog> {
+        let s = scope?;
+        let other = if dialect.features().has_schemas {
+            Scope::new(s.connection.clone(), s.database.clone(), Some(name.into()))
+        } else {
+            Scope::new(s.connection.clone(), name, None)
+        };
+        cache.ready(&other).map(|o| OwnedCatalog {
+            schemas: o.schemas.clone(),
+            tables: o
+                .tables
+                .iter()
+                .map(|t| OwnedTable {
+                    name: t.name.clone(),
+                    view: t.view,
+                    columns: t.columns.clone(),
+                })
+                .collect(),
+            functions: o.functions.clone(),
+        })
+    };
+    let from = offset.saturating_sub(completion::WINDOW);
+    let from = (from..=offset)
+        .find(|i| text.is_char_boundary(*i))
+        .unwrap_or(offset);
+    let to = (offset + 4096).min(text.len());
+    let to = (to..=text.len())
+        .find(|i| text.is_char_boundary(*i))
+        .unwrap_or(text.len());
+    let window_text = text.slice(from..to).to_string();
+    let (range, list) = completion::complete(
+        &window_text,
+        offset - from,
+        &Sources {
+            dialect,
+            current,
+            catalog,
+            others: &others,
+            snippets,
+            in_scope,
+            extras,
+        },
+    );
+    let lsp_range = lsp_types::Range {
+        start: text.offset_to_position(range.start + from),
+        end: text.offset_to_position(range.end + from),
+    };
+    let items = list
+        .into_iter()
+        .take(200)
+        .map(|c| {
+            let detail = detail(&c);
+            CompletionItem {
+                label: c.label,
+                detail: Some(detail),
+                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                    range: lsp_range,
+                    new_text: c.insert,
+                })),
+                ..CompletionItem::default()
+            }
+        })
+        .collect();
+    CompletionResponse::Array(items)
+}
+
 impl CompletionProvider for Provider {
     fn completions(
         &self,
@@ -62,8 +177,6 @@ impl CompletionProvider for Provider {
         let Some(dialect) = e.dialect(cx) else {
             return Task::ready(Ok(CompletionResponse::Array(Vec::new())));
         };
-        let dialect = dialect.as_ref();
-        let scope = e.target.scope();
         let driver = e
             .target
             .connection
@@ -71,108 +184,32 @@ impl CompletionProvider for Provider {
             .and_then(|id| ConnectionStore::global(cx).read(cx).get(id))
             .map(|c| c.driver.clone())
             .unwrap_or_default();
-        let cache = OutlineCache::global(cx);
-        let cache = cache.read(cx);
-        let outline = scope.as_ref().and_then(|s| cache.ready(s));
-        let tables: Vec<Table> = outline
-            .as_ref()
-            .map(|o| {
-                o.tables
-                    .iter()
-                    .map(|t| Table {
-                        name: &t.name,
-                        view: t.view,
-                        columns: &t.columns,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let catalog = outline.as_ref().map(|o| Catalog {
-            schemas: &o.schemas,
-            tables: &tables,
-            functions: &o.functions,
-        });
-        let others = |name: &str| -> Option<OwnedCatalog> {
-            let s = scope.as_ref()?;
-            let other = if dialect.features().has_schemas {
-                navidog_model::object::Scope::new(
-                    s.connection.clone(),
-                    s.database.clone(),
-                    Some(name.into()),
-                )
-            } else {
-                navidog_model::object::Scope::new(s.connection.clone(), name, None)
-            };
-            cache.ready(&other).map(|o| OwnedCatalog {
-                schemas: o.schemas.clone(),
-                tables: o
-                    .tables
-                    .iter()
-                    .map(|t| OwnedTable {
-                        name: t.name.clone(),
-                        view: t.view,
-                        columns: t.columns.clone(),
-                    })
-                    .collect(),
-                functions: o.functions.clone(),
-            })
-        };
         let snippets: Vec<(String, String)> = Snippets::global(cx)
             .read(cx)
             .all()
             .filter(|s| s.applies_to(&driver))
             .map(|s| (s.name.clone(), s.code.clone()))
             .collect();
+        *self.offered.borrow_mut() = snippets.iter().map(|(_, code)| code.clone()).collect();
         let current = if dialect.features().has_schemas {
             e.target.schema.clone()
         } else {
             e.target.database.clone()
         };
-        let from = offset.saturating_sub(completion::WINDOW);
-        let from = (from..=offset)
-            .find(|i| text.is_char_boundary(*i))
-            .unwrap_or(offset);
-        let to = (offset + 4096).min(text.len());
-        let to = (to..=text.len())
-            .find(|i| text.is_char_boundary(*i))
-            .unwrap_or(text.len());
-        let window_text = text.slice(from..to).to_string();
-        let (range, list) = completion::complete(
-            &window_text,
-            offset - from,
-            &Sources {
-                dialect,
+        let scope = e.target.scope();
+        Task::ready(Ok(response(
+            &Request {
+                text,
+                offset,
+                dialect: dialect.as_ref(),
+                scope: scope.as_ref(),
                 current: current.as_deref(),
-                catalog,
-                others: &others,
                 snippets: &snippets,
                 in_scope: &[],
                 extras: &[],
             },
-        );
-        let snippet_codes: Vec<String> = snippets.into_iter().map(|(_, code)| code).collect();
-        *self.offered.borrow_mut() = snippet_codes;
-        let lsp_range = lsp_types::Range {
-            start: text.offset_to_position(range.start + from),
-            end: text.offset_to_position(range.end + from),
-        };
-        let items = list
-            .into_iter()
-            .take(200)
-            .map(|c| {
-                let detail = detail(&c);
-                CompletionItem {
-                    label: c.label,
-                    detail: Some(detail),
-                    text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                        range: lsp_range,
-                        new_text: c.insert,
-                    })),
-                    ..CompletionItem::default()
-                }
-            })
-            .collect();
-        Task::ready(Ok(CompletionResponse::Array(items)))
+            cx,
+        )))
     }
 
     fn is_completion_trigger(&self, _: usize, new_text: &str, cx: &mut App) -> bool {

@@ -3,6 +3,33 @@ designer:
   title:
     en: Table design
     zh-CN: 表设计器
+  kind_column:
+    en: Field
+    zh-CN: 字段
+  kind_table:
+    en: Table
+    zh-CN: 表
+  kind_view:
+    en: View
+    zh-CN: 视图
+  kind_schema:
+    en: Schema
+    zh-CN: 模式
+  kind_database:
+    en: Database
+    zh-CN: 数据库
+  kind_function:
+    en: Function
+    zh-CN: 函数
+  kind_builtin:
+    en: Built-in Function
+    zh-CN: 内置函数
+  kind_keyword:
+    en: Keyword
+    zh-CN: 关键字
+  kind_type:
+    en: Type
+    zh-CN: 类型
   missing_connection:
     en: This connection is no longer available.
     zh-CN: 此连接已不存在。

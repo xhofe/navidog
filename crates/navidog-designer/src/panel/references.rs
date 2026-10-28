@@ -51,7 +51,7 @@ impl TableDesigner {
             }
             REFERENCE_FIELDS
                 if self.reference_is_self(cx)
-                    && self.entry_inputs[REFERENCE_TABLE].read(cx).value() == self.draft.name =>
+                    && self.entry_inputs[REFERENCE_TABLE].value(cx) == self.draft.name =>
             {
                 self.draft.columns.iter().map(|c| c.name.clone()).collect()
             }
@@ -61,7 +61,7 @@ impl TableDesigner {
     }
 
     fn reference_is_self(&self, cx: &App) -> bool {
-        let scope = self.entry_inputs[REFERENCE_SCHEMA].read(cx).value();
+        let scope = self.entry_inputs[REFERENCE_SCHEMA].value(cx);
         scope.is_empty()
             || scope
                 == if self.dialect.features().has_schemas {
@@ -85,14 +85,8 @@ impl TableDesigner {
         self.references.error = None;
         self.references.loading = false;
         let mut scope = self.scope.clone();
-        let selected_scope = self.entry_inputs[REFERENCE_SCHEMA]
-            .read(cx)
-            .value()
-            .to_string();
-        let table = self.entry_inputs[REFERENCE_TABLE]
-            .read(cx)
-            .value()
-            .to_string();
+        let selected_scope = self.entry_inputs[REFERENCE_SCHEMA].value(cx);
+        let table = self.entry_inputs[REFERENCE_TABLE].value(cx);
         if !selected_scope.is_empty() {
             match self.dialect.context_selection() {
                 navidog_sql::dialect::ContextSelection::Database => scope.database = selected_scope,

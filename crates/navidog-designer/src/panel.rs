@@ -5,7 +5,9 @@ use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, TabGroup, panel_handle,
     register_panel,
 };
-use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
+use gpui_kit::component::input::{
+    Editor, EditorState, Enter, IndentInline, Input, InputEvent, InputState, MoveDown, MoveUp,
+};
 use gpui_kit::component::table::{DataTable, TableEvent, TableState};
 use gpui_kit::component::{
     Disableable as _, Selectable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
@@ -268,12 +270,14 @@ enum Page {
 
 pub struct TableDesigner {
     table: Entity<TableState<DesignerGrid>>,
-    properties: Vec<Entity<InputState>>,
-    entry_inputs: Vec<Entity<InputState>>,
+    properties: Vec<complete::Line>,
+    entry_inputs: Vec<complete::Line>,
     table_option_inputs: std::collections::BTreeMap<&'static str, Entity<InputState>>,
     entry_selected: Option<usize>,
     active_cell: Option<usize>,
     syncing: bool,
+    /// An arrow key moved the completion menu since the text last changed.
+    menu_moved: bool,
     invalid_inputs: std::collections::BTreeMap<usize, String>,
     property_height: Option<gpui_kit::Pixels>,
     focus: FocusHandle,
@@ -283,7 +287,7 @@ pub struct TableDesigner {
     baseline: Option<TableSnapshot>,
     table_name: Entity<InputState>,
     name: Entity<InputState>,
-    definition: Entity<InputState>,
+    definition: Entity<EditorState>,
     constraints: Entity<EditorState>,
     indexes: Entity<EditorState>,
     options: Entity<EditorState>,
@@ -467,17 +471,25 @@ impl TableDesigner {
                 window,
                 cx,
             );
-            let definition = input(
+            let owner = cx.entity().downgrade();
+            let definition = match complete::line(
+                true,
                 saved
                     .draft
                     .columns
                     .first()
                     .map(|c| c.definition.clone())
                     .unwrap_or_default(),
+                complete::SqlMode::Definition,
+                owner.clone(),
                 window,
                 cx,
-            );
+            ) {
+                complete::Line::Sql(editor) => editor,
+                complete::Line::Text(_) => unreachable!("the definition field is sql"),
+            };
             let constraints = editor(saved.draft.constraints.join("\n"), window, cx);
+            complete::attach(&constraints, owner.clone(), complete::SqlMode::Catalog, cx);
             let indexes = editor(
                 saved
                     .draft
@@ -489,16 +501,35 @@ impl TableDesigner {
                 window,
                 cx,
             );
+            complete::attach(&indexes, owner.clone(), complete::SqlMode::Catalog, cx);
             let options = editor(saved.draft.options.clone(), window, cx);
+            complete::attach(&options, owner.clone(), complete::SqlMode::Catalog, cx);
             let sql = cx.new(|cx| EditorState::new(window, cx).language("sql"));
             sql.update(cx, |s, cx| s.set_readonly(true, cx));
             let properties: Vec<_> = (0..structured::PROPERTY_IDS.len())
-                .map(|_| input(String::new(), window, cx))
+                .map(|ix| {
+                    complete::line(
+                        complete::property_is_sql(ix),
+                        String::new(),
+                        complete::SqlMode::Expression,
+                        owner.clone(),
+                        window,
+                        cx,
+                    )
+                })
                 .collect();
             let entry_inputs: Vec<_> = (0..structured::ENTRY_KEYS.len())
-                .map(|_| input(String::new(), window, cx))
+                .map(|ix| {
+                    complete::line(
+                        complete::entry_is_sql(ix),
+                        String::new(),
+                        complete::SqlMode::Expression,
+                        owner.clone(),
+                        window,
+                        cx,
+                    )
+                })
                 .collect();
-            let owner = cx.entity().downgrade();
             let table = cx.new(|cx| {
                 TableState::new(DesignerGrid::new(owner, window), window, cx)
                     .cell_selectable(true)
@@ -516,28 +547,62 @@ impl TableDesigner {
                     }),
                 ];
             for (ix, field) in properties.iter().enumerate() {
-                subscriptions.push(cx.subscribe_in(
-                    field,
-                    window,
-                    move |this, _, event: &InputEvent, w, cx| {
-                        if matches!(event, InputEvent::Change) && !this.syncing {
-                            this.property_changed(ix, w, cx);
-                        }
-                    },
-                ));
+                match field {
+                    complete::Line::Text(field) => {
+                        subscriptions.push(cx.subscribe_in(
+                            field,
+                            window,
+                            move |this, _, event: &InputEvent, w, cx| {
+                                if matches!(event, InputEvent::Change) && !this.syncing {
+                                    this.property_changed(ix, w, cx);
+                                }
+                            },
+                        ));
+                    }
+                    complete::Line::Sql(field) => {
+                        subscriptions.push(cx.subscribe_in(
+                            field,
+                            window,
+                            move |this, editor, event: &InputEvent, w, cx| {
+                                if matches!(event, InputEvent::Change) && !this.syncing {
+                                    complete::collapse(editor, w, cx);
+                                    this.menu_moved = false;
+                                    this.property_changed(ix, w, cx);
+                                }
+                            },
+                        ));
+                    }
+                }
             }
             for (ix, field) in entry_inputs.iter().enumerate() {
-                subscriptions.push(cx.subscribe_in(
-                    field,
-                    window,
-                    move |this, _, event: &InputEvent, w, cx| {
-                        if matches!(event, InputEvent::Change) && !this.syncing {
-                            this.entry_changed(ix, w, cx);
-                        }
-                    },
-                ));
+                match field {
+                    complete::Line::Text(field) => {
+                        subscriptions.push(cx.subscribe_in(
+                            field,
+                            window,
+                            move |this, _, event: &InputEvent, w, cx| {
+                                if matches!(event, InputEvent::Change) && !this.syncing {
+                                    this.entry_changed(ix, w, cx);
+                                }
+                            },
+                        ));
+                    }
+                    complete::Line::Sql(field) => {
+                        subscriptions.push(cx.subscribe_in(
+                            field,
+                            window,
+                            move |this, editor, event: &InputEvent, w, cx| {
+                                if matches!(event, InputEvent::Change) && !this.syncing {
+                                    complete::collapse(editor, w, cx);
+                                    this.menu_moved = false;
+                                    this.entry_changed(ix, w, cx);
+                                }
+                            },
+                        ));
+                    }
+                }
             }
-            for field in [&table_name, &name, &definition] {
+            for field in [&table_name, &name] {
                 subscriptions.push(cx.subscribe_in(
                     field,
                     window,
@@ -549,12 +614,25 @@ impl TableDesigner {
                     },
                 ));
             }
+            subscriptions.push(cx.subscribe_in(
+                &definition,
+                window,
+                |this, editor, event: &InputEvent, w, cx| {
+                    if matches!(event, InputEvent::Change) && !this.syncing {
+                        complete::collapse(editor, w, cx);
+                        this.menu_moved = false;
+                        this.flush(cx);
+                        cx.notify();
+                    }
+                },
+            ));
             for field in [&constraints, &indexes, &options] {
                 subscriptions.push(cx.subscribe_in(
                     field,
                     window,
                     |this, _, event: &InputEvent, _, cx| {
                         if matches!(event, InputEvent::Change) && !this.syncing {
+                            this.menu_moved = false;
                             this.flush(cx);
                             cx.notify();
                         }
@@ -587,6 +665,7 @@ impl TableDesigner {
                 entry_selected: None,
                 active_cell: None,
                 syncing: false,
+                menu_moved: false,
                 invalid_inputs: Default::default(),
                 // raw-px: the user-controlled splitter position restored from layout state
                 property_height: saved.property_height.map(gpui_kit::px),
@@ -648,7 +727,7 @@ impl TableDesigner {
             .find(|c| Some(c.id) == self.selected)
         {
             c.name = self.name.read(cx).value().to_string();
-            c.definition = self.definition.read(cx).value().to_string();
+            c.definition = navidog_sql::completion::one_line(&self.definition.read(cx).value());
         }
         self.draft.constraints = self
             .constraints
@@ -716,7 +795,7 @@ impl TableDesigner {
             props.on_update,
             props.identity,
         ]) {
-            input.update(cx, |s, cx| s.set_value(value, window, cx));
+            input.set_value(value, window, cx);
         }
         self.syncing = false;
         self.refresh_grid(cx);
@@ -1149,6 +1228,7 @@ fn confirm_discard(
             )
     });
 }
+mod complete;
 mod grid;
 mod options;
 mod references;

@@ -3,7 +3,7 @@
 
 use super::*;
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{TestAppContext, WindowOptions};
+use gpui_kit::{EntityInputHandler as _, TestAppContext, WindowOptions};
 use navidog_app_state::store::ConnectionStore;
 use navidog_db::{ConnectParams, Secrets, connect};
 use navidog_model::connection::Connection;
@@ -960,4 +960,49 @@ fn visibility_uses_accepted_updates_inserts_and_deletes(cx: &mut TestAppContext)
         );
         assert!(viewer.view.status.starts_with("SELECT"));
     });
+}
+
+#[gpui_kit::test]
+fn where_text_collapses_a_pasted_line_break(cx: &mut TestAppContext) {
+    let home = std::env::temp_dir().join(format!("navidog-filter-line-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).unwrap();
+    // SAFETY: this test does not run beside another that reads NAVIDOG_HOME.
+    unsafe { std::env::set_var("NAVIDOG_HOME", &home) }
+    let (handle, viewer) = cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_app_state::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_session::init(cx);
+        crate::init(cx);
+        let mut viewer = None;
+        let handle = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+            let entity = TableViewer::new(
+                ObjectRef {
+                    scope: Scope::new("missing", "main", None),
+                    kind: ObjectKind::Table,
+                    name: "t".into(),
+                },
+                window,
+                cx,
+            );
+            viewer = Some(entity.clone());
+            cx.new(|_| Host(entity))
+        })
+        .unwrap();
+        (handle.0, viewer.unwrap())
+    });
+    cx.update_window(handle, |_, window, cx| {
+        viewer.update(cx, |v, cx| {
+            v.view.filter.update(cx, |input, cx| {
+                input.replace_text_in_range(None, "a\nb", window, cx);
+            });
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(viewer.read(cx).view.filter.read(cx).value().as_ref(), "a b");
+    });
+    let _ = std::fs::remove_dir_all(&home);
 }

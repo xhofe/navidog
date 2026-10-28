@@ -16,6 +16,8 @@ navidog-app-state.workspace = true
 navidog-db.workspace = true
 navidog-util.workspace = true
 gpui-kit = { workspace = true, features = ["tree-sitter-sql"] }
+anyhow.workspace = true
+lsp-types = "0.97"
 rust-i18n.workspace = true
 tracing.workspace = true
 tokio.workspace = true

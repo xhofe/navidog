@@ -524,6 +524,15 @@ snippet:
   type:
     en: Database Type
     zh-CN: 数据库类型
+  kind_keyword:
+    en: Keyword
+    zh-CN: 关键字
+  kind_builtin:
+    en: Built-in Function
+    zh-CN: 内置函数
+  kind_snippet:
+    en: Snippet
+    zh-CN: 代码段
   tags:
     en: Tags
     zh-CN: 标签
