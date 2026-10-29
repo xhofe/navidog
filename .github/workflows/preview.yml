@@ -13,6 +13,8 @@ on:
 
 concurrency:
   # One preview per pull request; a new push supersedes the previous build.
+  # A cancelled run does not edit the comment. The run that replaced it owns
+  # the update, and a late "cancelled" note would overwrite the new one.
   group: preview-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
@@ -24,10 +26,42 @@ env:
   RUST_TOOLCHAIN: 1.99.0
 
 jobs:
+  comment:
+    name: post preview comment
+    # A draft is not ready to be tried. Fork pull requests get a read-only
+    # token, so they keep the artifact on the run page and skip the comment.
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: post building comment
+        # A read-only token (Dependabot, fork settings) must not fail the build.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_ID: ${{ github.run_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: ./scripts/preview-comment.sh building
+
   macos:
     name: macos-aarch64
-    # A draft is not ready to be tried; `ready_for_review` builds it later.
-    if: github.event.pull_request.draft == false
+    needs: comment
+    # Runs after the preview comment is posted. A skipped comment (fork) or a
+    # failed comment job still builds; cancellation does not.
+    if: >-
+      always() &&
+      !cancelled() &&
+      github.event.pull_request.draft == false &&
+      (needs.comment.result == 'success' || needs.comment.result == 'skipped' || needs.comment.result == 'failure')
     runs-on: macos-latest
     timeout-minutes: 60
     outputs:
@@ -102,17 +136,29 @@ jobs:
             echo "→ Privacy & Security → Open Anyway if macOS blocks the first launch."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  comment:
-    needs: macos
-    # The build job is read-only, but this job only posts. Fork pull requests get
-    # a read-only token, so their artifact stays on the run page instead.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+  comment-result:
+    name: update preview comment
+    needs: [comment, macos]
+    # `always` still runs after a failed build, so the comment does not stay on
+    # "in progress". `cancelled` is excluded: this run lost the race to a newer
+    # push, and that push's comment is the one to keep.
+    if: >-
+      always() &&
+      !cancelled() &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (needs.macos.result == 'success' || needs.macos.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read
       pull-requests: write
     steps:
-      - name: upsert preview comment
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: update preview comment
         # A read-only token (Dependabot, fork settings) must not fail the build.
         continue-on-error: true
         env:
@@ -120,33 +166,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUN_ID: ${{ github.run_id }}
-          ARTIFACT: ${{ needs.macos.outputs.file }}
-          SHA256: ${{ needs.macos.outputs.sha256 }}
-        run: |
-          set -euo pipefail
-          body="$(cat <<EOF
-          <!-- navidog-preview -->
-          ### macOS preview build
-
-          - **Run:** $RUN_URL
-          - **Artifact:** \`$ARTIFACT\` (expires in 7 days)
-          - **CLI:** \`gh run download $RUN_ID -n $ARTIFACT\`
-          - **SHA-256:** \`$SHA256\`
-
-          The app is ad-hoc signed and not notarized. Open the DMG, move \`Navidog.app\`
-          to \`~/Applications\` (create it if needed), then allow it in **System Settings
-          → Privacy & Security → Open Anyway** if macOS blocks the first launch.
-
-          This build comes from pull request code; review the diff before running it.
-          EOF
-          )"
-          existing="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-            --jq '.[] | select(.body | startswith("<!-- navidog-preview -->")) | .id')"
-          id="${existing%%$'\n'*}"
-          if [ -n "$id" ]; then
-            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" \
-              -f body="$body" >/dev/null
-          else
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-              -f body="$body" >/dev/null
-          fi
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ARTIFACT: ${{ needs.macos.result == 'success' && needs.macos.outputs.file || '' }}
+          SHA256: ${{ needs.macos.result == 'success' && needs.macos.outputs.sha256 || '' }}
+        run: ./scripts/preview-comment.sh "${{ needs.macos.result }}"
