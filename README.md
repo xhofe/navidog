@@ -6,4 +6,4 @@ WIP...
 
 [Prerelease download](https://github.com/xhofe/navidog/releases/tag/nightly)
 
-![screenshot](./docs/screenshots/main_grid.webp)
+![screenshot](https://i.ibb.co/84Nj1Vz3/image-1.webp)
