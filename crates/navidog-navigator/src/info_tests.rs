@@ -6,15 +6,16 @@ use std::sync::Arc;
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
-    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
-    Subscription, TestAppContext, Window, WindowOptions, div,
+    AppContext as _, Bounds, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
+    Subscription, TestAppContext, Window, WindowBounds, WindowOptions, div, px, size,
 };
 use navidog_app_state::snippets::Snippets;
 use navidog_app_state::store::ConnectionStore;
-use navidog_app_state::workspace::{QueryContext, Workspace};
+use navidog_app_state::workspace::{QueryContext, Selection, Workspace};
 use navidog_db::{ConnectParams, Secrets, connect, runtime};
 use navidog_model::connection::Connection;
 use navidog_model::crypto::Key;
+use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 use navidog_session::sessions::Sessions;
 use navidog_sqlite::SqliteDriver;
 
@@ -182,5 +183,89 @@ fn query_pages_follow_the_editor(cx: &mut TestAppContext) {
     cx.update(|cx| Workspace::global(cx).update(cx, |w, cx| w.set_query_context(None, cx)));
     cx.run_until_parked();
     assert!(page(cx) == Page::General);
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+/// A narrow info pane must keep its maximize button on-screen: the page
+/// buttons do not shrink, the heading is what gives way. With a table
+/// selected the header has three page buttons (general, DDL, fields) plus
+/// the heading, so at 110px it is wider than the pane, and before the
+/// header fix the button was laid out past the right edge and looked like
+/// it had disappeared.
+#[gpui_kit::test]
+fn maximize_button_stays_visible_in_a_narrow_info_pane(cx: &mut TestAppContext) {
+    let home = std::env::temp_dir().join(format!("navidog-info-narrow-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).unwrap();
+    // SAFETY: `lock` is held for this test, so no other test in this crate reads the variable.
+    let _home = crate::test_env::lock();
+    unsafe { std::env::set_var("NAVIDOG_HOME", &home) };
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_app_state::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_session::init(cx);
+        crate::init(cx);
+        cx.set_reduce_motion(true);
+        // The bug report is about opening a table: that is what shows all
+        // three page buttons. Without a table selection the header only has
+        // the general button and fits even in a narrow pane.
+        Workspace::global(cx).update(cx, |w, cx| {
+            w.select(
+                Selection::Object(ObjectRef {
+                    scope: Scope::new("c-1", "main", None),
+                    kind: ObjectKind::Table,
+                    name: "film".into(),
+                }),
+                cx,
+            )
+        });
+    });
+    let handle = cx.update(|cx| {
+        gpui_kit::open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                    Default::default(),
+                    // raw-px: narrower than the info header's content.
+                    size(px(110.), px(200.)),
+                ))),
+                ..Default::default()
+            },
+            cx,
+            |window, cx| {
+                let info = InfoPanel::shared(window, cx);
+                cx.new(|cx| Host {
+                    _form: cx.observe(&crate::snippet_form_entity(cx), |_, _, cx| cx.notify()),
+                    info,
+                })
+            },
+        )
+        .unwrap()
+        .0
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // Guard against the test passing vacuously with fewer buttons.
+        assert!(
+            window.try_find("info-general").is_some(),
+            "general page button"
+        );
+        assert!(window.try_find("info-ddl").is_some(), "DDL page button");
+        assert!(
+            window.try_find("info-fields").is_some(),
+            "fields page button"
+        );
+        let button = window.find("maximize").bounds();
+        assert!(
+            button.right() <= px(110.),
+            "maximize button must stay inside the pane, got {button:?}"
+        );
+        assert!(
+            button.left() >= px(0.),
+            "maximize button must not go left, got {button:?}"
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
     let _ = std::fs::remove_dir_all(&home);
 }
