@@ -516,7 +516,7 @@ impl MainWindow {
                     dock.dock_size(DockPlacement::Left)
                         .unwrap_or_else(|| tokens::pane::NAVIGATOR_WIDTH.to_pixels(rem))
                 } else {
-                    gpui_kit::px(0.)
+                    gpui_kit::px(0.) // raw-px: a closed left dock has zero width
                 };
                 let total = window.viewport_size().width;
                 info_maximized_size(total, left, rem)
@@ -976,14 +976,14 @@ mod tests {
 
     #[test]
     fn maximized_right_dock_fits_the_viewport_for_any_left_dock_width() {
-        let rem_size = gpui_kit::px(16.);
-        let viewport = gpui_kit::px(1240.);
+        let rem_size = gpui_kit::px(16.); // raw-px: test rem size
+        let viewport = gpui_kit::px(1240.); // raw-px: test viewport width
         // The invariant that keeps the maximize button on-screen: left dock
         // + maximized right dock + centre sliver == viewport width.
         for left in [
-            gpui_kit::px(0.),
+            gpui_kit::px(0.), // raw-px: closed left dock in the test
             tokens::pane::NAVIGATOR_WIDTH.to_pixels(rem_size),
-            gpui_kit::px(400.),
+            gpui_kit::px(400.), // raw-px: widened left dock in the test
         ] {
             let right = info_maximized_size(viewport, left, rem_size);
             assert_eq!(
@@ -1000,10 +1000,10 @@ mod tests {
 
     #[test]
     fn widening_the_left_dock_shrinks_the_maximized_right_dock_by_the_same_amount() {
-        let rem_size = gpui_kit::px(16.);
-        let viewport = gpui_kit::px(1240.);
+        let rem_size = gpui_kit::px(16.); // raw-px: test rem size
+        let viewport = gpui_kit::px(1240.); // raw-px: test viewport width
         let default_left = tokens::pane::NAVIGATOR_WIDTH.to_pixels(rem_size);
-        let wide_left = gpui_kit::px(400.);
+        let wide_left = gpui_kit::px(400.); // raw-px: widened left dock in the test
         let default_right = info_maximized_size(viewport, default_left, rem_size);
         let wide_right = info_maximized_size(viewport, wide_left, rem_size);
         // A left dock dragged wider must shrink the maximized right dock by
