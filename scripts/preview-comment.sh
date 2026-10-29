@@ -50,7 +50,7 @@ ${marker}
 - **Run:** ${run_url}
 - **Commit:** ${commit}
 - **Artifact:** \`${artifact}\` (expires in 7 days)
-- **CLI:** \`gh run download ${run_id} -n ${artifact}\`
+- **CLI:** \`gh run download ${run_id} -R ${repo} -n ${artifact}\`
 - **SHA-256:** \`${sha256}\`
 
 The app is ad-hoc signed and not notarized. Open the DMG, move \`Navidog.app\`
