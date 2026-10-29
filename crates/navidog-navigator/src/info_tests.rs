@@ -257,11 +257,11 @@ fn maximize_button_stays_visible_in_a_narrow_info_pane(cx: &mut TestAppContext) 
         );
         let button = window.find("maximize").bounds();
         assert!(
-            button.right() <= px(110.),
+            button.right() <= px(110.), // raw-px: test window width
             "maximize button must stay inside the pane, got {button:?}"
         );
         assert!(
-            button.left() >= px(0.),
+            button.left() >= px(0.), // raw-px: left edge of the test window
             "maximize button must not go left, got {button:?}"
         );
     })
