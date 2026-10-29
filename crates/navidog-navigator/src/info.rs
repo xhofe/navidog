@@ -534,6 +534,7 @@ impl InfoPanel {
         Button::new(id)
             .ghost()
             .xsmall()
+            .flex_none()
             .icon(lucide(icon))
             .tooltip(tooltip)
             .when(self.page == page, |b| b.selected(true))
@@ -609,11 +610,20 @@ impl Render for InfoPanel {
                     .h(tokens::info::HEADER_HEIGHT.rems())
                     .px(tokens::info::HEADER_BUTTON_INSET.rems())
                     .justify_between()
+                    .overflow_hidden()
                     .border_b_1()
                     .border_color(p.separator)
                     .child(
+                        // The page buttons must not shrink, and this group must
+                        // be allowed to shrink below its content: otherwise a
+                        // narrow panel (or five page buttons in a query) pushes
+                        // the maximize button past the panel's right edge and
+                        // it looks like it disappeared. The heading, being
+                        // last in the group, is what gets clipped instead.
                         h_flex()
                             .gap_1()
+                            .min_w_0()
+                            .overflow_hidden()
                             .child(self.page_button(
                                 "info-general",
                                 "info",
@@ -664,19 +674,22 @@ impl Render for InfoPanel {
                                     cx,
                                 ))
                             })
-                            .child(heading(match self.page {
-                                Page::General => t!("info.general").to_string(),
-                                Page::Ddl => t!("info.ddl").to_string(),
-                                Page::Fields => t!("info.fields").to_string(),
-                                Page::Preview => t!("info.preview").to_string(),
-                                Page::Snippets => t!("info.snippets").to_string(),
-                                Page::Identifiers => t!("info.identifiers").to_string(),
-                            })),
+                            .child(div().min_w_0().overflow_hidden().child(heading(
+                                match self.page {
+                                    Page::General => t!("info.general").to_string(),
+                                    Page::Ddl => t!("info.ddl").to_string(),
+                                    Page::Fields => t!("info.fields").to_string(),
+                                    Page::Preview => t!("info.preview").to_string(),
+                                    Page::Snippets => t!("info.snippets").to_string(),
+                                    Page::Identifiers => t!("info.identifiers").to_string(),
+                                },
+                            ))),
                     )
                     .child(
                         Button::new("maximize")
                             .ghost()
                             .xsmall()
+                            .flex_none()
                             .icon(lucide(if self.maximized {
                                 "minimize-2"
                             } else {
