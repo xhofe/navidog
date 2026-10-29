@@ -488,6 +488,11 @@ impl MainWindow {
         cx.notify();
     }
 
+    /// Toggles a dock open or closed. When the left dock toggles while the
+    /// info pane is maximized (`info_restore` is set), the maximized right
+    /// dock is resized to the new left-dock width: reopening the navigator
+    /// without this would leave left + right wider than the viewport and
+    /// push the right dock's edge -- and its maximize button -- off-screen.
     fn toggle_dock(
         &mut self,
         placement: DockPlacement,
@@ -496,6 +501,34 @@ impl MainWindow {
     ) {
         self.dock
             .update(cx, |a, cx| a.toggle_dock(placement, window, cx));
+        if placement == DockPlacement::Left && self.info_restore.is_some() {
+            self.resize_maximized_info(window, cx);
+        }
+    }
+
+    /// Current width of the left dock: its measured width when open, the
+    /// navigator default as a fallback, and zero when closed. Do not assume
+    /// the navigator is still at its default width: the user may have
+    /// dragged it wider, or a restored layout may have saved a wider size.
+    fn left_dock_width(&self, rem: gpui_kit::Pixels, cx: &mut Context<Self>) -> gpui_kit::Pixels {
+        let dock = self.dock.read(cx);
+        if dock.is_dock_open(DockPlacement::Left) {
+            dock.dock_size(DockPlacement::Left)
+                .unwrap_or_else(|| tokens::pane::NAVIGATOR_WIDTH.to_pixels(rem))
+        } else {
+            gpui_kit::px(0.) // raw-px: a closed left dock has zero width
+        }
+    }
+
+    /// Resizes the maximized right dock to the current left-dock width,
+    /// leaving `info_restore` (the pre-maximize right-dock size) untouched.
+    fn resize_maximized_info(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let rem = window.rem_size();
+        let left = self.left_dock_width(rem, cx);
+        let size = info_maximized_size(window.viewport_size().width, left, rem);
+        self.dock.update(cx, |a, cx| {
+            a.set_dock_size(DockPlacement::Right, size, window, cx)
+        });
     }
 
     /// Info pane maximize/restore: widens the right dock to the window width minus the navigator; clicking again restores it.
@@ -505,19 +538,11 @@ impl MainWindow {
         let size = match restore {
             Some(prev) => prev,
             None => {
-                let dock = self.dock.read(cx);
-                self.info_restore = dock.dock_size(DockPlacement::Right);
-                // Do not assume the navigator is still at its default width:
-                // the user may have dragged it wider, or a restored layout may
-                // have saved a wider size. Using the default here made
-                // left + right exceed the viewport, pushing the right dock's
-                // edge -- and with it the maximize button -- off-screen.
-                let left = if dock.is_dock_open(DockPlacement::Left) {
-                    dock.dock_size(DockPlacement::Left)
-                        .unwrap_or_else(|| tokens::pane::NAVIGATOR_WIDTH.to_pixels(rem))
-                } else {
-                    gpui_kit::px(0.) // raw-px: a closed left dock has zero width
-                };
+                self.info_restore = self.dock.read(cx).dock_size(DockPlacement::Right);
+                // Using the default navigator width here made left + right
+                // exceed the viewport, pushing the right dock's edge -- and
+                // with it the maximize button -- off-screen.
+                let left = self.left_dock_width(rem, cx);
                 let total = window.viewport_size().width;
                 info_maximized_size(total, left, rem)
             }
@@ -675,13 +700,20 @@ impl MainWindow {
 /// it is closed), never the navigator's default width: a left dock dragged
 /// wider than the default would otherwise make left + right exceed the
 /// viewport and push the right dock's edge -- and its maximize button --
-/// off-screen.
+/// off-screen. The result is clamped to zero: a viewport narrower than the
+/// left dock plus the sliver must not produce a negative dock size.
 fn info_maximized_size(
     viewport_width: gpui_kit::Pixels,
     left_dock_width: gpui_kit::Pixels,
     rem_size: gpui_kit::Pixels,
 ) -> gpui_kit::Pixels {
-    viewport_width - left_dock_width - tokens::list::ROW_HEIGHT.to_pixels(rem_size)
+    let size = viewport_width - left_dock_width - tokens::list::ROW_HEIGHT.to_pixels(rem_size);
+    // raw-px: clamping a maximized dock size to a nonnegative width
+    if size < gpui_kit::px(0.) {
+        gpui_kit::px(0.) // raw-px: clamped maximized width
+    } else {
+        size
+    }
 }
 
 impl gpui_kit::Focusable for MainWindow {
@@ -996,6 +1028,44 @@ mod tests {
                 "maximized right dock must leave room for the left dock and centre"
             );
         }
+    }
+
+    #[test]
+    fn maximized_size_never_goes_negative_on_a_narrow_viewport() {
+        let rem_size = gpui_kit::px(16.); // raw-px: test rem size
+        // Viewport narrower than the left dock plus the centre sliver: the
+        // unclamped formula would give a negative width, which is not a
+        // valid dock size to pass to set_dock_size.
+        let viewport = gpui_kit::px(200.); // raw-px: test viewport width
+        let left = gpui_kit::px(400.); // raw-px: widened left dock in the test
+        assert_eq!(
+            info_maximized_size(viewport, left, rem_size),
+            gpui_kit::px(0.), // raw-px: clamped maximized width in the test
+            "a maximized dock size must be clamped to zero, not negative"
+        );
+    }
+
+    #[test]
+    fn reopening_the_left_dock_recomputes_the_maximized_right_dock() {
+        let rem_size = gpui_kit::px(16.); // raw-px: test rem size
+        let viewport = gpui_kit::px(1240.); // raw-px: test viewport width
+        // The sequence toggle_dock now runs when the navigator reopens
+        // while maximized: closed left dock -> reopened at the default
+        // width. The maximized right dock must shrink by exactly the
+        // reopened dock's width, or left + right would exceed the viewport.
+        let closed = gpui_kit::px(0.); // raw-px: closed left dock in the test
+        let reopened = tokens::pane::NAVIGATOR_WIDTH.to_pixels(rem_size);
+        let maximized_closed = info_maximized_size(viewport, closed, rem_size);
+        let maximized_reopened = info_maximized_size(viewport, reopened, rem_size);
+        assert!(
+            (f32::from(maximized_closed - maximized_reopened) - f32::from(reopened)).abs() < 0.01,
+            "reopening the navigator must shrink the maximized right dock by the left dock's width"
+        );
+        assert_eq!(
+            reopened + maximized_reopened + sliver(rem_size),
+            viewport,
+            "reopened left dock + maximized right dock + centre sliver must fit the viewport"
+        );
     }
 
     #[test]
