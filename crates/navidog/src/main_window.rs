@@ -505,11 +505,21 @@ impl MainWindow {
         let size = match restore {
             Some(prev) => prev,
             None => {
-                self.info_restore = self.dock.read(cx).dock_size(DockPlacement::Right);
+                let dock = self.dock.read(cx);
+                self.info_restore = dock.dock_size(DockPlacement::Right);
+                // Do not assume the navigator is still at its default width:
+                // the user may have dragged it wider, or a restored layout may
+                // have saved a wider size. Using the default here made
+                // left + right exceed the viewport, pushing the right dock's
+                // edge -- and with it the maximize button -- off-screen.
+                let left = if dock.is_dock_open(DockPlacement::Left) {
+                    dock.dock_size(DockPlacement::Left)
+                        .unwrap_or_else(|| tokens::pane::NAVIGATOR_WIDTH.to_pixels(rem))
+                } else {
+                    gpui_kit::px(0.)
+                };
                 let total = window.viewport_size().width;
-                total
-                    - tokens::pane::NAVIGATOR_WIDTH.to_pixels(rem)
-                    - tokens::list::ROW_HEIGHT.to_pixels(rem)
+                info_maximized_size(total, left, rem)
             }
         };
         self.dock.update(cx, |a, cx| {
@@ -657,6 +667,21 @@ impl MainWindow {
             .border_color(p.separator)
             .children(items)
     }
+}
+
+/// Width the right dock gets when the info pane is maximized: whatever the
+/// viewport leaves after the left dock, minus one row-height sliver of the
+/// centre pane. The caller supplies the left dock's actual width (zero when
+/// it is closed), never the navigator's default width: a left dock dragged
+/// wider than the default would otherwise make left + right exceed the
+/// viewport and push the right dock's edge -- and its maximize button --
+/// off-screen.
+fn info_maximized_size(
+    viewport_width: gpui_kit::Pixels,
+    left_dock_width: gpui_kit::Pixels,
+    rem_size: gpui_kit::Pixels,
+) -> gpui_kit::Pixels {
+    viewport_width - left_dock_width - tokens::list::ROW_HEIGHT.to_pixels(rem_size)
 }
 
 impl gpui_kit::Focusable for MainWindow {
@@ -938,5 +963,59 @@ impl Render for MainWindow {
             )
         })
         .child(navidog_navigator::snippet_form(cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sliver(rem_size: gpui_kit::Pixels) -> gpui_kit::Pixels {
+        tokens::list::ROW_HEIGHT.to_pixels(rem_size)
+    }
+
+    #[test]
+    fn maximized_right_dock_fits_the_viewport_for_any_left_dock_width() {
+        let rem_size = gpui_kit::px(16.);
+        let viewport = gpui_kit::px(1240.);
+        // The invariant that keeps the maximize button on-screen: left dock
+        // + maximized right dock + centre sliver == viewport width.
+        for left in [
+            gpui_kit::px(0.),
+            tokens::pane::NAVIGATOR_WIDTH.to_pixels(rem_size),
+            gpui_kit::px(400.),
+        ] {
+            let right = info_maximized_size(viewport, left, rem_size);
+            assert_eq!(
+                left + right + sliver(rem_size),
+                viewport,
+                "left dock {left:?} must not push the right dock off-screen"
+            );
+            assert!(
+                right < viewport,
+                "maximized right dock must leave room for the left dock and centre"
+            );
+        }
+    }
+
+    #[test]
+    fn widening_the_left_dock_shrinks_the_maximized_right_dock_by_the_same_amount() {
+        let rem_size = gpui_kit::px(16.);
+        let viewport = gpui_kit::px(1240.);
+        let default_left = tokens::pane::NAVIGATOR_WIDTH.to_pixels(rem_size);
+        let wide_left = gpui_kit::px(400.);
+        let default_right = info_maximized_size(viewport, default_left, rem_size);
+        let wide_right = info_maximized_size(viewport, wide_left, rem_size);
+        // A left dock dragged wider must shrink the maximized right dock by
+        // the same amount; the old code ignored the actual left width and
+        // always subtracted the 240px default, so this failed by ~105px.
+        // Compare with a 0.01px tolerance: the token conversion goes through
+        // f32, so the two differences can differ by a rounding epsilon.
+        let shrink = default_right - wide_right;
+        let widen = wide_left - default_left;
+        assert!(
+            (f32::from(shrink) - f32::from(widen)).abs() < 0.01,
+            "maximized width must follow the actual left dock width, got shrink {shrink:?} vs widen {widen:?}"
+        );
     }
 }
