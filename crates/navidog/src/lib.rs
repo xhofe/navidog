@@ -219,9 +219,9 @@ fn save_foreground_main(cx: &mut App) {
 /// and skips startup work (update check, auto-connect, startup tabs, recovery).
 /// The Dock icon and Window > Show Main Window both call this.
 pub fn present_main_window(cx: &mut App) {
-    // A closed window can still be the platform's active handle. Activating it
-    // fails; that is the same as having no window.
-    if let Some(window) = front_window(cx)
+    // A closed main window can still have a tracked handle. Activating it
+    // fails; that is the same as having no main window.
+    if let Some(window) = cx.try_global::<ForegroundMain>().map(|main| main.window)
         && window
             .update(cx, |_, window, _| window.activate_window())
             .is_ok()
