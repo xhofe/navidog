@@ -116,7 +116,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | F-APP-004 状态栏 | 完成 | snapshot | |
 | F-APP-005 编辑器选项卡 | 部分 | snapshot | M2 加入表查看器和 DDL 选项卡；弹出为新窗口未做 |
 | F-APP-006 显示或隐藏窗格 | 完成 | 目测 | |
-| F-APP-007 窗口与布局持久化 | 完成 | state 单元测试、`present_main_window_reopens_after_the_last_window_closes`、目测 | 关掉最后一个窗口后，点程序坞图标或「显示主窗口」按已保存布局再开主窗口 |
+| F-APP-007 窗口与布局持久化 | 完成 | state 单元测试、`present_main_window_reopens_after_the_last_window_closes`、`present_main_window_targets_the_main_window_next_to_other_windows`、目测 | 关掉最后一个窗口后，点程序坞图标或「显示主窗口」按已保存布局再开主窗口；主窗口仍开着时只激活它，即使别的窗口在最前面，也不会另开一个。菜单命令在窗口自身 update 内派发，激活推迟到该 update 结束后 |
 | F-APP-008 全屏与专注模式 | 部分 | | 全屏已完成；专注模式在 M2 |
 | F-APP-009 浅色与深色外观 | 完成 | snapshot、theme 单元测试 | |
 | F-APP-010 界面语言 | 完成 | settings 单元测试、目测 | |

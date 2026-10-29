@@ -219,13 +219,24 @@ fn save_foreground_main(cx: &mut App) {
 /// and skips startup work (update check, auto-connect, startup tabs, recovery).
 /// The Dock icon and Window > Show Main Window both call this.
 pub fn present_main_window(cx: &mut App) {
-    // A closed main window can still have a tracked handle. Activating it
-    // fails; that is the same as having no main window.
+    // A closed main window can still have a tracked handle, so ask the open
+    // windows whether it is still there.
     if let Some(window) = cx.try_global::<ForegroundMain>().map(|main| main.window)
-        && window
-            .update(cx, |_, window, _| window.activate_window())
-            .is_ok()
+        && cx.windows().contains(&window)
     {
+        // Menu commands run inside the key window's update, where that same
+        // window's slot is empty and updating it again fails. Activate after
+        // the slot is back instead of opening a second main window.
+        if window
+            .update(cx, |_, window, _| window.activate_window())
+            .is_err()
+        {
+            cx.defer(move |cx| {
+                if let Err(err) = window.update(cx, |_, window, _| window.activate_window()) {
+                    tracing::warn!(%err, "cannot activate the main window");
+                }
+            });
+        }
         cx.activate(true);
         return;
     }
