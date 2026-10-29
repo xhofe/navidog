@@ -540,12 +540,18 @@ impl MainWindow {
         let viewport = window.viewport_size().width;
         let left_open = self.dock.read(cx).is_dock_open(DockPlacement::Left);
         let mut left = self.left_dock_width(rem, cx);
-        if left_open
-            && let Some(original) = self.info_restore_left
-            && info_maximized_size(viewport, original, rem) >= gpui_kit::base::PANEL_MIN_SIZE
+        if let Some(original) =
+            widen_restored_left_dock(viewport, self.info_restore_left, rem, left_open)
         {
             left = original;
             self.info_restore_left = None;
+            // The dock itself must be resized, not just the local width:
+            // fit_maximized_layout returns no left change for a fitting
+            // dock, so without this call the shrunk width would persist
+            // and the saved original would already be discarded.
+            self.dock.update(cx, |a, cx| {
+                a.set_dock_size(DockPlacement::Left, original, window, cx)
+            });
         }
         let (new_left, right) = fit_maximized_layout(viewport, left, rem, left_open);
         if let Some(new_left) = new_left {
@@ -764,6 +770,26 @@ fn info_maximized_size(
 /// docks at their minimum plus the centre sliver exceed the viewport, no
 /// layout can fit, and both minimums are returned as the least-overflow
 /// result.
+/// Saved left-dock width to restore when the window widened enough for
+/// it to fit at its original width again: `Some(original)` only when the
+/// left dock is open and the maximized right dock would still reach the
+/// dock minimum with the original left width. `None` otherwise (closed
+/// dock, nothing saved, or still too narrow), so the caller must not
+/// resize the left dock and must keep the saved width for later.
+fn widen_restored_left_dock(
+    viewport_width: gpui_kit::Pixels,
+    saved_left_dock_width: Option<gpui_kit::Pixels>,
+    rem_size: gpui_kit::Pixels,
+    left_dock_open: bool,
+) -> Option<gpui_kit::Pixels> {
+    if !left_dock_open {
+        return None;
+    }
+    saved_left_dock_width.filter(|&original| {
+        info_maximized_size(viewport_width, original, rem_size) >= gpui_kit::base::PANEL_MIN_SIZE
+    })
+}
+
 fn fit_maximized_layout(
     viewport_width: gpui_kit::Pixels,
     left_dock_width: gpui_kit::Pixels,
@@ -1184,6 +1210,58 @@ mod tests {
             fit_maximized_layout(gpui_kit::px(110.), gpui_kit::px(0.), rem_size, false); // raw-px: test widths
         assert_eq!(new_left, None, "a closed left dock must not be resized");
         assert_eq!(right, gpui_kit::base::PANEL_MIN_SIZE);
+    }
+
+    #[test]
+    fn widened_window_restores_a_shrunk_left_dock_to_its_original_width() {
+        let rem_size = gpui_kit::px(16.); // raw-px: test rem size
+        let original = gpui_kit::px(800.); // raw-px: widened left dock in the test
+        // A window widened from 800px to 1240px now fits the original
+        // 800px left dock with a full-size maximized right dock.
+        assert_eq!(
+            widen_restored_left_dock(
+                gpui_kit::px(1240.), // raw-px: test viewport width
+                Some(original),
+                rem_size,
+                true
+            ),
+            Some(original),
+            "a saved left dock that fits again must be restored, not left shrunk"
+        );
+        // The same saved width in the original 800px window still does
+        // not fit, so it must stay saved (and shrunk) for a later widen.
+        assert_eq!(
+            widen_restored_left_dock(
+                gpui_kit::px(800.), // raw-px: test viewport width
+                Some(original),
+                rem_size,
+                true
+            ),
+            None,
+            "a saved left dock that still does not fit must not be restored yet"
+        );
+        // A closed left dock is never restored, and nothing saved means
+        // nothing to restore.
+        assert_eq!(
+            widen_restored_left_dock(
+                gpui_kit::px(1240.), // raw-px: test viewport width
+                Some(original),
+                rem_size,
+                false
+            ),
+            None,
+            "a closed left dock must not be restored"
+        );
+        assert_eq!(
+            widen_restored_left_dock(
+                gpui_kit::px(1240.), // raw-px: test viewport width
+                None,
+                rem_size,
+                true
+            ),
+            None,
+            "with nothing saved there is nothing to restore"
+        );
     }
 
     #[test]
