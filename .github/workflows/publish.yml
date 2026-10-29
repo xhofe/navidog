@@ -146,6 +146,8 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH" "${existing[@]}"
       - name: release
         run: cargo bundle --release -p navidog --target ${{ matrix.target }} --features mimalloc
+      - name: verify app icon
+        run: ./scripts/check-macos-bundle-icon.sh "target/${{ matrix.target }}/release/bundle/osx/${{ env.APP_NAME }}.app"
       - name: sign app
         if: steps.sign.outputs.cert == 'true'
         env:

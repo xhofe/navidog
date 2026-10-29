@@ -53,6 +53,8 @@ jobs:
           brew install create-dmg
       - name: bundle
         run: cargo bundle --release -p navidog --target aarch64-apple-darwin --features mimalloc
+      - name: verify app icon
+        run: ./scripts/check-macos-bundle-icon.sh "target/aarch64-apple-darwin/release/bundle/osx/Navidog.app"
       - name: sign app
         run: ./scripts/sign-macos.sh "target/aarch64-apple-darwin/release/bundle/osx/Navidog.app"
       - name: create dmg

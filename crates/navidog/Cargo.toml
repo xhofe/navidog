@@ -51,7 +51,9 @@ winres = "0.1"
 [package.metadata.bundle]
 name = "Navidog"
 identifier = "ci.nn.navidog"
-icon = ["icons/navidog.icns"]
+# cargo-bundle globs from the process working directory, not this crate.
+# `cargo bundle -p navidog` and CI run at the workspace root.
+icon = ["crates/navidog/icons/navidog.icns"]
 category = "public.app-category.developer-tools"
 osx_minimum_system_version = "15.0"
 short_description = "An open-source alternative to Navicat, written in Rust"
