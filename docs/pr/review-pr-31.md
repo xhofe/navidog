@@ -3,7 +3,7 @@
 - 仓库：`xhofe/navidog`
 - PR：<https://github.com/xhofe/navidog/pull/31>
 - 基准：`main @ 43dd4c6`
-- 头部：`feat/m4-remainder @ 05a1f78`（审查时的提交；其后的修复在工作区，尚未提交，见第 7 节）
+- 头部：审查时 `feat/m4-remainder @ 05a1f78`。第 7.1–7.3 节的修复在 `9dccbb6`。其后的补充见第 7.4 节，与该节的文档更新在同一提交。
 - 范围：`git diff main...HEAD`，51 个文件，+7857 / −204
 - 审查维度：功能实现、代码设计、实现逻辑、UI 设计
 - 审查方式：读规格与 diff、跑静态检查和定向测试、用 Docker 实库复现关键 SQL、查看浅色截图
@@ -610,7 +610,7 @@ SELECT ... FROM pg_inherits i ... WHERE i.inhrelid = c.oid
 
 ## 7. 修复进度
 
-工作区在 `05a1f78` 之上，**尚未提交、未推送**。本轮只修会丢对象、生成错误 SQL，或让保存/关闭走错路径的问题。规格里还没做的交互保持原样。
+第 7.1–7.3 节是 `9dccbb6` 的修复记录。本轮只修会丢对象、生成错误 SQL，或让保存走错路径的问题。规格里还没做的交互保持原样。第 7.4 节是 `9dccbb6` 之后评论里又要修的项。
 
 ### 7.1 已修
 
@@ -654,3 +654,16 @@ SELECT ... FROM pg_inherits i ... WHERE i.inhrelid = c.oid
 - `cargo test -p navidog-schema -p navidog-designer --lib -- postgres_rebuild_keeps postgres_column_reorder security_statements mysql_partition definition_plans raw_edits`（6 项通过）
 
 没有跑 Docker 实库，也没有跑 `cargo test --workspace`。审查第 5.2 节的三条 SQL 错误没有在服务器上再复现一遍。
+
+### 7.4 `9dccbb6` 之后的评论
+
+| 评论 | 处理 |
+| --- | --- |
+| 保存后的回读失败会清空 `server_ddl`，下一次保存跳过外部变更检查 | 已有对象的基线为空时拒绝保存，并提示关闭选项卡后重新打开。回读失败或读到空定义时同样提示 |
+| `object_ddl` 失败被当成对象不存在，保存继续执行 | 读失败直接返回错误，不执行计划。`a_failed_conflict_read_does_not_run_the_save` |
+| 新建列的 `nextval` 会把别的表的序列改挂过来 | 只对原来就有的列做 `OWNED BY`。已有列指向共享序列时，计划里仍然没有归属信息，仍会改挂（已知上限）。`postgres_rebuild_keeps_constraint_names_and_serial_defaults` 断言新列的 `other_seq` 不会被 `ALTER SEQUENCE` |
+| MySQL 区分大小写的 `CAST(列 AS BINARY) REGEXP` 在 8.0.22 起报错 | 改为在模式前加 `(?-i)`，列保持原来的字符集。MariaDB 的 PCRE 也认这个标志。`security_statements_cover_each_product`；实库 `live_mysql_case_sensitive_regexp_matches_without_binary` |
+| 第 7 节仍写着未提交 | 本节已改为 `9dccbb6`，补充记在 7.4 |
+| 触发器要有 PostgreSQL 实库往返，包括改过的定义 | `live_postgres_reorder_keeps_a_loaded_and_edited_trigger`：从目录读出触发器，改定义并重排列后，插入能走到新触发器。这条和上面的 MySQL 正则实库测试已在本机通过 |
+
+命名约束那条评论已由对方标为解决，排除约束换行也已解决，不再改。

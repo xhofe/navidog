@@ -99,6 +99,9 @@ designer:
   saved:
     en: Table saved
     zh-CN: 表已保存
+  readback_failed:
+    en: The server definition is not loaded. Close this tab and open the object again before saving.
+    zh-CN: 尚未读到服务器上的定义。请关闭此选项卡并重新打开对象后再保存。
   disconnected:
     en: Open the connection before loading or saving.
     zh-CN: 请先打开连接，再加载或保存。

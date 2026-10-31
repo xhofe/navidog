@@ -222,6 +222,29 @@ mod tests {
             },
         );
         assert!(sqlite_regex.unwrap_err().contains("REGEXP"));
+        let mysql_regex = security::find_plan(
+            &mysql,
+            mysql.definition_family(),
+            &scope(),
+            FindRequest {
+                needle: "Film",
+                mode: MatchMode::Regex,
+                case_sensitive: true,
+                kinds: &[ObjectKind::Table],
+                data: false,
+            },
+        )
+        .unwrap();
+        assert!(
+            mysql_regex.structure[0].contains("(?-i)Film"),
+            "{}",
+            mysql_regex.structure[0]
+        );
+        assert!(
+            !mysql_regex.structure[0].contains("BINARY"),
+            "{}",
+            mysql_regex.structure[0]
+        );
         let regex = security::find_plan(
             &postgres,
             postgres.definition_family(),
@@ -284,5 +307,77 @@ mod tests {
         let members = security::relation_plan(&sqlite, sqlite.definition_family(), &object, true);
         assert_eq!(members.note, Some(SQLITE_AUTH_REASON));
         assert!(members.queries.is_empty());
+    }
+
+    #[test]
+    fn live_mysql_case_sensitive_regexp_matches_without_binary() {
+        if std::env::var_os("NAVIDOG_LIVE").is_none() {
+            return;
+        }
+        navidog_db::runtime::runtime().block_on(async {
+            for (driver, port) in [
+                (
+                    std::sync::Arc::new(navidog_mysql::MySqlDriver::mysql())
+                        as std::sync::Arc<dyn navidog_db::Driver>,
+                    13306,
+                ),
+                (
+                    std::sync::Arc::new(navidog_mysql::MySqlDriver::mariadb())
+                        as std::sync::Arc<dyn navidog_db::Driver>,
+                    13307,
+                ),
+            ] {
+                let mut session = navidog_db::connect(
+                    driver,
+                    navidog_db::ConnectParams {
+                        host: "127.0.0.1".into(),
+                        port,
+                        database: Some("sakila".into()),
+                        user: "root".into(),
+                        password: Some("navidog".into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+                let r = session.relational().unwrap();
+                let dialect = r.dialect();
+                let name = format!("navidog_find_{}", std::process::id());
+                let table = dialect.qualified(&Scope::new("c", "sakila", None), &name);
+                r.execute("SET NAMES latin1").await.unwrap();
+                r.execute(&format!("DROP TABLE IF EXISTS {table}"))
+                    .await
+                    .unwrap();
+                r.execute(&format!(
+                    "CREATE TABLE {table} (title varchar(20)) CHARACTER SET latin1"
+                ))
+                .await
+                .unwrap();
+                r.execute(&format!(
+                    "INSERT INTO {table} (title) VALUES ('Film'), ('film')"
+                ))
+                .await
+                .unwrap();
+                let sql = security::data_probe(
+                    dialect.as_ref(),
+                    dialect.definition_family(),
+                    &Scope::new("c", "sakila", None),
+                    Probe {
+                        table: &name,
+                        columns: &["title".into()],
+                        needle: "Film",
+                        mode: MatchMode::Regex,
+                        case_sensitive: true,
+                    },
+                )
+                .unwrap();
+                assert!(!sql.contains("BINARY"), "{sql}");
+                let hit = r.execute(&sql).await.unwrap();
+                assert_eq!(hit[0].rows.len(), 1, "{sql} {hit:?}");
+                assert_eq!(hit[0].rows[0][0].as_deref(), Some("Film"));
+                r.execute(&format!("DROP TABLE {table}")).await.unwrap();
+                session.close().await.unwrap();
+            }
+        });
     }
 }

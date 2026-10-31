@@ -239,6 +239,16 @@ impl ObjectDesigner {
         if self.busy || self.preview.as_ref().is_none_or(Vec::is_empty) {
             return;
         }
+        // An empty baseline means the post-save read (or the initial load) did not
+        // succeed. Saving now would skip the external-change check.
+        if self.previous.is_some()
+            && self.kind.catalog_kind().is_some()
+            && self.server_ddl.is_empty()
+        {
+            self.error = Some(t!("designer.readback_failed").to_string());
+            cx.notify();
+            return;
+        }
         let Some(job) = Sessions::global(cx)
             .read(cx)
             .new_session(&self.scope.connection, Some(&self.scope.database))
@@ -312,6 +322,10 @@ impl ObjectDesigner {
             .read(cx)
             .new_session(&self.scope.connection, Some(&self.scope.database))
         else {
+            if !replace_body {
+                self.error = Some(t!("designer.readback_failed").to_string());
+                cx.notify();
+            }
             return;
         };
         self.busy = true;
@@ -338,13 +352,16 @@ impl ObjectDesigner {
             .await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.busy = false;
-                if let Ok(ddl) = result {
-                    this.server_ddl = ddl.clone();
-                    if replace_body {
-                        this.loaded = ddl.clone();
-                        this.raw = true;
-                        this.body.update(cx, |s, cx| s.set_value(ddl, window, cx));
+                match result {
+                    Ok(ddl) if !ddl.is_empty() => {
+                        this.server_ddl = ddl.clone();
+                        if replace_body {
+                            this.loaded = ddl.clone();
+                            this.raw = true;
+                            this.body.update(cx, |s, cx| s.set_value(ddl, window, cx));
+                        }
                     }
+                    _ => this.error = Some(t!("designer.readback_failed").to_string()),
                 }
                 cx.notify();
             });

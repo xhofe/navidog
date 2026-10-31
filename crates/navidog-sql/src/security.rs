@@ -952,7 +952,11 @@ fn predicate(
             (DefinitionFamily::Postgres, false) => format!("{column} ~* {literal}"),
             (DefinitionFamily::Postgres, true) => format!("{column} ~ {literal}"),
             (DefinitionFamily::Mysql, true) => {
-                format!("CAST({column} AS BINARY) REGEXP {literal}")
+                // MySQL 8.0.22 rejects a binary argument to REGEXP. `(?-i)` forces a
+                // case-sensitive match without leaving the column's character set.
+                // MariaDB's PCRE engine accepts the same flag.
+                let literal = dialect.string_literal(&format!("(?-i){needle}"));
+                format!("{column} REGEXP {literal}")
             }
             (DefinitionFamily::Mysql, false) | (DefinitionFamily::Sqlite, _) => {
                 format!("{column} REGEXP {literal}")

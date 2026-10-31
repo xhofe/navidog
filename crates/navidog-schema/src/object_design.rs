@@ -25,7 +25,9 @@ pub async fn apply(r: &mut dyn Relational, scope: &Scope, draft: &DefinitionDraf
     if let (Some(prev), Some(kind)) = (draft.previous.as_deref(), draft.kind.catalog_kind())
         && !draft.server_ddl.is_empty()
     {
-        let current = r.object_ddl(scope, kind, prev).await.unwrap_or_default();
+        // A failed read is not "the object is gone". Treating it as empty skipped the
+        // check and let the save overwrite a change the read could not see.
+        let current = r.object_ddl(scope, kind, prev).await?;
         if !current.is_empty() && current != draft.server_ddl {
             return Err(DbError::msg(
                 "The object changed outside this designer. Reload before saving.",
@@ -298,6 +300,47 @@ mod tests {
         index.loaded = "old".into();
         index.body = "CREATE INDEX i ON t(a)".into();
         assert!(plan(&sqlite, &file, &index).unwrap()[0].starts_with("DROP INDEX IF EXISTS"));
+    }
+
+    #[test]
+    fn a_failed_conflict_read_does_not_run_the_save() {
+        struct Blind {
+            log: Vec<String>,
+        }
+        impl Relational for Blind {
+            fn dialect(&self) -> std::sync::Arc<dyn Dialect> {
+                std::sync::Arc::new(navidog_sqlite::SqliteDialect)
+            }
+            fn execute<'a>(
+                &'a mut self,
+                sql: &'a str,
+            ) -> navidog_db::BoxFuture<'a, DbResult<Vec<navidog_db::ResultSet>>> {
+                self.log.push(sql.to_string());
+                Box::pin(async {
+                    Ok(vec![navidog_db::ResultSet {
+                        affected_rows: Some(1),
+                        ..Default::default()
+                    }])
+                })
+            }
+            navidog_db::unsupported_catalog!();
+        }
+
+        let mut view = draft(DefinitionKind::View, "v");
+        view.previous = Some("v".into());
+        view.server_ddl = "CREATE VIEW v AS SELECT 1".into();
+        view.body = "SELECT 2".into();
+        let mut rel = Blind { log: Vec::new() };
+        let error = navidog_db::runtime::runtime()
+            .block_on(apply(&mut rel, &Scope::new("c", "main", None), &view))
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("does not read object definitions"),
+            "{error}"
+        );
+        assert!(rel.log.is_empty(), "{:?}", rel.log);
     }
 
     fn mariadb_lists(driver: &str, version: &str) -> bool {

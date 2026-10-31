@@ -637,6 +637,10 @@ fn nextval_bindings(design: &TableDesign, d: &dyn Dialect) -> Vec<(String, Strin
         .columns
         .iter()
         .filter_map(|column| {
+            // A new column has no `original`. Taking `OWNED BY` on its sequence can
+            // steal one that belongs to another table. An existing column may still
+            // point at a shared sequence: the planner has no ownership catalog.
+            column.original.as_ref()?;
             let (raw, expr) = nextval_call(&column.definition)?;
             Some((column.name.clone(), quote_sequence(d, &raw), expr))
         })

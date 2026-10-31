@@ -1004,6 +1004,11 @@ fn postgres_rebuild_keeps_constraint_names_and_serial_defaults() {
     };
     let mut after = design;
     after.columns.swap(0, 1);
+    after.columns.push(DesignColumn::new(
+        9,
+        "extra",
+        "integer DEFAULT nextval('other_seq'::regclass)",
+    ));
     let statements = plan(&dialect, &scope(), Some(&before), &after).unwrap();
     let joined = statements.join("\n");
     assert!(
@@ -1024,6 +1029,7 @@ fn postgres_rebuild_keeps_constraint_names_and_serial_defaults() {
         "{joined}"
     );
     assert!(joined.contains("CREATE TRIGGER audit"), "{joined}");
+    assert!(!joined.contains("ALTER SEQUENCE \"other_seq\""), "{joined}");
     let drop_at = joined.find("DROP TABLE").unwrap();
     let owned_at = joined.find("OWNED BY NONE").unwrap();
     assert!(owned_at < drop_at, "{joined}");
@@ -1121,5 +1127,89 @@ fn sqlite_rebuild_keeps_generated_columns_and_combines_renames() {
             .map(|c| c.definition.split_whitespace().next().unwrap())
             .collect();
         assert_eq!(spellings, ["int", "varchar(8)", "numeric(4,1)"]);
+    });
+}
+
+#[test]
+fn live_postgres_reorder_keeps_a_loaded_and_edited_trigger() {
+    if std::env::var_os("NAVIDOG_LIVE").is_none() {
+        return;
+    }
+    navidog_db::runtime::runtime().block_on(async {
+        let mut session = navidog_db::connect(
+            Arc::new(navidog_postgres::PostgresDriver::default()),
+            navidog_db::ConnectParams {
+                host: "127.0.0.1".into(),
+                port: 15432,
+                database: Some("pagila".into()),
+                user: "postgres".into(),
+                password: Some("navidog".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let r = session.relational().unwrap();
+        let d = &navidog_postgres::PostgresDialect;
+        let scope = Scope::new("test", "pagila", Some("public".into()));
+        let pid = std::process::id();
+        let name = format!("navidog_trg_{pid}");
+        let audit = format!("navidog_trg_audit_{pid}");
+        let fn_old = format!("navidog_trg_old_{pid}");
+        let fn_new = format!("navidog_trg_new_{pid}");
+        let table = d.qualified(&scope, &name);
+        let audit_sql = d.qualified(&scope, &audit);
+        let _ = r.execute(&format!("DROP TABLE IF EXISTS {table}")).await;
+        let _ = r.execute(&format!("DROP TABLE IF EXISTS {audit_sql}")).await;
+        r.execute(&format!("CREATE TABLE {audit_sql} (v text)"))
+            .await
+            .unwrap();
+        r.execute(&format!("CREATE TABLE {table} (b integer, a integer)"))
+            .await
+            .unwrap();
+        r.execute(&format!(
+            "CREATE FUNCTION {fn_old}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO {audit_sql} VALUES ('old'); RETURN NEW; END $$"
+        ))
+        .await
+        .unwrap();
+        r.execute(&format!(
+            "CREATE FUNCTION {fn_new}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO {audit_sql} VALUES ('edited'); RETURN NEW; END $$"
+        ))
+        .await
+        .unwrap();
+        r.execute(&format!(
+            "CREATE TRIGGER audit AFTER INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION {fn_old}()"
+        ))
+        .await
+        .unwrap();
+        let before = load(r, &scope, &name).await.unwrap();
+        let loaded = before.design.triggers.clone().unwrap_or_default();
+        assert!(
+            loaded.iter().any(|sql| sql.contains(&fn_old)),
+            "{loaded:?}"
+        );
+        let mut after = before.design.clone();
+        after.columns.swap(0, 1);
+        after.triggers = Some(vec![format!(
+            "CREATE TRIGGER audit AFTER INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION {fn_new}()"
+        )]);
+        apply(r, &scope, Some(&before), &after).await.unwrap();
+        r.execute(&format!("INSERT INTO {table} (a, b) VALUES (1, 2)"))
+            .await
+            .unwrap();
+        let rows = r
+            .execute(&format!("SELECT v FROM {audit_sql}"))
+            .await
+            .unwrap();
+        assert_eq!(rows[0].rows[0][0].as_deref(), Some("edited"));
+        let again = load(r, &scope, &name).await.unwrap();
+        let kept = again.design.triggers.clone().unwrap_or_default();
+        assert!(kept.iter().any(|sql| sql.contains(&fn_new)), "{kept:?}");
+        r.execute(&format!(
+            "DROP TABLE {table}; DROP TABLE {audit_sql}; DROP FUNCTION {fn_old}(); DROP FUNCTION {fn_new}()"
+        ))
+        .await
+        .unwrap();
+        session.close().await.unwrap();
     });
 }
