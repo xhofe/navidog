@@ -8,6 +8,8 @@ pub enum EntryKind {
     ForeignKey,
     Check,
     Unique,
+    /// PostgreSQL `EXCLUDE` constraint.
+    Exclude,
     Primary,
     Advanced,
 }
@@ -69,6 +71,29 @@ impl DesignEntry {
             EntryKind::Primary => format!("{name}PRIMARY KEY ({})", self.fields),
             EntryKind::Unique => format!("{name}UNIQUE ({})", self.fields),
             EntryKind::Check => format!("{name}CHECK ({})", self.expression),
+            EntryKind::Exclude => {
+                if self.fields.trim().is_empty() {
+                    return Err(DbError::msg(
+                        "An exclusion constraint needs at least one element.",
+                    ));
+                }
+                let method = if self.method.trim().is_empty() {
+                    "gist"
+                } else {
+                    self.method.trim()
+                };
+                if !method
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                {
+                    return Err(DbError::msg("Invalid index method."));
+                }
+                let mut sql = format!("{name}EXCLUDE USING {method} ({})", self.fields.trim());
+                if !self.expression.trim().is_empty() {
+                    sql.push_str(&format!(" WHERE ({})", self.expression.trim()));
+                }
+                sql
+            }
             EntryKind::ForeignKey => {
                 let local = split_field_list(&self.fields, dialect)?;
                 let referenced = split_field_list(&self.reference_fields, dialect)?;
@@ -236,6 +261,23 @@ pub fn parse_entry(s: &str, d: &dyn Dialect) -> Option<DesignEntry> {
         let (expr, r) = group(r, d)?;
         e.expression = expr;
         return r.is_empty().then_some(e);
+    } else if let Some(r) = take(rest, "EXCLUDE") {
+        e.kind = EntryKind::Exclude;
+        rest = r;
+        if let Some(r) = take(rest, "USING") {
+            let (method, r) = parse::ident(r).ok()?;
+            e.method = method;
+            rest = r;
+        }
+        let (fields, r) = group(rest, d)?;
+        e.fields = fields;
+        rest = r;
+        if let Some(r) = take(rest, "WHERE") {
+            let (expr, r) = group(r, d)?;
+            e.expression = expr;
+            rest = r;
+        }
+        return rest.is_empty().then_some(e);
     } else if let Some(r) = take(rest, "INDEX").or_else(|| take(rest, "KEY")) {
         e.kind = EntryKind::Index;
         rest = r;

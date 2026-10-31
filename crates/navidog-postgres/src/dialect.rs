@@ -83,6 +83,8 @@ impl Dialect for PostgresDialect {
             text_rejects_nul: true,
             case_insensitive_like: true,
             supports_virtual_generated: false,
+            supports_exclude: true,
+            supports_partitions: true,
             ..DialectFeatures::default()
         }
     }

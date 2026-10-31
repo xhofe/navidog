@@ -154,6 +154,10 @@ pub struct DialectFeatures {
     pub supports_index_expression: bool,
     /// A foreign key names a schema (or database) besides the table.
     pub fk_reference_schema: bool,
+    /// PostgreSQL `EXCLUDE` constraints.
+    pub supports_exclude: bool,
+    /// `PARTITION BY` on a table (MySQL and PostgreSQL).
+    pub supports_partitions: bool,
 }
 
 impl Default for DialectFeatures {
@@ -197,6 +201,8 @@ impl Default for DialectFeatures {
             supports_index_method: true,
             supports_index_expression: true,
             fk_reference_schema: true,
+            supports_exclude: false,
+            supports_partitions: false,
         }
     }
 }

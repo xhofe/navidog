@@ -52,6 +52,8 @@ pub(super) fn plan_on(
         {
             out.push(sql);
         }
+        out.extend(after.partition_children.clone());
+        out.extend(trigger_creates(after));
         return Ok(out);
     };
     let old = &before.design;
@@ -75,6 +77,8 @@ pub(super) fn plan_on(
         if old.columns == after.columns
             && old.constraints == after.constraints
             && old.options == after.options
+            && old.partition == after.partition
+            && old.partition_children == after.partition_children
         {
             let mut statements = Vec::new();
             for sql in old
@@ -95,6 +99,13 @@ pub(super) fn plan_on(
                     .filter(|sql| !old.indexes.contains(sql))
                     .cloned(),
             );
+            statements.extend(trigger_diff(
+                d,
+                scope,
+                &old.name,
+                &resolved_triggers(old, Some(before)),
+                &resolved_triggers(after, Some(before)),
+            )?);
             return Ok(statements);
         }
         return sqlite(d, scope, before, after, occupied, day);
@@ -273,6 +284,14 @@ pub(super) fn plan_on(
         }
         out.push(sql);
     }
+    out.extend(partition_alters(d, scope, old, after)?);
+    out.extend(trigger_diff(
+        d,
+        scope,
+        &old.name,
+        &resolved_triggers(old, Some(before)),
+        &resolved_triggers(after, Some(before)),
+    )?);
     Ok(out)
 }
 
@@ -360,6 +379,110 @@ pub(super) fn backup_name(table: &str, day: &str, taken: &[String]) -> DbResult<
         "Too many leftover SQLite backup tables for this date.",
     ))
 }
+fn resolved_triggers(design: &TableDesign, snapshot: Option<&TableSnapshot>) -> Vec<String> {
+    if let Some(triggers) = &design.triggers {
+        return triggers.clone();
+    }
+    snapshot
+        .map(|snapshot| snapshot.triggers.clone())
+        .unwrap_or_default()
+}
+
+fn trigger_creates(after: &TableDesign) -> Vec<String> {
+    after.triggers.clone().unwrap_or_default()
+}
+
+fn trigger_diff(
+    d: &dyn Dialect,
+    scope: &Scope,
+    table: &str,
+    old: &[String],
+    new: &[String],
+) -> DbResult<Vec<String>> {
+    let mut out = Vec::new();
+    let qualified = d.qualified(scope, table);
+    for sql in old {
+        if new.iter().any(|kept| kept == sql) {
+            continue;
+        }
+        let name = trigger_name(sql)?;
+        out.push(if d.features().rebuilds_tables {
+            format!(
+                "DROP TRIGGER {}.{}",
+                d.quote_ident(&scope.database),
+                d.quote_ident(&name)
+            )
+        } else if d.features().enriches_from_catalog {
+            format!("DROP TRIGGER {} ON {qualified}", d.quote_ident(&name))
+        } else {
+            format!("DROP TRIGGER {}", d.quote_ident(&name))
+        });
+    }
+    for sql in new {
+        if !old.iter().any(|kept| kept == sql) {
+            out.push(sql.clone());
+        }
+    }
+    Ok(out)
+}
+
+fn partition_alters(
+    d: &dyn Dialect,
+    scope: &Scope,
+    old: &TableDesign,
+    after: &TableDesign,
+) -> DbResult<Vec<String>> {
+    let mut out = Vec::new();
+    if old.partition != after.partition {
+        if !after.partition.trim().is_empty() && !d.features().supports_partitions {
+            return Err(DbError::msg("This database cannot partition tables."));
+        }
+        if d.features().inline_table_options {
+            let table = d.qualified(scope, &after.name);
+            if after.partition.trim().is_empty() {
+                out.push(format!("ALTER TABLE {table} REMOVE PARTITIONING"));
+            } else {
+                out.push(format!("ALTER TABLE {table} {}", after.partition.trim()));
+            }
+        } else if !old.partition.is_empty() || !after.partition.is_empty() {
+            return Err(DbError::msg(
+                "Changing the partition method of an existing table is not supported.",
+            ));
+        }
+    }
+    if d.features().supports_partitions && !d.features().inline_table_options {
+        for child in &old.partition_children {
+            if after.partition_children.contains(child) {
+                continue;
+            }
+            let name = child_table_name(child)?;
+            out.push(format!("DROP TABLE {}", d.qualified(scope, &name)));
+        }
+        for child in &after.partition_children {
+            if !old.partition_children.contains(child) {
+                out.push(child.clone());
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn child_table_name(sql: &str) -> DbResult<String> {
+    let mut rest = sql.trim();
+    for word in ["CREATE", "TABLE"] {
+        if rest.len() < word.len() || !rest[..word.len()].eq_ignore_ascii_case(word) {
+            return Err(DbError::msg("Expected a CREATE TABLE statement."));
+        }
+        rest = rest[word.len()..].trim_start();
+    }
+    let (name, rest) = ident(rest)?;
+    if let Some(rest) = rest.strip_prefix('.') {
+        let (name, _) = ident(rest)?;
+        return Ok(name);
+    }
+    Ok(name)
+}
+
 fn columns_reordered(old: &TableDesign, after: &TableDesign) -> bool {
     let current: Vec<&str> = after
         .columns
@@ -517,7 +640,7 @@ fn postgres_rebuild(
         d.quote_ident(&old.name)
     ));
     out.extend(after.indexes.clone());
-    out.extend(before.triggers.clone());
+    out.extend(resolved_triggers(after, Some(before)));
     for column in &after.columns {
         if column.original.is_none() || properties::identity(&column.definition, d).is_none() {
             continue;
@@ -744,6 +867,6 @@ fn sqlite(
         ));
     }
     out.extend(after.indexes.clone());
-    out.extend(before.triggers.clone());
+    out.extend(resolved_triggers(after, Some(before)));
     Ok(out)
 }

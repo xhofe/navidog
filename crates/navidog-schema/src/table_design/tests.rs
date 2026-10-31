@@ -874,6 +874,76 @@ fn live_type_names_round_trip_from_the_server() {
 }
 
 #[test]
+fn exclusion_trigger_and_partition_plans_follow_the_dialect() {
+    let postgres = navidog_postgres::PostgresDialect;
+    let mut exclude = DesignEntry::new(EntryKind::Exclude);
+    exclude.name = "ex_t".into();
+    exclude.method = "gist".into();
+    exclude.fields = "a WITH =".into();
+    exclude.expression = "a > 0".into();
+    let sql = exclude.sql(&postgres, &scope(), "t", false).unwrap();
+    assert_eq!(
+        sql,
+        "CONSTRAINT \"ex_t\" EXCLUDE USING gist (a WITH =) WHERE (a > 0)"
+    );
+    assert!(parse_entry(&sql, &postgres).is_some_and(|e| e.kind == EntryKind::Exclude));
+
+    let mut design = TableDesign::blank(&postgres);
+    design.name = "t".into();
+    design.columns[0].original = Some("id".into());
+    let before = TableSnapshot {
+        design: design.clone(),
+        ddl: String::new(),
+        triggers: vec!["CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into()],
+    };
+    design.triggers = Some(vec![
+        "CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into(),
+        "CREATE TRIGGER audit2 BEFORE DELETE ON t EXECUTE FUNCTION log()".into(),
+    ]);
+    let statements = plan(&postgres, &scope(), Some(&before), &design).unwrap();
+    assert!(
+        statements
+            .iter()
+            .any(|sql| sql.contains("CREATE TRIGGER audit2"))
+    );
+
+    let mysql = navidog_mysql::MysqlDialect;
+    let mut parted = TableDesign::blank(&mysql);
+    parted.name = "t".into();
+    parted.columns[0].original = Some("id".into());
+    parted.columns[0].definition = "int NOT NULL".into();
+    let old = TableSnapshot {
+        design: parted.clone(),
+        ddl: String::new(),
+        triggers: vec![],
+    };
+    parted.partition = "PARTITION BY HASH(id) PARTITIONS 4".into();
+    let statements = plan(&mysql, &scope(), Some(&old), &parted).unwrap();
+    assert!(
+        statements
+            .iter()
+            .any(|sql| sql.contains("PARTITION BY HASH(id)"))
+    );
+
+    let mut parent = TableDesign::blank(&postgres);
+    parent.name = "t".into();
+    parent.columns[0].original = Some("id".into());
+    parent.partition = "PARTITION BY RANGE (id)".into();
+    let existing = TableSnapshot {
+        design: parent.clone(),
+        ddl: String::new(),
+        triggers: vec![],
+    };
+    parent.partition = "PARTITION BY LIST (id)".into();
+    assert!(
+        plan(&postgres, &scope(), Some(&existing), &parent)
+            .unwrap_err()
+            .message
+            .contains("partition method")
+    );
+}
+
+#[test]
 fn mysql_standalone_index_removal_names_its_table() {
     let mut design = TableDesign::new();
     design.name = "t".into();

@@ -543,11 +543,22 @@ impl Render for TableDesigner {
                             (Page::Indexes, "indexes"),
                             (Page::ForeignKeys, "foreign_keys"),
                             (Page::Checks, "checks"),
+                            (Page::Exclusions, "exclusions"),
+                            (Page::Triggers, "triggers"),
+                            (Page::Partitions, "partitions"),
                             (Page::Options, "options"),
                             (Page::Preview, "preview"),
                             (Page::Advanced, "advanced"),
                         ]
                         .into_iter()
+                        .filter(|(page, _)| {
+                            let features = self.dialect.features();
+                            match page {
+                                Page::Exclusions => features.supports_exclude,
+                                Page::Partitions => features.supports_partitions,
+                                _ => true,
+                            }
+                        })
                         .map(|(page, key)| {
                             Button::new(SharedString::from(format!("designer-page-{key}")))
                                 .ghost()
@@ -628,6 +639,9 @@ impl Render for TableDesigner {
                     match self.page {
                         Page::Fields | Page::Indexes | Page::ForeignKeys | Page::Checks => {
                             self.render_grid_page(window, cx).into_any_element()
+                        }
+                        Page::Exclusions | Page::Triggers | Page::Partitions => {
+                            self.render_more(cx).into_any_element()
                         }
                         Page::Preview => Editor::new(&self.sql).size_full().into_any_element(),
                         Page::Options => self.render_table_options(cx).into_any_element(),

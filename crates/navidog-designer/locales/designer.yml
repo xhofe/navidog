@@ -168,6 +168,36 @@ designer:
   checks:
     en: Checks
     zh-CN: 检查
+  exclusions:
+    en: Exclusions
+    zh-CN: 排除
+  triggers:
+    en: Triggers
+    zh-CN: 触发器
+  partitions:
+    en: Partitions
+    zh-CN: 分区
+  timing:
+    en: Timing
+    zh-CN: 时机
+  events:
+    en: Events
+    zh-CN: 事件
+  elements:
+    en: Elements
+    zh-CN: 元素
+  where_clause:
+    en: Where
+    zh-CN: WHERE
+  partition_method:
+    en: Method
+    zh-CN: 方式
+  partition_key:
+    en: Key
+    zh-CN: 键
+  bounds:
+    en: Bounds
+    zh-CN: 边界
   advanced:
     en: Advanced
     zh-CN: 高级

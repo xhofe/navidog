@@ -262,6 +262,9 @@ enum Page {
     Fields,
     ForeignKeys,
     Checks,
+    Exclusions,
+    Triggers,
+    Partitions,
     Advanced,
     Indexes,
     Options,
@@ -292,6 +295,10 @@ pub struct TableDesigner {
     indexes: Entity<EditorState>,
     options: Entity<EditorState>,
     sql: Entity<EditorState>,
+    more_name: Entity<InputState>,
+    more_detail: Entity<InputState>,
+    more_extra: Entity<InputState>,
+    more_body: Entity<EditorState>,
     selected: Option<u64>,
     next_id: u64,
     page: Page,
@@ -689,6 +696,10 @@ impl TableDesigner {
                 indexes,
                 options,
                 sql,
+                more_name: input(String::new(), window, cx),
+                more_detail: input(String::new(), window, cx),
+                more_extra: input(String::new(), window, cx),
+                more_body: editor(String::new(), window, cx),
                 page: Page::Fields,
                 dialect,
                 busy: false,
@@ -1235,6 +1246,7 @@ fn confirm_discard(
 }
 mod complete;
 mod grid;
+mod more;
 mod options;
 mod references;
 mod structured;

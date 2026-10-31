@@ -89,6 +89,7 @@ impl Dialect for MysqlDialect {
             supports_column_charset: true,
             supports_unsigned: true,
             supports_index_expression: false,
+            supports_partitions: true,
             ..DialectFeatures::default()
         }
     }
