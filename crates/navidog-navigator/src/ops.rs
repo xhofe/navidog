@@ -150,11 +150,12 @@ fn delete(window: &mut Window, cx: &mut App) {
         .into_iter()
         .filter_map(|o| {
             let d = dialect(&o, cx)?;
-            let sql = format!(
-                "DROP {} {}",
-                d.drop_keyword(o.kind)?,
+            let target = if o.kind == ObjectKind::Tablespace {
+                d.quote_ident(&o.name)
+            } else {
                 d.qualified(&o.scope, &o.name)
-            );
+            };
+            let sql = format!("DROP {} {target}", d.drop_keyword(o.kind)?);
             Some((o, sql))
         })
         .collect();

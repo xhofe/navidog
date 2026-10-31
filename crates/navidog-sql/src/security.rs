@@ -625,9 +625,10 @@ fn mysql_account(dialect: &dyn Dialect, draft: &AccountDraft) -> Result<Vec<Stri
     let mut sql = Vec::new();
     if draft.role {
         let ident = dialect.quote_ident(name);
-        if let Some(previous) = previous {
+        if let Some(previous) = previous.filter(|previous| *previous != name) {
+            let host = dialect.quote_ident("%");
             sql.push(format!(
-                "ALTER ROLE {} RENAME TO {ident}",
+                "RENAME USER {}@{host} TO {ident}@{host}",
                 dialect.quote_ident(previous)
             ));
         } else if draft.previous_name.is_none() {
@@ -645,11 +646,12 @@ fn mysql_account(dialect: &dyn Dialect, draft: &AccountDraft) -> Result<Vec<Stri
         alter.push_str(" IDENTIFIED BY ");
         alter.push_str(&dialect.string_literal(password));
     }
+    // Grammar: auth option, then WITH limits, then PASSWORD EXPIRE, then ACCOUNT LOCK.
+    alter.push_str(&mysql_limits(draft)?);
+    alter.push_str(&mysql_expire(draft.expire.trim())?);
     if draft.locked {
         alter.push_str(" ACCOUNT LOCK");
     }
-    alter.push_str(&mysql_expire(draft.expire.trim())?);
-    alter.push_str(&mysql_limits(draft)?);
     if let Some(previous) = previous {
         let previous_host = host_or_default(draft.previous_host.as_deref().unwrap_or("").trim());
         let old = format!(
@@ -940,24 +942,19 @@ fn predicate(
     data: bool,
 ) -> Result<String, String> {
     if mode == MatchMode::Regex {
-        let pattern = if case_sensitive {
-            needle.to_string()
-        } else {
-            needle.to_lowercase()
-        };
-        let column = if case_sensitive {
-            column.to_string()
-        } else {
-            format!("LOWER({column})")
-        };
-        let op = match family {
-            DefinitionFamily::Postgres => "~",
-            DefinitionFamily::Mysql | DefinitionFamily::Sqlite => "REGEXP",
-        };
-        return Ok(format!(
-            "{column} {op} {}",
-            dialect.string_literal(&pattern)
-        ));
+        // Lowercasing the pattern turns `\S` into `\s`. PostgreSQL has `~*`;
+        // MySQL `REGEXP` follows the column collation.
+        let literal = dialect.string_literal(needle);
+        return Ok(match (family, case_sensitive) {
+            (DefinitionFamily::Postgres, false) => format!("{column} ~* {literal}"),
+            (DefinitionFamily::Postgres, true) => format!("{column} ~ {literal}"),
+            (DefinitionFamily::Mysql, true) => {
+                format!("{column} COLLATE utf8mb4_bin REGEXP {literal}")
+            }
+            (DefinitionFamily::Mysql, false) | (DefinitionFamily::Sqlite, _) => {
+                format!("{column} REGEXP {literal}")
+            }
+        });
     }
     if mode == MatchMode::WholeWord && data {
         let word = escape_like(needle);
@@ -1001,22 +998,53 @@ fn like_cmp(
     case_sensitive: bool,
 ) -> String {
     let literal = dialect.string_literal(pattern);
+    let escape = like_escape(dialect, family);
     match (family, case_sensitive) {
-        (DefinitionFamily::Postgres, false) => format!("{column} ILIKE {literal} ESCAPE '\\'"),
+        (DefinitionFamily::Postgres, false) => format!("{column} ILIKE {literal} ESCAPE {escape}"),
         (DefinitionFamily::Postgres, true) | (DefinitionFamily::Mysql, false) => {
-            format!("{column} LIKE {literal} ESCAPE '\\'")
+            format!("{column} LIKE {literal} ESCAPE {escape}")
         }
         (DefinitionFamily::Mysql, true) => {
-            format!("{column} LIKE {literal} COLLATE utf8mb4_bin ESCAPE '\\'")
+            format!("{column} LIKE {literal} COLLATE utf8mb4_bin ESCAPE {escape}")
         }
-        (DefinitionFamily::Sqlite, false) => format!("{column} LIKE {literal} ESCAPE '\\'"),
+        (DefinitionFamily::Sqlite, false) => format!("{column} LIKE {literal} ESCAPE {escape}"),
         (DefinitionFamily::Sqlite, true) => {
-            // SQLite LIKE is case-insensitive for ASCII. GLOB is case-sensitive; the pattern
-            // already escaped LIKE metacharacters, and `*` / `?` in the needle stay literal
-            // because they were not converted into GLOB wildcards except for our own `%`.
-            let glob = pattern.replace('%', "*");
-            format!("{column} GLOB {}", dialect.string_literal(&glob))
+            // SQLite LIKE is case-insensitive for ASCII. GLOB is case-sensitive.
+            format!(
+                "{column} GLOB {}",
+                dialect.string_literal(&like_to_glob(pattern))
+            )
         }
+    }
+}
+
+fn like_escape(dialect: &dyn Dialect, family: DefinitionFamily) -> String {
+    match family {
+        // A SQLite string does not treat `\` as an escape, so one backslash is the character.
+        DefinitionFamily::Sqlite => "'\\'".into(),
+        _ => dialect.string_literal("\\"),
+    }
+}
+
+/// LIKE pattern (`%`, `_`, `\` escapes) to a SQLite GLOB pattern.
+fn like_to_glob(pattern: &str) -> String {
+    let mut out = String::new();
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => out.push_str(&glob_literal(chars.next().unwrap_or('\\'))),
+            '%' => out.push('*'),
+            '_' => out.push('?'),
+            other => out.push_str(&glob_literal(other)),
+        }
+    }
+    out
+}
+
+fn glob_literal(c: char) -> String {
+    match c {
+        '*' | '?' | '[' | ']' => format!("[{c}]"),
+        c => c.to_string(),
     }
 }
 

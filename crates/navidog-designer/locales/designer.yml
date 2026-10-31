@@ -108,6 +108,12 @@ designer:
   close_body:
     en: Your table design has not been saved.
     zh-CN: 表设计内容尚未保存。
+  object_close_title:
+    en: Discard unsaved changes?
+    zh-CN: 放弃未保存的更改？
+  object_close_body:
+    en: This object has not been saved.
+    zh-CN: 对象尚未保存。
   discard:
     en: Discard
     zh-CN: 不保存
@@ -747,4 +753,7 @@ designer:
   tool_discard:
     en: Close without running the preview?
     zh-CN: 不执行预览就关闭？
+  tool_discard_body:
+    en: The statements in the preview will not run.
+    zh-CN: 预览中的语句不会执行。
 

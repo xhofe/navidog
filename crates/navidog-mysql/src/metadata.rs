@@ -111,7 +111,8 @@ pub async fn object_ddl<R: Relational + ?Sized>(
             ),
             0,
         ),
-        ObjectKind::Sequence => (format!("SHOW CREATE SEQUENCE {target}"), 2),
+        // MariaDB returns `Table` and `Create Table`, same as SHOW CREATE TABLE.
+        ObjectKind::Sequence => (format!("SHOW CREATE SEQUENCE {target}"), 1),
         ObjectKind::Function => {
             let ty = metadata::query(
                 r,

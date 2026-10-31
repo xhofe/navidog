@@ -13,9 +13,7 @@ use gpui_kit::component::dock::{
     register_panel,
 };
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{
-    Disableable as _, Selectable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
-};
+use gpui_kit::component::{Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
     KeyBinding, Render, SharedString, Task, WeakEntity, Window, div, prelude::*,
@@ -559,17 +557,22 @@ impl ToolPanel {
                                         case_sensitive: plan.case_sensitive,
                                     },
                                 ) {
-                                    Ok(sql) => {
-                                        out.push_str(&table);
-                                        out.push('\n');
-                                        match r.execute_read(&sql).await {
-                                            Ok(sets) => out.push_str(&format_sets(sets)),
-                                            Err(error) => {
-                                                out.push_str(&error.to_string());
+                                    Ok(sql) => match r.execute_read(&sql).await {
+                                        Ok(sets) => {
+                                            let body = format_sets(sets);
+                                            if !body.trim().is_empty() {
+                                                out.push_str(&table);
                                                 out.push('\n');
+                                                out.push_str(&body);
                                             }
                                         }
-                                    }
+                                        Err(error) => {
+                                            out.push_str(&table);
+                                            out.push('\n');
+                                            out.push_str(&error.to_string());
+                                            out.push('\n');
+                                        }
+                                    },
                                     Err(error) => {
                                         out.push_str(&error);
                                         out.push('\n');
@@ -614,32 +617,27 @@ impl ToolPanel {
             return;
         }
         let weak = cx.entity().downgrade();
-        window.open_dialog(cx, move |dialog, _, _| {
-            let weak = weak.clone();
-            dialog
-                .title(t!("designer.tool_discard").to_string())
-                .footer(
-                    h_flex().justify_end().gap_2().child(
-                        Button::new("tool-discard")
-                            .label(t!("designer.cancel").to_string())
-                            .on_click(move |_, window, cx| {
-                                window.close_dialog(cx);
-                                if let Ok(id) = weak.update(cx, |this, cx| {
-                                    this.close_approved = true;
-                                    PanelId::from(cx.entity_id())
-                                }) {
-                                    window.dispatch_action(
-                                        Box::new(tabs::CloseTabs {
-                                            panel: Some(id),
-                                            which: tabs::Close::This,
-                                        }),
-                                        cx,
-                                    );
-                                }
-                            }),
-                    ),
-                )
-        });
+        panel::confirm_discard(
+            PanelId::from(cx.entity_id()),
+            t!("designer.tool_discard").to_string(),
+            t!("designer.tool_discard_body").to_string(),
+            window,
+            cx,
+            move |window, cx| {
+                if let Ok(id) = weak.update(cx, |this, cx| {
+                    this.close_approved = true;
+                    PanelId::from(cx.entity_id())
+                }) {
+                    window.dispatch_action(
+                        Box::new(tabs::CloseTabs {
+                            panel: Some(id),
+                            which: tabs::Close::This,
+                        }),
+                        cx,
+                    );
+                }
+            },
+        );
     }
 }
 

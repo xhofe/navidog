@@ -382,10 +382,11 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
             ObjectKind::Domain => "DOMAIN",
             ObjectKind::Extension => "EXTENSION",
             ObjectKind::ForeignServer => "SERVER",
-            ObjectKind::Aggregate => "AGGREGATE",
-            ObjectKind::Operator => "OPERATOR",
             ObjectKind::Collation => "COLLATION",
-            ObjectKind::Trigger
+            // Aggregate and operator drops need an argument signature this name cannot supply.
+            ObjectKind::Aggregate
+            | ObjectKind::Operator
+            | ObjectKind::Trigger
             | ObjectKind::Index
             | ObjectKind::Cast
             | ObjectKind::Function

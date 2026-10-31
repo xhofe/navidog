@@ -30,7 +30,27 @@ mod tests {
         assert!(mysql_sql.contains("CREATE USER"));
         assert!(mysql_sql.contains("IDENTIFIED BY"));
         assert!(mysql_sql.contains("MAX_QUERIES_PER_HOUR 10"));
+        user.locked = true;
+        user.expire = "never".into();
+        let combined = security::account_statements(&mysql, mysql.definition_family(), &user)
+            .unwrap()
+            .join("\n");
+        let with = combined.find("WITH MAX_").expect(&combined);
+        let expire = combined.find("PASSWORD EXPIRE").expect(&combined);
+        let lock = combined.find("ACCOUNT LOCK").expect(&combined);
+        assert!(with < expire && expire < lock, "{combined}");
+        user.locked = false;
+        user.expire.clear();
         user.role = true;
+        user.previous_name = Some("ada".into());
+        user.name = "ada2".into();
+        let renamed = security::account_statements(&mysql, mysql.definition_family(), &user)
+            .unwrap()
+            .join("\n");
+        assert!(renamed.contains("RENAME USER"), "{renamed}");
+        assert!(!renamed.contains("ALTER ROLE"), "{renamed}");
+        user.previous_name = None;
+        user.name = "ada".into();
         assert!(
             security::account_statements(&mysql, mysql.definition_family(), &user).unwrap()[0]
                 .contains("CREATE ROLE")
@@ -139,7 +159,47 @@ mod tests {
         )
         .unwrap();
         assert!(plan.structure[0].contains("LIKE"));
+        assert!(
+            plan.structure[0].contains("ESCAPE '\\\\'"),
+            "{}",
+            plan.structure[0]
+        );
         assert!(plan.text_columns.is_none());
+        let glob = security::find_plan(
+            &sqlite,
+            sqlite.definition_family(),
+            &scope(),
+            FindRequest {
+                needle: "A_b",
+                mode: MatchMode::Contains,
+                case_sensitive: true,
+                kinds: &[ObjectKind::Table],
+                data: false,
+            },
+        )
+        .unwrap();
+        assert!(glob.structure[0].contains("GLOB"), "{}", glob.structure[0]);
+        assert!(glob.structure[0].contains("*A_b*"), "{}", glob.structure[0]);
+        let regex = security::find_plan(
+            &postgres,
+            postgres.definition_family(),
+            &scope(),
+            FindRequest {
+                needle: r"\S",
+                mode: MatchMode::Regex,
+                case_sensitive: false,
+                kinds: &[ObjectKind::Table],
+                data: false,
+            },
+        )
+        .unwrap();
+        assert!(regex.structure[0].contains("~*"), "{}", regex.structure[0]);
+        assert!(regex.structure[0].contains(r"\S"), "{}", regex.structure[0]);
+        assert!(
+            !regex.structure[0].contains("LOWER"),
+            "{}",
+            regex.structure[0]
+        );
         let err = security::find_plan(
             &mysql,
             mysql.definition_family(),
@@ -169,6 +229,7 @@ mod tests {
         .unwrap();
         assert!(probe.contains("LIMIT 100"));
         assert!(probe.contains("ILIKE"));
+        assert!(probe.contains("ESCAPE E'\\\\'"), "{probe}");
 
         let object = ObjectRef {
             scope: scope(),

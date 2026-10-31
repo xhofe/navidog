@@ -355,7 +355,7 @@ impl Render for ExplainView {
                         }
                     }))
                     .children(views.into_iter().map(|v| {
-                        Tab::new().child(
+                        Tab::new().aria_label(label(v)).child(
                             div()
                                 .id(SharedString::from(format!("explain-view-{v:?}")))
                                 .on_click(cx.listener(move |this, _, _, cx| {

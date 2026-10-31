@@ -109,12 +109,16 @@ mod tests {
         opt(&mut view, "security", "INVOKER");
         opt(&mut view, "check_option", "CASCADED");
         let sql = plan(&mysql, &my, &view).unwrap().join("\n");
+        assert!(sql.starts_with("CREATE ALGORITHM"), "{sql}");
+        assert!(!sql.contains("OR REPLACE"), "{sql}");
         assert!(sql.contains("ALGORITHM = MERGE"), "{sql}");
         assert!(sql.contains("SQL SECURITY INVOKER"), "{sql}");
         assert!(sql.contains("WITH CASCADED CHECK OPTION"), "{sql}");
 
         let mut pg_view = draft(DefinitionKind::View, "v");
         pg_view.body = "SELECT 1".into();
+        assert!(plan(&pg, &pg_scope, &pg_view).unwrap()[0].starts_with("CREATE VIEW"));
+        pg_view.previous = Some("v".into());
         assert!(plan(&pg, &pg_scope, &pg_view).unwrap()[0].starts_with("CREATE OR REPLACE VIEW"));
 
         let mut lite = draft(DefinitionKind::View, "v");
@@ -241,6 +245,56 @@ mod tests {
         assert!(mariadb_lists("mariadb", "5.5.5-10.11.2-MariaDB"));
         assert!(!mariadb_lists("mariadb", "10.2.9-MariaDB"));
         assert!(!mariadb_lists("mysql", "10.11.2-MariaDB"));
+    }
+
+    #[test]
+    fn raw_edits_replace_an_existing_object() {
+        let mysql = navidog_mysql::MysqlDialect;
+        let pg = navidog_postgres::PostgresDialect;
+        let sqlite = navidog_sqlite::SqliteDialect;
+        let my = Scope::new("c", "app", None);
+        let pg_scope = Scope::new("c", "app", Some("public".into()));
+        let file = Scope::new("c", "main", None);
+
+        let mut view = draft(DefinitionKind::View, "v");
+        view.raw = true;
+        view.previous = Some("v".into());
+        view.loaded = "old".into();
+        view.body = "CREATE ALGORITHM=UNDEFINED SQL SECURITY DEFINER VIEW `v` AS SELECT 1".into();
+        let sql = plan(&mysql, &my, &view).unwrap();
+        assert!(sql[0].starts_with("CREATE OR REPLACE ALGORITHM"), "{sql:?}");
+
+        let mut broken = draft(DefinitionKind::View, "v");
+        broken.raw = true;
+        broken.loaded = "old".into();
+        broken.body = "CREATE VIE名".into();
+        assert_eq!(plan(&mysql, &my, &broken).unwrap()[0], "CREATE VIE名");
+
+        let mut func = draft(DefinitionKind::Function, "f");
+        func.raw = true;
+        func.previous = Some("f".into());
+        func.loaded = "old".into();
+        func.body = "CREATE FUNCTION f() RETURNS INT RETURN 1".into();
+        let sql = plan(&mysql, &my, &func).unwrap();
+        assert!(sql[0].starts_with("DROP FUNCTION IF EXISTS"), "{sql:?}");
+        assert!(sql[1].starts_with("CREATE FUNCTION"), "{sql:?}");
+
+        let mut pg_fn = draft(DefinitionKind::Function, "f");
+        pg_fn.raw = true;
+        pg_fn.previous = Some("f".into());
+        pg_fn.loaded = "old".into();
+        pg_fn.body = "CREATE FUNCTION f() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$".into();
+        assert!(
+            plan(&pg, &pg_scope, &pg_fn).unwrap()[0].starts_with("CREATE OR REPLACE FUNCTION"),
+            "{pg_fn:?}"
+        );
+
+        let mut index = draft(DefinitionKind::Index, "i");
+        index.raw = true;
+        index.previous = Some("i".into());
+        index.loaded = "old".into();
+        index.body = "CREATE INDEX i ON t(a)".into();
+        assert!(plan(&sqlite, &file, &index).unwrap()[0].starts_with("DROP INDEX IF EXISTS"));
     }
 
     fn mariadb_lists(driver: &str, version: &str) -> bool {

@@ -649,7 +649,7 @@ fn postgres_rebuild(
         let quoted = d.quote_ident(&column.name);
         out.push(format!(
             "SELECT setval(pg_get_serial_sequence({}, {}), COALESCE((SELECT MAX({quoted}) FROM {table}), 1), (SELECT MAX({quoted}) FROM {table}) IS NOT NULL)",
-            d.string_literal(&format!("{}.{}", scope.schema.as_deref().unwrap_or("public"), old.name)),
+            d.string_literal(&d.qualified(scope, &old.name)),
             d.string_literal(&column.name),
         ));
     }

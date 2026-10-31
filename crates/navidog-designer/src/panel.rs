@@ -133,6 +133,8 @@ impl MissingConnection {
         let weak = cx.entity().downgrade();
         confirm_discard(
             PanelId::from(cx.entity_id()),
+            t!("designer.close_title").to_string(),
+            t!("designer.close_body").to_string(),
             window,
             cx,
             move |window, cx| {
@@ -1195,6 +1197,8 @@ impl TableDesigner {
         let weak = cx.entity().downgrade();
         confirm_discard(
             PanelId::from(cx.entity_id()),
+            t!("designer.close_title").to_string(),
+            t!("designer.close_body").to_string(),
             window,
             cx,
             move |window, cx| {
@@ -1215,8 +1219,10 @@ impl TableDesigner {
     }
 }
 
-fn confirm_discard(
+pub(crate) fn confirm_discard(
     panel: PanelId,
+    title: String,
+    body: String,
     window: &mut Window,
     cx: &mut App,
     on_discard: impl Fn(&mut Window, &mut App) + 'static,
@@ -1226,12 +1232,12 @@ fn confirm_discard(
     window.open_dialog(cx, move |dialog, _, _| {
         let on_discard = on_discard.clone();
         dialog
-            .title(t!("designer.close_title").to_string())
+            .title(title.clone())
             .on_cancel(move |_, _, cx| {
                 tabs::abort_pending_dirty_closes(panel, cx);
                 true
             })
-            .child(t!("designer.close_body").to_string())
+            .child(body.clone())
             .footer(
                 h_flex()
                     .justify_end()

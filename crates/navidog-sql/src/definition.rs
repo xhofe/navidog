@@ -211,40 +211,99 @@ fn raw_statements(
         (DefinitionFamily::Mysql | DefinitionFamily::Postgres, DefinitionKind::View) => {
             Ok(vec![ensure_or_replace(&body, "VIEW")])
         }
+        (DefinitionFamily::Postgres, DefinitionKind::Function) => {
+            Ok(vec![ensure_or_replace(&body, "FUNCTION")])
+        }
+        (DefinitionFamily::Postgres, DefinitionKind::Procedure) => {
+            Ok(vec![ensure_or_replace(&body, "PROCEDURE")])
+        }
         (DefinitionFamily::Postgres, DefinitionKind::MaterializedView) => {
-            let mut out = Vec::new();
-            if let Some(prev) = &draft.previous {
-                out.push(format!(
-                    "DROP MATERIALIZED VIEW {}",
-                    d.qualified(scope, prev)
-                ));
-            }
-            out.push(body);
-            Ok(out)
+            Ok(drop_then(d, scope, draft, "MATERIALIZED VIEW", &body))
         }
         (DefinitionFamily::Sqlite, DefinitionKind::View) => {
-            let mut out = Vec::new();
-            if let Some(prev) = &draft.previous {
-                out.push(format!("DROP VIEW IF EXISTS {}", d.qualified(scope, prev)));
-            }
-            out.push(body);
-            Ok(out)
+            Ok(drop_then(d, scope, draft, "VIEW", &body))
+        }
+        (
+            DefinitionFamily::Mysql,
+            DefinitionKind::Function | DefinitionKind::Procedure | DefinitionKind::Event,
+        )
+        | (DefinitionFamily::Sqlite, DefinitionKind::Index | DefinitionKind::Trigger)
+        | (DefinitionFamily::Postgres, DefinitionKind::Type | DefinitionKind::Domain) => {
+            let Some(keyword) = plain_drop(draft.kind) else {
+                return Ok(vec![body]);
+            };
+            Ok(drop_then(d, scope, draft, keyword, &body))
         }
         _ => Ok(vec![body]),
+    }
+}
+
+/// `DROP` the loaded object, then run the edited `CREATE`. Kinds that need a
+/// signature (aggregate, operator) stay a plain statement.
+fn drop_then(
+    d: &dyn Dialect,
+    scope: &Scope,
+    draft: &DefinitionDraft,
+    keyword: &str,
+    body: &str,
+) -> Vec<String> {
+    let Some(prev) = draft.previous.as_deref() else {
+        return vec![body.to_string()];
+    };
+    vec![
+        format!("DROP {keyword} IF EXISTS {}", d.qualified(scope, prev)),
+        body.to_string(),
+    ]
+}
+
+fn plain_drop(kind: DefinitionKind) -> Option<&'static str> {
+    match kind {
+        DefinitionKind::Function => Some("FUNCTION"),
+        DefinitionKind::Procedure => Some("PROCEDURE"),
+        DefinitionKind::Event => Some("EVENT"),
+        DefinitionKind::Index => Some("INDEX"),
+        DefinitionKind::Trigger => Some("TRIGGER"),
+        DefinitionKind::Type => Some("TYPE"),
+        DefinitionKind::Domain => Some("DOMAIN"),
+        _ => None,
     }
 }
 
 fn ensure_or_replace(sql: &str, keyword: &str) -> String {
     let t = sql.trim_start();
     let replaced = format!("CREATE OR REPLACE {keyword}");
-    if t.len() >= replaced.len() && t[..replaced.len()].eq_ignore_ascii_case(&replaced) {
+    if starts_with_ignore_ascii(t, &replaced) {
         return sql.trim().to_string();
     }
     let head = format!("CREATE {keyword}");
-    if t.len() >= head.len() && t[..head.len()].eq_ignore_ascii_case(&head) {
-        return format!("CREATE OR REPLACE {keyword}{}", &t[head.len()..]);
+    if let Some(rest) = strip_ignore_ascii(t, &head) {
+        return format!("CREATE OR REPLACE {keyword}{rest}");
+    }
+    // MySQL `SHOW CREATE VIEW` is `CREATE ALGORITHM=... VIEW`, not `CREATE VIEW`.
+    if keyword.eq_ignore_ascii_case("VIEW")
+        && let Some(rest) = strip_ignore_ascii(t, "CREATE")
+        && has_word(rest, "VIEW")
+    {
+        return format!("CREATE OR REPLACE{rest}");
     }
     sql.trim().to_string()
+}
+
+fn starts_with_ignore_ascii(text: &str, prefix: &str) -> bool {
+    text.get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+}
+
+fn strip_ignore_ascii<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    starts_with_ignore_ascii(text, prefix).then(|| &text[prefix.len()..])
+}
+
+fn has_word(text: &str, word: &str) -> bool {
+    let upper = text.to_ascii_uppercase();
+    let word = word.to_ascii_uppercase();
+    upper
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .any(|part| part == word)
 }
 
 fn opt<'a>(draft: &'a DefinitionDraft, key: &str) -> &'a str {
@@ -284,7 +343,12 @@ fn mysql(d: &dyn Dialect, scope: &Scope, draft: &DefinitionDraft) -> Result<Vec<
                 "check option",
             )?;
             let body = require_body(draft)?;
-            let mut head = String::from("CREATE OR REPLACE");
+            // A new view must not replace an object that already has this name.
+            let mut head = String::from(if draft.previous.is_some() {
+                "CREATE OR REPLACE"
+            } else {
+                "CREATE"
+            });
             let algorithm = opt(draft, "algorithm");
             if !algorithm.is_empty() {
                 head.push_str(&format!(" ALGORITHM = {}", algorithm.to_ascii_uppercase()));
@@ -509,7 +573,12 @@ fn postgres(
                     d.quote_ident(&draft.name)
                 ));
             }
-            out.push(format!("CREATE OR REPLACE VIEW {name} AS\n{body}"));
+            let verb = if draft.previous.is_some() {
+                "CREATE OR REPLACE"
+            } else {
+                "CREATE"
+            };
+            out.push(format!("{verb} VIEW {name} AS\n{body}"));
             Ok(out)
         }
         DefinitionKind::MaterializedView => {

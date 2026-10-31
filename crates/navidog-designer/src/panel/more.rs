@@ -49,7 +49,7 @@ impl TableDesigner {
                     .small()
                     .label(t!("designer.add_object").to_string())
                     .disabled(disabled)
-                    .on_click(cx.listener(|this, _, _, cx| this.apply_more(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.apply_more(window, cx))),
             )
             .into_any_element()
     }
@@ -75,7 +75,9 @@ impl TableDesigner {
                             .ghost()
                             .small()
                             .icon(lucide("minus"))
-                            .on_click(cx.listener(move |this, _, _, cx| this.delete_more(ix, cx))),
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.delete_more(ix, window, cx)
+                            })),
                     )
                     .into_any_element()
             })
@@ -108,7 +110,7 @@ impl TableDesigner {
         }
     }
 
-    fn apply_more(&mut self, cx: &mut Context<Self>) {
+    fn apply_more(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.more_name.read(cx).value().to_string();
         let detail = self.more_detail.read(cx).value().to_string();
         let extra = self.more_extra.read(cx).value().to_string();
@@ -123,10 +125,22 @@ impl TableDesigner {
             Ok(()) => {
                 self.error = None;
                 self.preview = None;
+                if self.page == Page::Exclusions {
+                    self.write_constraints(window, cx);
+                }
             }
             Err(error) => self.error = Some(error.to_string()),
         }
         cx.notify();
+    }
+
+    /// `flush` rebuilds constraints from the editor, so an exclusion edit has to land there.
+    fn write_constraints(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.draft.constraints.join("\n");
+        self.syncing = true;
+        self.constraints
+            .update(cx, |state, cx| state.set_value(text, window, cx));
+        self.syncing = false;
     }
 
     fn add_exclusion(
@@ -211,7 +225,7 @@ impl TableDesigner {
         Ok(())
     }
 
-    fn delete_more(&mut self, ix: usize, cx: &mut Context<Self>) {
+    fn delete_more(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         match self.page {
             Page::Exclusions => {
                 let mut seen = 0;
@@ -225,6 +239,7 @@ impl TableDesigner {
                     seen += 1;
                     keep
                 });
+                self.write_constraints(window, cx);
             }
             Page::Triggers => {
                 let mut triggers = self.draft.triggers.clone().unwrap_or_else(|| {

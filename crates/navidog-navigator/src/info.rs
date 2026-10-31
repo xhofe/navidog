@@ -50,7 +50,8 @@ pub(crate) enum Page {
     Identifiers,
     /// Objects this one uses, and objects that use it.
     Used,
-    /// Members, member-of, and privileges. SQLite shows why it cannot run.
+    /// Members, member-of, and privileges. Hidden until a user or role is a navigator object (43 §4).
+    #[allow(dead_code)]
     Members,
 }
 
@@ -709,7 +710,9 @@ impl Render for InfoPanel {
             Page::Fields => has_object,
             Page::Preview => is_query_object,
             Page::Snippets | Page::Identifiers => in_query,
-            Page::Used | Page::Members => has_object && !is_query_object,
+            Page::Used => has_object && !is_query_object,
+            // Users and roles are not navigator objects yet (43 §4).
+            Page::Members => false,
         };
         if !page_ok {
             self.page = Page::General;
@@ -841,13 +844,6 @@ impl Render for InfoPanel {
                                     "list",
                                     Page::Used,
                                     t!("info.used").to_string(),
-                                    cx,
-                                ))
-                                .child(self.page_button(
-                                    "info-members",
-                                    "user",
-                                    Page::Members,
-                                    t!("info.members").to_string(),
                                     cx,
                                 ))
                             })

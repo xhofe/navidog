@@ -267,8 +267,9 @@ impl ObjectDesigner {
                 match result {
                     Ok(()) => {
                         this.previous = Some(this.name.read(cx).value().trim().to_string());
+                        // The editor still holds the body, not server DDL. Stay structured so
+                        // the next save plans CREATE OR REPLACE / DROP + CREATE.
                         this.loaded = this.body.read(cx).value().to_string();
-                        this.raw = true;
                         this.preview = None;
                         this.error = None;
                         window.push_notification(t!("designer.saved").to_string(), cx);
@@ -448,32 +449,27 @@ impl ObjectDesigner {
             return;
         }
         let weak = cx.entity().downgrade();
-        window.open_dialog(cx, move |dialog, _, _| {
-            let weak = weak.clone();
-            dialog
-                .title(t!("designer.reload_title").to_string())
-                .footer(
-                    h_flex().justify_end().gap_2().child(
-                        Button::new("object-discard")
-                            .label(t!("designer.cancel").to_string())
-                            .on_click(move |_, window, cx| {
-                                window.close_dialog(cx);
-                                if let Ok(id) = weak.update(cx, |this, cx| {
-                                    this.close_approved = true;
-                                    PanelId::from(cx.entity_id())
-                                }) {
-                                    window.dispatch_action(
-                                        Box::new(tabs::CloseTabs {
-                                            panel: Some(id),
-                                            which: tabs::Close::This,
-                                        }),
-                                        cx,
-                                    );
-                                }
-                            }),
-                    ),
-                )
-        });
+        panel::confirm_discard(
+            PanelId::from(cx.entity_id()),
+            t!("designer.object_close_title").to_string(),
+            t!("designer.object_close_body").to_string(),
+            window,
+            cx,
+            move |window, cx| {
+                if let Ok(id) = weak.update(cx, |this, cx| {
+                    this.close_approved = true;
+                    PanelId::from(cx.entity_id())
+                }) {
+                    window.dispatch_action(
+                        Box::new(tabs::CloseTabs {
+                            panel: Some(id),
+                            which: tabs::Close::This,
+                        }),
+                        cx,
+                    );
+                }
+            },
+        );
     }
 }
 
@@ -586,6 +582,9 @@ impl Render for ObjectDesigner {
         .into_iter()
         .filter(|(page, _)| *page != Page::Options || !self.options.is_empty() && !self.raw)
         .collect();
+        if !pages.iter().any(|(page, _)| *page == self.page) {
+            self.page = Page::Definition;
+        }
         let selected = pages
             .iter()
             .position(|(page, _)| *page == self.page)
