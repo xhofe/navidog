@@ -718,11 +718,17 @@ impl Render for ObjectDesigner {
             .when_some(self.error.clone(), |v, error| {
                 v.child(gpui_kit::div().px_2().text_color(p.danger).child(error))
             })
-            .child(match self.page {
-                Page::Preview => Editor::new(&self.sql).size_full().into_any_element(),
-                Page::Options => self.render_options(disabled),
-                Page::Definition => self.render_definition(disabled),
-            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .child(match self.page {
+                        Page::Preview => Editor::new(&self.sql).size_full().into_any_element(),
+                        Page::Options => self.render_options(disabled),
+                        Page::Definition => self.render_definition(disabled),
+                    }),
+            )
     }
 }
 
@@ -733,7 +739,6 @@ impl ObjectDesigner {
             .size_full()
             .p_3()
             .gap_2()
-            .overflow_y_scroll()
             .child(
                 FormRow::new(
                     t!("designer.name").to_string(),
@@ -748,7 +753,8 @@ impl ObjectDesigner {
                 col.child(
                     Editor::new(&self.body)
                         .disabled(disabled)
-                        .h(tokens::designer::PROPERTY_MIN_HEIGHT.rems()),
+                        .flex_1()
+                        .min_h_0(),
                 )
             })
             .into_any_element()
