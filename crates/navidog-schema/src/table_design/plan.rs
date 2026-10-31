@@ -594,6 +594,103 @@ fn pg_column_alters(
     Ok(out)
 }
 
+/// PRIMARY KEY, UNIQUE and EXCLUDE names are schema-wide indexes. The old table
+/// still owns them while the copy is created, so the copy uses a temporary name.
+fn stage_index_constraints(design: &mut TableDesign, d: &dyn Dialect) -> Vec<(String, String)> {
+    let mut renames = Vec::new();
+    for constraint in &mut design.constraints {
+        let Ok((head, rest)) = ident(constraint) else {
+            continue;
+        };
+        if !head.eq_ignore_ascii_case("CONSTRAINT") {
+            continue;
+        }
+        let Ok((name, after)) = ident(rest) else {
+            continue;
+        };
+        let kind = after.split_whitespace().next().unwrap_or("");
+        if !matches!(
+            kind.to_ascii_uppercase().as_str(),
+            "PRIMARY" | "UNIQUE" | "EXCLUDE"
+        ) {
+            continue;
+        }
+        let temp = temp_constraint_name(&name);
+        *constraint = format!("CONSTRAINT {} {after}", d.quote_ident(&temp));
+        renames.push((temp, name));
+    }
+    renames
+}
+
+fn temp_constraint_name(name: &str) -> String {
+    const SUFFIX: &str = "__navidog";
+    let mut base: String = name.chars().collect();
+    while base.len() + SUFFIX.len() > 63 {
+        base.pop();
+    }
+    format!("{base}{SUFFIX}")
+}
+
+/// `(column, quoted sequence, nextval expression)`.
+fn nextval_bindings(design: &TableDesign, d: &dyn Dialect) -> Vec<(String, String, String)> {
+    design
+        .columns
+        .iter()
+        .filter_map(|column| {
+            let (raw, expr) = nextval_call(&column.definition)?;
+            Some((column.name.clone(), quote_sequence(d, &raw), expr))
+        })
+        .collect()
+}
+
+fn nextval_call(definition: &str) -> Option<(String, String)> {
+    let lower = definition.to_ascii_lowercase();
+    let start = lower.find("nextval(")?;
+    let mut rest = definition[start + "nextval(".len()..].trim_start();
+    if !rest.starts_with('\'') {
+        return None;
+    }
+    rest = &rest[1..];
+    let mut raw = String::new();
+    let mut chars = rest.chars();
+    loop {
+        match chars.next()? {
+            '\'' if chars.as_str().starts_with('\'') => {
+                chars.next();
+                raw.push('\'');
+            }
+            '\'' => break,
+            c => raw.push(c),
+        }
+    }
+    let after = chars.as_str();
+    let close = after.find(')')?;
+    let expr_end = definition.len() - after.len() + close + 1;
+    Some((raw, definition[start..expr_end].to_string()))
+}
+
+fn quote_sequence(d: &dyn Dialect, raw: &str) -> String {
+    match raw.split_once('.') {
+        Some((schema, name)) => format!(
+            "{}.{}",
+            d.quote_ident(&unquote_ident(schema)),
+            d.quote_ident(&unquote_ident(name))
+        ),
+        None => d.quote_ident(&unquote_ident(raw)),
+    }
+}
+
+fn unquote_ident(raw: &str) -> String {
+    let raw = raw.trim();
+    let quote = raw.chars().next();
+    if matches!(quote, Some('"' | '`')) && raw.ends_with(quote.unwrap()) && raw.len() >= 2 {
+        let inner = &raw[1..raw.len() - 1];
+        inner.replace("\"\"", "\"").replace("``", "`")
+    } else {
+        raw.to_string()
+    }
+}
+
 fn postgres_rebuild(
     d: &dyn Dialect,
     scope: &Scope,
@@ -601,8 +698,11 @@ fn postgres_rebuild(
     after: &TableDesign,
 ) -> DbResult<Vec<String>> {
     let old = &before.design;
+    let mut staged = after.clone();
+    let renames = stage_index_constraints(&mut staged, d);
+    let sequences = nextval_bindings(after, d);
     let temp = format!("{}__navidog_new", old.name);
-    let mut out = vec![rebuild_note(after.create_sql(d, scope, &temp)?, false)];
+    let mut out = vec![rebuild_note(staged.create_sql(d, scope, &temp)?, false)];
     let mut destination = Vec::new();
     let mut source = Vec::new();
     let mut identity = false;
@@ -633,12 +733,39 @@ fn postgres_rebuild(
             d.qualified(scope, &old.name)
         ));
     }
+    let temp_table = d.qualified(scope, &temp);
+    for (column, sequence, _) in &sequences {
+        // The copy's DEFAULT points at the old table's sequence. Drop it, and
+        // clear OWNED BY, before DROP TABLE or the sequence is dropped with the old table.
+        out.push(format!(
+            "ALTER TABLE {temp_table} ALTER COLUMN {} DROP DEFAULT",
+            d.quote_ident(column)
+        ));
+        out.push(format!("ALTER SEQUENCE {sequence} OWNED BY NONE"));
+    }
     out.push(format!("DROP TABLE {}", d.qualified(scope, &old.name)));
     out.push(format!(
-        "ALTER TABLE {} RENAME TO {}",
-        d.qualified(scope, &temp),
+        "ALTER TABLE {temp_table} RENAME TO {}",
         d.quote_ident(&old.name)
     ));
+    let renamed = d.qualified(scope, &old.name);
+    for (column, sequence, expr) in &sequences {
+        out.push(format!(
+            "ALTER TABLE {renamed} ALTER COLUMN {} SET DEFAULT {expr}",
+            d.quote_ident(column)
+        ));
+        out.push(format!(
+            "ALTER SEQUENCE {sequence} OWNED BY {renamed}.{}",
+            d.quote_ident(column)
+        ));
+    }
+    for (temp_name, original) in &renames {
+        out.push(format!(
+            "ALTER TABLE {renamed} RENAME CONSTRAINT {} TO {}",
+            d.quote_ident(temp_name),
+            d.quote_ident(original)
+        ));
+    }
     out.extend(after.indexes.clone());
     out.extend(resolved_triggers(after, Some(before)));
     for column in &after.columns {

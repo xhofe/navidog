@@ -993,6 +993,43 @@ fn postgres_column_reorder_rebuilds_without_cascade() {
 }
 
 #[test]
+fn postgres_rebuild_keeps_constraint_names_and_serial_defaults() {
+    let dialect = navidog_postgres::PostgresDialect;
+    let sql = "CREATE TABLE \"t\" (\"id\" integer NOT NULL DEFAULT nextval('t_id_seq'::regclass), \"name\" text, CONSTRAINT \"t_pkey\" PRIMARY KEY (id))";
+    let design = super::parse::create(sql, "t", &dialect).unwrap();
+    let before = TableSnapshot {
+        design: design.clone(),
+        ddl: sql.into(),
+        triggers: vec!["CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into()],
+    };
+    let mut after = design;
+    after.columns.swap(0, 1);
+    let statements = plan(&dialect, &scope(), Some(&before), &after).unwrap();
+    let joined = statements.join("\n");
+    assert!(
+        joined.contains("CONSTRAINT \"t_pkey__navidog\" PRIMARY KEY"),
+        "{joined}"
+    );
+    assert!(joined.contains("DROP DEFAULT"), "{joined}");
+    assert!(
+        joined.contains("ALTER SEQUENCE \"t_id_seq\" OWNED BY NONE"),
+        "{joined}"
+    );
+    assert!(
+        joined.contains("RENAME CONSTRAINT \"t_pkey__navidog\" TO \"t_pkey\""),
+        "{joined}"
+    );
+    assert!(
+        joined.contains("SET DEFAULT nextval('t_id_seq'::regclass)"),
+        "{joined}"
+    );
+    assert!(joined.contains("CREATE TRIGGER audit"), "{joined}");
+    let drop_at = joined.find("DROP TABLE").unwrap();
+    let owned_at = joined.find("OWNED BY NONE").unwrap();
+    assert!(owned_at < drop_at, "{joined}");
+}
+
+#[test]
 fn postgres_identity_can_be_added_and_sequence_options_stay_fixed() {
     let dialect = navidog_postgres::PostgresDialect;
     let sql = "CREATE TABLE \"t\" (\"id\" integer NOT NULL)";

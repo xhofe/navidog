@@ -20,11 +20,13 @@ pub fn plan(
 /// Runs the planned statements. An object that changed since it was loaded is refused.
 pub async fn apply(r: &mut dyn Relational, scope: &Scope, draft: &DefinitionDraft) -> DbResult<()> {
     let d = r.dialect();
+    // Compare the last server DDL, not the editor body. A structured body is `SELECT …`
+    // while `object_ddl` returns `CREATE …`.
     if let (Some(prev), Some(kind)) = (draft.previous.as_deref(), draft.kind.catalog_kind())
-        && !draft.loaded.is_empty()
+        && !draft.server_ddl.is_empty()
     {
         let current = r.object_ddl(scope, kind, prev).await.unwrap_or_default();
-        if !current.is_empty() && current != draft.loaded {
+        if !current.is_empty() && current != draft.server_ddl {
             return Err(DbError::msg(
                 "The object changed outside this designer. Reload before saving.",
             ));
@@ -86,6 +88,7 @@ mod tests {
             body: String::new(),
             raw: false,
             loaded: String::new(),
+            server_ddl: String::new(),
             options: BTreeMap::new(),
         }
     }

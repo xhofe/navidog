@@ -51,6 +51,18 @@ impl Dialect for PostgresDialect {
     fn definition_family(&self) -> Option<navidog_sql::definition::DefinitionFamily> {
         Some(navidog_sql::definition::DefinitionFamily::Postgres)
     }
+    fn trigger_definitions_sql(&self, scope: &Scope, table: &str) -> Option<String> {
+        let schema = self.string_literal(scope.schema.as_deref().unwrap_or("public"));
+        let table = self.string_literal(table);
+        Some(format!(
+            "SELECT pg_get_triggerdef(t.oid, true) \
+             FROM pg_trigger t \
+             JOIN pg_class c ON c.oid = t.tgrelid \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = {schema} AND c.relname = {table} AND NOT t.tgisinternal \
+             ORDER BY t.tgname"
+        ))
+    }
     fn definition_statements(
         &self,
         scope: &Scope,

@@ -410,6 +410,11 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
         None
     }
 
+    /// One column: `CREATE TRIGGER` text for this table. `None` when the snapshot loads triggers another way.
+    fn trigger_definitions_sql(&self, _scope: &Scope, _table: &str) -> Option<String> {
+        None
+    }
+
     /// Preview SQL for a definition draft. Empty means nothing changed.
     fn definition_statements(
         &self,

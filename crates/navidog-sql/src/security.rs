@@ -340,7 +340,7 @@ pub fn kill_sql(family: Option<DefinitionFamily>, id: &str) -> Result<Option<Str
     }
     let sql = match family {
         DefinitionFamily::Mysql => format!("KILL {id}"),
-        DefinitionFamily::Postgres => format!("SELECT pg_terminate_backend({id})"),
+        DefinitionFamily::Postgres => format!("SELECT pg_cancel_backend({id})"),
         DefinitionFamily::Sqlite => return Ok(None),
     };
     Ok(Some(sql))
@@ -388,10 +388,10 @@ pub fn set_variable_sql(
     };
     let sql = match family {
         DefinitionFamily::Mysql => vec![format!("SET GLOBAL {name} = {literal}")],
-        DefinitionFamily::Postgres => vec![
-            format!("ALTER SYSTEM SET {name} = {literal}"),
-            "SELECT pg_reload_conf()".into(),
-        ],
+        // Spec 43 §5: PostgreSQL variables are read-only. `ALTER SYSTEM` writes the server config.
+        DefinitionFamily::Postgres => {
+            return Err("PostgreSQL variables are read-only.".into());
+        }
         DefinitionFamily::Sqlite => Vec::new(),
     };
     Ok(sql)
@@ -942,6 +942,9 @@ fn predicate(
     data: bool,
 ) -> Result<String, String> {
     if mode == MatchMode::Regex {
+        if family == DefinitionFamily::Sqlite {
+            return Err("This SQLite build has no REGEXP function.".into());
+        }
         // Lowercasing the pattern turns `\S` into `\s`. PostgreSQL has `~*`;
         // MySQL `REGEXP` follows the column collation.
         let literal = dialect.string_literal(needle);
@@ -949,7 +952,7 @@ fn predicate(
             (DefinitionFamily::Postgres, false) => format!("{column} ~* {literal}"),
             (DefinitionFamily::Postgres, true) => format!("{column} ~ {literal}"),
             (DefinitionFamily::Mysql, true) => {
-                format!("{column} COLLATE utf8mb4_bin REGEXP {literal}")
+                format!("CAST({column} AS BINARY) REGEXP {literal}")
             }
             (DefinitionFamily::Mysql, false) | (DefinitionFamily::Sqlite, _) => {
                 format!("{column} REGEXP {literal}")
@@ -1005,7 +1008,8 @@ fn like_cmp(
             format!("{column} LIKE {literal} ESCAPE {escape}")
         }
         (DefinitionFamily::Mysql, true) => {
-            format!("{column} LIKE {literal} COLLATE utf8mb4_bin ESCAPE {escape}")
+            // `COLLATE utf8mb4_bin` fails when the connection character set is latin1.
+            format!("{column} LIKE BINARY {literal} ESCAPE {escape}")
         }
         (DefinitionFamily::Sqlite, false) => format!("{column} LIKE {literal} ESCAPE {escape}"),
         (DefinitionFamily::Sqlite, true) => {

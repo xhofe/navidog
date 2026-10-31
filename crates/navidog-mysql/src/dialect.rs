@@ -44,6 +44,21 @@ impl Dialect for MysqlDialect {
     fn definition_family(&self) -> Option<navidog_sql::definition::DefinitionFamily> {
         Some(navidog_sql::definition::DefinitionFamily::Mysql)
     }
+    fn trigger_definitions_sql(&self, scope: &Scope, table: &str) -> Option<String> {
+        let database = self.string_literal(&scope.database);
+        let table = self.string_literal(table);
+        // Names are quoted in SQL so a backtick in the identifier cannot break the statement.
+        Some(format!(
+            "SELECT CONCAT( \
+                'CREATE TRIGGER `', REPLACE(TRIGGER_NAME, '`', '``'), '` ', \
+                ACTION_TIMING, ' ', EVENT_MANIPULATION, \
+                ' ON `', REPLACE(EVENT_OBJECT_TABLE, '`', '``'), '` FOR EACH ', \
+                ACTION_ORIENTATION, ' ', ACTION_STATEMENT) \
+             FROM information_schema.TRIGGERS \
+             WHERE EVENT_OBJECT_SCHEMA = {database} AND EVENT_OBJECT_TABLE = {table} \
+             ORDER BY TRIGGER_NAME, EVENT_MANIPULATION"
+        ))
+    }
     fn definition_statements(
         &self,
         scope: &navidog_model::object::Scope,

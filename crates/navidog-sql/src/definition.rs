@@ -151,6 +151,8 @@ pub struct DefinitionDraft {
     pub body: String,
     pub raw: bool,
     pub loaded: String,
+    /// Server DDL from the last load or save. The external-change guard compares this, not `body`.
+    pub server_ddl: String,
     pub options: BTreeMap<String, String>,
 }
 
@@ -163,6 +165,7 @@ impl DefinitionDraft {
             body: String::new(),
             raw: false,
             loaded: String::new(),
+            server_ddl: String::new(),
             options: BTreeMap::new(),
         }
     }

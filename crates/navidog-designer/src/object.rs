@@ -56,6 +56,8 @@ struct Saved {
     #[serde(default)]
     loaded: String,
     #[serde(default)]
+    server_ddl: String,
+    #[serde(default)]
     options: BTreeMap<String, String>,
 }
 
@@ -73,6 +75,7 @@ pub struct ObjectDesigner {
     previous: Option<String>,
     raw: bool,
     loaded: String,
+    server_ddl: String,
     page: Page,
     preview: Option<Vec<String>>,
     error: Option<String>,
@@ -115,6 +118,7 @@ impl ObjectDesigner {
             previous: name,
             raw: false,
             loaded: String::new(),
+            server_ddl: String::new(),
             options: BTreeMap::new(),
         };
         let entity = Self::restore(saved, dialect, window, cx);
@@ -166,6 +170,7 @@ impl ObjectDesigner {
                 previous: saved.previous,
                 raw: saved.raw,
                 loaded: saved.loaded,
+                server_ddl: saved.server_ddl,
                 page: Page::Definition,
                 preview: None,
                 error: None,
@@ -183,6 +188,7 @@ impl ObjectDesigner {
         draft.previous = self.previous.clone();
         draft.raw = self.raw;
         draft.loaded = self.loaded.clone();
+        draft.server_ddl = self.server_ddl.clone();
         if !self.raw {
             for (key, input) in &self.options {
                 let value = input.read(cx).value().trim().to_string();
@@ -267,9 +273,10 @@ impl ObjectDesigner {
                 match result {
                     Ok(()) => {
                         this.previous = Some(this.name.read(cx).value().trim().to_string());
-                        // The editor still holds the body, not server DDL. Stay structured so
-                        // the next save plans CREATE OR REPLACE / DROP + CREATE.
+                        // Dirty compares the editor body with `loaded`. The guard compares
+                        // `server_ddl`, which is filled once the server reads the object back.
                         this.loaded = this.body.read(cx).value().to_string();
+                        this.server_ddl.clear();
                         this.preview = None;
                         this.error = None;
                         window.push_notification(t!("designer.saved").to_string(), cx);
@@ -279,6 +286,7 @@ impl ObjectDesigner {
                             }),
                             cx,
                         );
+                        this.fetch_ddl(false, window, cx);
                     }
                     Err(error) => this.error = Some(error.to_string()),
                 }
@@ -289,6 +297,11 @@ impl ObjectDesigner {
     }
 
     fn load(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.fetch_ddl(true, window, cx);
+    }
+
+    /// `replace_body` loads an existing object into the editor. Otherwise only `server_ddl` is updated.
+    fn fetch_ddl(&mut self, replace_body: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(name) = self.previous.clone() else {
             return;
         };
@@ -326,9 +339,12 @@ impl ObjectDesigner {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 if let Ok(ddl) = result {
-                    this.loaded = ddl.clone();
-                    this.raw = true;
-                    this.body.update(cx, |s, cx| s.set_value(ddl, window, cx));
+                    this.server_ddl = ddl.clone();
+                    if replace_body {
+                        this.loaded = ddl.clone();
+                        this.raw = true;
+                        this.body.update(cx, |s, cx| s.set_value(ddl, window, cx));
+                    }
                 }
                 cx.notify();
             });
@@ -496,6 +512,7 @@ impl BasePanel for ObjectDesigner {
             previous: self.previous.clone(),
             raw: self.raw,
             loaded: self.loaded.clone(),
+            server_ddl: self.server_ddl.clone(),
             options: self
                 .options
                 .iter()
@@ -534,8 +551,9 @@ impl BasePanel for ObjectDesigner {
     }
     fn on_removed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if tabs::removed(PanelId::from(cx.entity_id()), cx) {
-            self.close_approved = true;
+            return;
         }
+        self.task.take();
     }
 }
 

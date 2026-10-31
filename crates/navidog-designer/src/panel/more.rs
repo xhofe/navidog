@@ -19,21 +19,33 @@ impl TableDesigner {
             .gap_2()
             .overflow_y_scroll()
             .children(self.more_rows(cx))
-            .child(self.more_field(
-                name_key,
-                Input::new(&self.more_name).id("designer-more-name"),
-                disabled,
-            ))
-            .child(self.more_field(
-                detail_key,
-                Input::new(&self.more_detail).id("designer-more-detail"),
-                disabled,
-            ))
-            .child(self.more_field(
-                extra_key,
-                Input::new(&self.more_extra).id("designer-more-extra"),
-                disabled,
-            ))
+            .child(
+                self.more_field(
+                    name_key,
+                    Input::new(&self.more_name)
+                        .id("designer-more-name")
+                        .disabled(disabled),
+                    disabled,
+                ),
+            )
+            .child(
+                self.more_field(
+                    detail_key,
+                    Input::new(&self.more_detail)
+                        .id("designer-more-detail")
+                        .disabled(disabled),
+                    disabled,
+                ),
+            )
+            .child(
+                self.more_field(
+                    extra_key,
+                    Input::new(&self.more_extra)
+                        .id("designer-more-extra")
+                        .disabled(disabled),
+                    disabled,
+                ),
+            )
             .child(
                 gpui_kit::div()
                     .text_color(p.label_secondary)
@@ -194,12 +206,8 @@ impl TableDesigner {
             return Err(DbError::msg("A partition needs a method and a key."));
         }
         if self.dialect.features().inline_table_options {
-            let tail = if bounds.trim().is_empty() {
-                String::new()
-            } else {
-                format!(" {}", bounds.trim())
-            };
-            self.draft.partition = format!("PARTITION BY {method}({key}){tail}");
+            self.draft.partition =
+                mysql_partition(method, key, name, bounds, self.dialect.as_ref());
             return Ok(());
         }
         if !self.draft.partition.is_empty()
@@ -267,5 +275,49 @@ impl TableDesigner {
         }
         self.preview = None;
         cx.notify();
+    }
+}
+
+fn mysql_partition(
+    method: &str,
+    key: &str,
+    name: &str,
+    bounds: &str,
+    dialect: &dyn Dialect,
+) -> String {
+    let bounds = bounds.trim();
+    let name = name.trim();
+    let tail = if name.is_empty() {
+        if bounds.is_empty() {
+            String::new()
+        } else {
+            format!(" {bounds}")
+        }
+    } else {
+        let values = if bounds.is_empty() {
+            String::new()
+        } else {
+            format!(" {bounds}")
+        };
+        format!(" (PARTITION {}{values})", dialect.quote_ident(name))
+    };
+    format!("PARTITION BY {method}({key}){tail}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mysql_partition;
+
+    #[test]
+    fn mysql_partition_keeps_the_partition_name() {
+        let dialect = navidog_postgres::PostgresDialect;
+        assert_eq!(
+            mysql_partition("RANGE", "id", "p0", "VALUES LESS THAN (10)", &dialect),
+            "PARTITION BY RANGE(id) (PARTITION \"p0\" VALUES LESS THAN (10))"
+        );
+        assert_eq!(
+            mysql_partition("HASH", "id", "", "PARTITIONS 4", &dialect),
+            "PARTITION BY HASH(id) PARTITIONS 4"
+        );
     }
 }

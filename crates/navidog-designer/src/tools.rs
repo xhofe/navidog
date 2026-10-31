@@ -65,6 +65,13 @@ impl Tool {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MonitorPage {
+    Processes,
+    Variables,
+    Status,
+}
+
 #[derive(Serialize, Deserialize)]
 struct Saved {
     scope: Scope,
@@ -106,6 +113,7 @@ pub struct ToolPanel {
     grantee: Entity<InputState>,
     grant_option: bool,
     auto: bool,
+    monitor: MonitorPage,
     interval: Entity<InputState>,
     kill_id: Entity<InputState>,
     var_name: Entity<InputState>,
@@ -140,8 +148,12 @@ impl ToolPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut input = |value: &str, cx: &mut Context<Self>| {
-            cx.new(|cx| InputState::new(window, cx).default_value(value))
+        let mut input = |value: &str, masked: bool, cx: &mut Context<Self>| {
+            cx.new(|cx| {
+                InputState::new(window, cx)
+                    .default_value(value)
+                    .masked(masked)
+            })
         };
         let kinds = dialect
             .object_kinds()
@@ -161,9 +173,10 @@ impl ToolPanel {
             error: None,
             output: String::new(),
             preview: Vec::new(),
-            name: input("", cx),
-            host: input("%", cx),
-            password: input("", cx),
+            name: input("", false, cx),
+            host: input("%", false, cx),
+            password: input("", true, cx),
+            monitor: MonitorPage::Processes,
             role: false,
             locked: false,
             login: true,
@@ -172,23 +185,23 @@ impl ToolPanel {
             createrole: false,
             inherit: true,
             replication: false,
-            expire: input("", cx),
-            max_queries: input("", cx),
-            max_updates: input("", cx),
-            max_connections: input("", cx),
-            max_user_connections: input("", cx),
-            connection_limit: input("", cx),
-            valid_until: input("", cx),
-            privilege: input("SELECT", cx),
-            object_name: input("", cx),
-            grantee: input("", cx),
+            expire: input("", false, cx),
+            max_queries: input("", false, cx),
+            max_updates: input("", false, cx),
+            max_connections: input("", false, cx),
+            max_user_connections: input("", false, cx),
+            connection_limit: input("", false, cx),
+            valid_until: input("", false, cx),
+            privilege: input("SELECT", false, cx),
+            object_name: input("", false, cx),
+            grantee: input("", false, cx),
             grant_option: false,
             auto: false,
-            interval: input("5", cx),
-            kill_id: input("", cx),
-            var_name: input("", cx),
-            var_value: input("", cx),
-            needle: input("", cx),
+            interval: input("5", false, cx),
+            kill_id: input("", false, cx),
+            var_name: input("", false, cx),
+            var_value: input("", false, cx),
+            needle: input("", false, cx),
             mode: MatchMode::Contains,
             case_sensitive: false,
             search_data: false,
@@ -395,13 +408,22 @@ impl ToolPanel {
         );
     }
 
-    fn load_monitor(&mut self, sql: Option<&str>, cx: &mut Context<Self>) {
-        let Some(sql) = sql else {
+    fn load_monitor(&mut self, page: MonitorPage, cx: &mut Context<Self>) {
+        let Some(sql) = self.monitor_sql(page) else {
             self.error = Some(t!("designer.tool_no_monitor").to_string());
             cx.notify();
             return;
         };
-        self.run(vec![sql.into()], true, cx);
+        self.monitor = page;
+        self.run(vec![sql], true, cx);
+    }
+
+    fn monitor_sql(&self, page: MonitorPage) -> Option<String> {
+        match page {
+            MonitorPage::Processes => self.dialect.process_sql().map(str::to_string),
+            MonitorPage::Variables => self.dialect.variables_sql().map(str::to_string),
+            MonitorPage::Status => self.dialect.status_sql().map(str::to_string),
+        }
     }
 
     fn kill(&mut self, cx: &mut Context<Self>) {
@@ -458,8 +480,8 @@ impl ToolPanel {
                         if !this.auto {
                             return false;
                         }
-                        if let Some(sql) = this.dialect.process_sql() {
-                            this.run(vec![sql.into()], true, cx);
+                        if let Some(sql) = this.monitor_sql(this.monitor) {
+                            this.run(vec![sql], true, cx);
                         }
                         true
                     })
@@ -695,12 +717,13 @@ impl BasePanel for ToolPanel {
         tabs::set_active(PanelId::from(cx.entity_id()), active, cx);
     }
     fn on_removed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        // Moving the tab to another window reports removed as well. Keep the refresh running.
+        if tabs::removed(PanelId::from(cx.entity_id()), cx) {
+            return;
+        }
         self.auto = false;
         self.watch.take();
         self.task.take();
-        if tabs::removed(PanelId::from(cx.entity_id()), cx) {
-            self.close_approved = true;
-        }
     }
 }
 
@@ -821,6 +844,7 @@ impl ToolPanel {
                 Input::new(&self.password)
                     .id("tool-password")
                     .small()
+                    .mask_toggle()
                     .disabled(disabled),
             ))
             .when(mysql, |col| {
@@ -1054,6 +1078,8 @@ impl ToolPanel {
                 .child(t!("designer.tool_no_monitor").to_string())
                 .into_any_element();
         }
+        let writable = self.dialect.definition_family()
+            == Some(navidog_sql::definition::DefinitionFamily::Mysql);
         v_flex()
             .id("tool-monitor")
             .p_3()
@@ -1066,9 +1092,9 @@ impl ToolPanel {
                             .small()
                             .label(t!("designer.tool_processes").to_string())
                             .disabled(disabled)
+                            .when(self.monitor == MonitorPage::Processes, |b| b.selected(true))
                             .on_click(cx.listener(|this, _, _, cx| {
-                                let sql = this.dialect.process_sql();
-                                this.load_monitor(sql, cx);
+                                this.load_monitor(MonitorPage::Processes, cx);
                             })),
                     )
                     .child(
@@ -1076,9 +1102,9 @@ impl ToolPanel {
                             .small()
                             .label(t!("designer.tool_variables").to_string())
                             .disabled(disabled)
+                            .when(self.monitor == MonitorPage::Variables, |b| b.selected(true))
                             .on_click(cx.listener(|this, _, _, cx| {
-                                let sql = this.dialect.variables_sql();
-                                this.load_monitor(sql, cx);
+                                this.load_monitor(MonitorPage::Variables, cx);
                             })),
                     )
                     .child(
@@ -1086,9 +1112,9 @@ impl ToolPanel {
                             .small()
                             .label(t!("designer.tool_status").to_string())
                             .disabled(disabled)
+                            .when(self.monitor == MonitorPage::Status, |b| b.selected(true))
                             .on_click(cx.listener(|this, _, _, cx| {
-                                let sql = this.dialect.status_sql();
-                                this.load_monitor(sql, cx);
+                                this.load_monitor(MonitorPage::Status, cx);
                             })),
                     ),
             )
@@ -1120,27 +1146,29 @@ impl ToolPanel {
                     .disabled(disabled)
                     .on_click(cx.listener(|this, _, _, cx| this.kill(cx))),
             )
-            .child(FormRow::new(
-                t!("designer.tool_variable").to_string(),
-                Input::new(&self.var_name)
-                    .id("tool-var-name")
-                    .small()
-                    .disabled(disabled),
-            ))
-            .child(FormRow::new(
-                t!("designer.tool_value").to_string(),
-                Input::new(&self.var_value)
-                    .id("tool-var-value")
-                    .small()
-                    .disabled(disabled),
-            ))
-            .child(
-                Button::new("tool-set-var")
-                    .small()
-                    .label(t!("designer.tool_set").to_string())
-                    .disabled(disabled)
-                    .on_click(cx.listener(|this, _, _, cx| this.set_variable(cx))),
-            )
+            .when(writable, |page| {
+                page.child(FormRow::new(
+                    t!("designer.tool_variable").to_string(),
+                    Input::new(&self.var_name)
+                        .id("tool-var-name")
+                        .small()
+                        .disabled(disabled),
+                ))
+                .child(FormRow::new(
+                    t!("designer.tool_value").to_string(),
+                    Input::new(&self.var_value)
+                        .id("tool-var-value")
+                        .small()
+                        .disabled(disabled),
+                ))
+                .child(
+                    Button::new("tool-set-var")
+                        .small()
+                        .label(t!("designer.tool_set").to_string())
+                        .disabled(disabled)
+                        .on_click(cx.listener(|this, _, _, cx| this.set_variable(cx))),
+                )
+            })
             .into_any_element()
     }
 

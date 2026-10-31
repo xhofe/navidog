@@ -331,6 +331,19 @@ pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult
             }
         }
         design.triggers = Some(triggers.clone());
+    } else if let Some(sql) = dialect.trigger_definitions_sql(scope, name) {
+        for set in r.execute(&sql).await? {
+            for row in set.rows {
+                if let Some(value) = row
+                    .first()
+                    .and_then(|value| value.clone())
+                    .filter(|v| !v.is_empty())
+                {
+                    triggers.push(value);
+                }
+            }
+        }
+        design.triggers = Some(triggers.clone());
     }
     Ok(TableSnapshot {
         design,

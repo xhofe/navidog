@@ -133,12 +133,18 @@ mod tests {
 
         assert!(mysql.process_sql().unwrap().contains("PROCESSLIST"));
         assert!(mysql.kill_sql("12").unwrap().unwrap().contains("KILL 12"));
+        assert!(
+            postgres
+                .kill_sql("12")
+                .unwrap()
+                .unwrap()
+                .contains("pg_cancel_backend")
+        );
         assert!(mysql.kill_sql("nope").is_err());
         let set =
             security::set_variable_sql(&postgres, postgres.definition_family(), "work_mem", "4MB")
-                .unwrap();
-        assert!(set[0].contains("ALTER SYSTEM SET work_mem"));
-        assert_eq!(set[1], "SELECT pg_reload_conf()");
+                .unwrap_err();
+        assert!(set.contains("read-only"), "{set}");
         assert!(
             security::set_variable_sql(&sqlite, sqlite.definition_family(), "work_mem", "4MB")
                 .unwrap()
@@ -180,6 +186,42 @@ mod tests {
         .unwrap();
         assert!(glob.structure[0].contains("GLOB"), "{}", glob.structure[0]);
         assert!(glob.structure[0].contains("*A_b*"), "{}", glob.structure[0]);
+        let sensitive = security::find_plan(
+            &mysql,
+            mysql.definition_family(),
+            &scope(),
+            FindRequest {
+                needle: "Film",
+                mode: MatchMode::Contains,
+                case_sensitive: true,
+                kinds: &[ObjectKind::Table],
+                data: false,
+            },
+        )
+        .unwrap();
+        assert!(
+            sensitive.structure[0].contains("LIKE BINARY"),
+            "{}",
+            sensitive.structure[0]
+        );
+        assert!(
+            !sensitive.structure[0].contains("utf8mb4_bin"),
+            "{}",
+            sensitive.structure[0]
+        );
+        let sqlite_regex = security::find_plan(
+            &sqlite,
+            sqlite.definition_family(),
+            &scope(),
+            FindRequest {
+                needle: "a+",
+                mode: MatchMode::Regex,
+                case_sensitive: true,
+                kinds: &[ObjectKind::Table],
+                data: false,
+            },
+        );
+        assert!(sqlite_regex.unwrap_err().contains("REGEXP"));
         let regex = security::find_plan(
             &postgres,
             postgres.definition_family(),

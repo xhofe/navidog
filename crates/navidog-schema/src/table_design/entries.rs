@@ -88,9 +88,13 @@ impl DesignEntry {
                 {
                     return Err(DbError::msg("Invalid index method."));
                 }
-                let mut sql = format!("{name}EXCLUDE USING {method} ({})", self.fields.trim());
-                if !self.expression.trim().is_empty() {
-                    sql.push_str(&format!(" WHERE ({})", self.expression.trim()));
+                // The constraints editor stores one constraint per line. A break
+                // inside the element list would be read back as another constraint.
+                let fields = navidog_sql::completion::one_line(self.fields.trim());
+                let expression = navidog_sql::completion::one_line(self.expression.trim());
+                let mut sql = format!("{name}EXCLUDE USING {method} ({fields})");
+                if !expression.is_empty() {
+                    sql.push_str(&format!(" WHERE ({expression})"));
                 }
                 sql
             }
@@ -411,5 +415,14 @@ mod tests {
             )
             .is_none()
         );
+        let mut exclusion = DesignEntry::new(EntryKind::Exclude);
+        exclusion.fields = "id WITH =\n, name WITH =".into();
+        exclusion.expression = "id > 0\nAND name <> ''".into();
+        let sql = exclusion
+            .sql(&navidog_sqlite::SqliteDialect, &scope, "t", false)
+            .unwrap();
+        assert!(!sql.contains('\n'), "{sql}");
+        assert!(sql.contains("id WITH = , name WITH ="), "{sql}");
+        assert!(sql.contains("WHERE (id > 0 AND name <> '')"), "{sql}");
     }
 }
