@@ -135,14 +135,18 @@ fn sqlite_rebuild_renames_the_old_table_and_leaves_it() {
 }
 
 #[test]
-fn sqlite_rename_with_a_trigger_edit_rebuilds() {
+fn sqlite_rename_with_a_trigger_edit_keeps_the_other_trigger() {
     let dialect = navidog_sqlite::SqliteDialect;
     let sql = "CREATE TABLE \"t\" (\"id\" INTEGER NOT NULL, \"name\" TEXT, PRIMARY KEY (\"id\"))";
     let design = super::parse::create(sql, "t", &dialect).unwrap();
+    let watch = "CREATE TRIGGER watch AFTER UPDATE OF name ON t BEGIN SELECT 1; END";
     let before = TableSnapshot {
         design: design.clone(),
         ddl: sql.into(),
-        triggers: vec!["CREATE TRIGGER audit AFTER INSERT ON t BEGIN SELECT 1; END".into()],
+        triggers: vec![
+            watch.into(),
+            "CREATE TRIGGER audit AFTER INSERT ON t BEGIN SELECT 1; END".into(),
+        ],
     };
     let mut renamed = design;
     renamed.columns[1].name = "title".into();
@@ -158,18 +162,107 @@ fn sqlite_rename_with_a_trigger_edit_rebuilds() {
     );
     let mut edited = renamed;
     edited.triggers = Some(vec![
+        watch.into(),
         "CREATE TRIGGER audit AFTER INSERT ON t BEGIN SELECT 2; END".into(),
     ]);
     let statements =
         super::plan::plan_on(&dialect, &scope(), Some(&before), &edited, &[], "20261024").unwrap();
     assert!(
-        statements.iter().any(|sql| sql.contains("Rebuilding")),
+        statements.iter().all(|sql| !sql.contains("Rebuilding")),
         "{statements:?}"
     );
     assert!(
-        statements.iter().any(|sql| sql.contains("SELECT 2")),
+        statements.iter().all(|sql| !sql.contains("watch")),
         "{statements:?}"
     );
+    let created = statements
+        .iter()
+        .position(|sql| sql.contains("SELECT 2"))
+        .expect("changed trigger");
+    let renamed_at = statements
+        .iter()
+        .position(|sql| sql.contains("RENAME COLUMN"))
+        .expect("rename");
+    assert!(created < renamed_at, "{statements:?}");
+}
+
+#[test]
+fn sqlite_rename_and_trigger_edit_keeps_update_of_and_the_view() {
+    navidog_db::runtime::runtime().block_on(async {
+        let mut session = navidog_db::connect(
+            Arc::new(navidog_sqlite::SqliteDriver::default()),
+            navidog_db::ConnectParams {
+                file: Some(":memory:".into()),
+                create_new: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let r = session.relational().unwrap();
+        let scope = Scope::new("test", "main", None);
+        r.execute(
+            "PRAGMA foreign_keys=ON; \
+             CREATE TABLE p(id INTEGER PRIMARY KEY); INSERT INTO p VALUES (1); \
+             CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT, parent INTEGER REFERENCES p(id)); \
+             INSERT INTO t VALUES (1, 'a', 1); \
+             CREATE TABLE log(msg TEXT); \
+             CREATE TRIGGER watch AFTER UPDATE OF name ON t BEGIN INSERT INTO log VALUES ('watch'); END; \
+             CREATE TRIGGER other AFTER UPDATE ON t BEGIN INSERT INTO log VALUES (NEW.name); END; \
+             CREATE VIEW visible AS SELECT name FROM t",
+        )
+        .await
+        .unwrap();
+        let old = load(r, &scope, "t").await.unwrap();
+        let mut draft = old.design.clone();
+        draft
+            .columns
+            .iter_mut()
+            .find(|c| c.name == "name")
+            .unwrap()
+            .name = "title".into();
+        let triggers = draft.triggers.as_mut().unwrap();
+        let other = triggers.iter_mut().find(|sql| sql.contains("other")).unwrap();
+        *other = other.replace("NEW.name", "'x' || NEW.name");
+        apply(r, &scope, Some(&old), &draft).await.unwrap();
+        r.execute("UPDATE t SET title = 'b' WHERE id = 1")
+            .await
+            .unwrap();
+        let logged: Vec<_> = r
+            .execute("SELECT msg FROM log ORDER BY msg")
+            .await
+            .unwrap()
+            .into_iter()
+            .flat_map(|set| set.rows)
+            .filter_map(|row| row.into_iter().next().flatten())
+            .collect();
+        assert_eq!(logged, vec!["watch".to_string(), "xb".to_string()], "{logged:?}");
+        let view = r
+            .execute("SELECT sql FROM sqlite_schema WHERE name = 'visible'")
+            .await
+            .unwrap()[0]
+            .rows[0][0]
+            .clone()
+            .unwrap();
+        assert!(view.contains("title"), "{view}");
+        assert!(!view.contains("name"), "{view}");
+        let backups = r
+            .execute("SELECT name FROM sqlite_schema WHERE type = 'table'")
+            .await
+            .unwrap();
+        assert!(
+            backups[0].rows.iter().all(|row| {
+                !row[0]
+                    .as_deref()
+                    .is_some_and(|name| name.starts_with("_t_old"))
+            }),
+            "{:?}",
+            backups[0].rows
+        );
+        r.execute("DELETE FROM t").await.unwrap();
+        r.execute("DELETE FROM p").await.unwrap();
+        session.close().await.unwrap();
+    });
 }
 
 #[test]

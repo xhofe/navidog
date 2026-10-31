@@ -686,3 +686,11 @@ SELECT ... FROM pg_inherits i ... WHERE i.inhrelid = c.oid
 | 第 7.5 节把已有账号编辑写成已在 `05a1f78` 处理，和第 7.2 节矛盾 | 已从已处理列表去掉。已有账号编辑仍未做 |
 | 只改列名时如果同时改了触发器，快路径会丢掉触发器修改 | 快路径要求解析后的触发器列表不变，否则走整表重建。`sqlite_rename_with_a_trigger_edit_rebuilds` |
 | 信息窗格的成员页要从导航器选中用户或角色 | 未做。导航器还没有用户和角色对象，与第 7.2 节一致 |
+
+### 7.7 `272f73b` 之后的评论
+
+| 评论 | 处理 |
+| --- | --- |
+| 列重命名同时改了别的触发器时，重建会用旧列名重建没改过的触发器，`UPDATE OF` 不再触发，视图也留着旧列名 | 这种编辑不再整表重建。先替换文本变了的触发器，再 `RENAME COLUMN`，让 SQLite 改写没改过的触发器、新触发器正文、视图和外键。`sqlite_rename_with_a_trigger_edit_keeps_the_other_trigger`、`sqlite_rename_and_trigger_edit_keeps_update_of_and_the_view`。第 7.6 节里的 `sqlite_rename_with_a_trigger_edit_rebuilds` 已改成前一个测试 |
+| 这条重建会留下带外键的备份表，删光子行后仍删不掉父行 | 同一条路径不再产生备份表。加列这类本来就要重建的保存仍会留下备份表，这是原有行为 |
+| 对象已被外部删除时，空的 `object_ddl` 会跳过冲突检查，保存把对象建回来 | 当前定义和打开时读到的定义不一致就拒绝，空字符串也算。`a_deleted_object_is_not_recreated` |

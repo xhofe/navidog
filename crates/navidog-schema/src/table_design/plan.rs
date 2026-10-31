@@ -850,9 +850,11 @@ fn sqlite(
     let old = &before.design;
     let old_without = table_option(&old.options, "without_rowid", d)? == "true";
     let new_without = table_option(&after.options, "without_rowid", d)? == "true";
-    // Renaming fields also requires rewriting dependent constraint/index/trigger SQL. A
-    // rename by itself uses SQLite's own rewrite. Combined edits rebuild and copy by the
-    // original name, without guessing at identifiers inside expressions.
+    // Renaming fields also requires rewriting dependent constraint/index/trigger SQL.
+    // A rename by itself uses SQLite's own rewrite. Replacing changed triggers first,
+    // while the old names still exist, lets that same rewrite update the new bodies.
+    // Rebuilding instead would keep a backup whose foreign keys still bind live
+    // parents, and would recreate untouched triggers with the old column names.
     let renamed = after
         .columns
         .iter()
@@ -862,24 +864,29 @@ fn sqlite(
             && old.constraints == after.constraints
             && old.indexes == after.indexes
             && old.options == after.options
-            && resolved_triggers(old, Some(before)) == resolved_triggers(after, Some(before))
             && old.columns.iter().zip(&after.columns).all(|(old, new)| {
                 new.original.as_ref() == Some(&old.name) && old.definition == new.definition
             });
         if rename_only {
-            return Ok(after
-                .columns
-                .iter()
-                .filter(|c| c.original.as_ref().is_some_and(|old| old != &c.name))
-                .map(|c| {
+            let mut out = trigger_diff(
+                d,
+                scope,
+                &old.name,
+                &resolved_triggers(old, Some(before)),
+                &resolved_triggers(after, Some(before)),
+            )?;
+            out.extend(after.columns.iter().filter_map(|c| {
+                let previous = c.original.as_ref()?;
+                (previous != &c.name).then(|| {
                     format!(
                         "ALTER TABLE {} RENAME COLUMN {} TO {}",
                         d.qualified(scope, &old.name),
-                        d.quote_ident(c.original.as_ref().unwrap()),
+                        d.quote_ident(previous),
                         d.quote_ident(&c.name)
                     )
                 })
-                .collect());
+            }));
+            return Ok(out);
         }
     }
     let backup = backup_name(&after.name, day, occupied)?;

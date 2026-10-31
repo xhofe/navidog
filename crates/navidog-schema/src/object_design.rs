@@ -28,7 +28,9 @@ pub async fn apply(r: &mut dyn Relational, scope: &Scope, draft: &DefinitionDraf
         // A failed read is not "the object is gone". Treating it as empty skipped the
         // check and let the save overwrite a change the read could not see.
         let current = r.object_ddl(scope, kind, prev).await?;
-        if !current.is_empty() && current != draft.server_ddl {
+        // Empty means the loaded object is gone. PostgreSQL returns an empty
+        // string for a dropped function; recreating it would undo that drop.
+        if current != draft.server_ddl {
             return Err(DbError::msg(
                 "The object changed outside this designer. Reload before saving.",
             ));
@@ -346,6 +348,94 @@ mod tests {
             error
                 .to_string()
                 .contains("does not read object definitions"),
+            "{error}"
+        );
+        assert!(rel.log.is_empty(), "{:?}", rel.log);
+    }
+
+    #[test]
+    fn a_deleted_object_is_not_recreated() {
+        struct Gone {
+            log: Vec<String>,
+        }
+        impl Relational for Gone {
+            fn dialect(&self) -> std::sync::Arc<dyn Dialect> {
+                std::sync::Arc::new(navidog_sqlite::SqliteDialect)
+            }
+            fn execute<'a>(
+                &'a mut self,
+                sql: &'a str,
+            ) -> navidog_db::BoxFuture<'a, DbResult<Vec<navidog_db::ResultSet>>> {
+                self.log.push(sql.to_string());
+                Box::pin(async {
+                    Ok(vec![navidog_db::ResultSet {
+                        affected_rows: Some(1),
+                        ..Default::default()
+                    }])
+                })
+            }
+            fn list_databases(&mut self) -> navidog_db::BoxFuture<'_, DbResult<Vec<String>>> {
+                Box::pin(async { Ok(Vec::new()) })
+            }
+            fn list_schemas(&mut self) -> navidog_db::BoxFuture<'_, DbResult<Vec<String>>> {
+                Box::pin(async { Ok(Vec::new()) })
+            }
+            fn list_objects<'a>(
+                &'a mut self,
+                _: &'a Scope,
+                _: navidog_model::object::ObjectKind,
+            ) -> navidog_db::BoxFuture<'a, DbResult<Vec<navidog_db::ObjectInfo>>> {
+                Box::pin(async { Ok(Vec::new()) })
+            }
+            fn object_ddl<'a>(
+                &'a mut self,
+                _: &'a Scope,
+                _: navidog_model::object::ObjectKind,
+                _: &'a str,
+            ) -> navidog_db::BoxFuture<'a, DbResult<String>> {
+                Box::pin(async { Ok(String::new()) })
+            }
+            fn table_columns<'a>(
+                &'a mut self,
+                _: &'a Scope,
+                _: &'a str,
+            ) -> navidog_db::BoxFuture<'a, DbResult<Vec<navidog_db::ColumnInfo>>> {
+                Box::pin(async { Ok(Vec::new()) })
+            }
+            fn table_children<'a>(
+                &'a mut self,
+                _: &'a Scope,
+                _: &'a str,
+            ) -> navidog_db::BoxFuture<'a, DbResult<navidog_db::TableChildren>> {
+                Box::pin(async { Ok(navidog_db::TableChildren::default()) })
+            }
+            fn foreign_keys<'a>(
+                &'a mut self,
+                _: &'a Scope,
+                _: &'a str,
+            ) -> navidog_db::BoxFuture<'a, DbResult<Vec<navidog_db::ForeignKey>>> {
+                Box::pin(async { Ok(Vec::new()) })
+            }
+            fn outline<'a>(
+                &'a mut self,
+                _: &'a Scope,
+                _: bool,
+            ) -> navidog_db::BoxFuture<'a, DbResult<navidog_db::outline::Outline>> {
+                Box::pin(async { Ok(navidog_db::outline::Outline::default()) })
+            }
+        }
+
+        let mut view = draft(DefinitionKind::View, "v");
+        view.previous = Some("v".into());
+        view.raw = true;
+        view.server_ddl = "CREATE VIEW v AS SELECT 1".into();
+        view.body = "CREATE VIEW v AS SELECT 2".into();
+        let mut rel = Gone { log: Vec::new() };
+        let error = navidog_db::runtime::runtime()
+            .block_on(apply(&mut rel, &Scope::new("c", "main", None), &view))
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("changed outside this designer"),
             "{error}"
         );
         assert!(rel.log.is_empty(), "{:?}", rel.log);
