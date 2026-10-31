@@ -50,7 +50,7 @@ MySQL 写在 `CREATE` / `ALTER TABLE … PARTITION BY` 子句里。PostgreSQL �
 - [ ] 排除约束可添加、修改、删除，PostgreSQL 实库往返。
 - [ ] 三种库的触发器可添加和替换，失败回滚或保留草稿。
 - [ ] MySQL 与 PostgreSQL 的分区方式和列表可预览并执行；改方式被拒绝。
-- [ ] PostgreSQL 列重排在事务内完成，有依赖时整笔失败。
-- [ ] identity 可添加、删除和切换模式；改序列选项被拒绝。
-- [ ] SQLite 生成列、`WITHOUT ROWID` 和合并重命名保留数据，预览写明重建。
-- [ ] 未知选项、依赖字段、附加库重建仍被拒绝。
+- [x] PostgreSQL 列重排在事务内完成，有依赖时整笔失败。
+- [x] identity 可添加、删除和切换模式；改序列选项被拒绝。
+- [x] SQLite 生成列、`WITHOUT ROWID` 和合并重命名保留数据，预览写明重建。
+- [x] 未知选项、依赖字段、附加库重建仍被拒绝。

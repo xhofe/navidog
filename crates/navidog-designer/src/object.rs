@@ -193,7 +193,9 @@ impl ObjectDesigner {
     fn dirty(&self, cx: &App) -> bool {
         let name = self.name.read(cx).value().trim().to_string();
         let body = self.body.read(cx).value();
-        if self.raw {
+        // An existing object keeps its loaded name. It is dirty only after the name or the
+        // definition changes, including the moment before the server DDL arrives.
+        if self.raw || self.previous.is_some() {
             return body.trim() != self.loaded.trim()
                 || name != self.previous.clone().unwrap_or_default();
         }
