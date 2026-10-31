@@ -9,26 +9,163 @@
 # the cancelled run does not call this script, so it cannot overwrite the new
 # comment.
 #
+# building and failure keep the last successful build. success records it on
+# the second line as a hidden marker; later updates copy that line and show
+# the fields again. A comment written before the marker existed is scraped
+# once from its Run / Commit / Artifact / CLI / SHA-256 lines.
+#
 # Requires GH_TOKEN, GITHUB_REPOSITORY, PR_NUMBER, RUN_URL, RUN_ID, and
 # HEAD_SHA. success also requires ARTIFACT and SHA256.
 set -euo pipefail
 
 marker="<!-- navidog-preview -->"
+# ponytail: values are space-separated and unescaped. Run URLs, ids, SHAs, and
+# the artifact name have no spaces; if a field ever can, switch this to JSON.
+success_prefix="<!-- navidog-preview-success "
+
+PREV_RUN_URL=""
+PREV_RUN_ID=""
+PREV_HEAD_SHA=""
+PREV_ARTIFACT=""
+PREV_SHA256=""
+
+clear_previous() {
+  PREV_RUN_URL=""
+  PREV_RUN_ID=""
+  PREV_HEAD_SHA=""
+  PREV_ARTIFACT=""
+  PREV_SHA256=""
+}
+
+have_previous() {
+  [ -n "$PREV_RUN_URL" ] &&
+    [ -n "$PREV_RUN_ID" ] &&
+    [ -n "$PREV_HEAD_SHA" ] &&
+    [ -n "$PREV_ARTIFACT" ] &&
+    [ -n "$PREV_SHA256" ]
+}
+
+# Line 1 stays the comment marker. Line 2 is the hidden success record.
+comment_header() {
+  if [ -n "${1:-}" ]; then
+    printf '%s\n%srun_url=%s run_id=%s head_sha=%s artifact=%s sha256=%s -->' \
+      "$marker" "$success_prefix" "$1" "$2" "$3" "$4" "$5"
+  else
+    printf '%s' "$marker"
+  fi
+}
+
+comment_header_for_previous() {
+  if have_previous; then
+    comment_header "$PREV_RUN_URL" "$PREV_RUN_ID" "$PREV_HEAD_SHA" \
+      "$PREV_ARTIFACT" "$PREV_SHA256"
+  else
+    comment_header
+  fi
+}
+
+commit_link() {
+  local head="$1"
+  local short="${head:0:7}"
+  local repo="${GITHUB_REPOSITORY:?}"
+  local commit_url="${GITHUB_SERVER_URL:-https://github.com}/${repo}/commit/${head}"
+  printf '[`%s`](%s)' "$short" "$commit_url"
+}
+
+last_success_suffix() {
+  have_previous || return 0
+  local repo="${GITHUB_REPOSITORY:?}"
+  local commit
+  commit="$(commit_link "$PREV_HEAD_SHA")"
+  cat <<EOF
+
+### Last successful build
+
+- **Run:** ${PREV_RUN_URL}
+- **Commit:** ${commit}
+- **Artifact:** \`${PREV_ARTIFACT}\` (expires in 7 days)
+- **CLI:** \`gh run download ${PREV_RUN_ID} -R ${repo} -n ${PREV_ARTIFACT}\`
+- **SHA-256:** \`${PREV_SHA256}\`
+EOF
+}
+
+parse_marker_line() {
+  local line="$1"
+  local rest="${line#*"$success_prefix"}"
+  rest="${rest% -->}"
+  local pair key value
+  clear_previous
+  for pair in $rest; do
+    key="${pair%%=*}"
+    value="${pair#*=}"
+    case "$key" in
+      run_url) PREV_RUN_URL="$value" ;;
+      run_id) PREV_RUN_ID="$value" ;;
+      head_sha) PREV_HEAD_SHA="$value" ;;
+      artifact) PREV_ARTIFACT="$value" ;;
+      sha256) PREV_SHA256="$value" ;;
+    esac
+  done
+  have_previous
+}
+
+# Old success comments have no marker. Building says "in progress" and failure
+# says "failed", so those bodies are not a success record.
+scrape_legacy_success() {
+  local body="$1"
+  case "$body" in
+    *"in progress"* | *"failed"*) return 1 ;;
+  esac
+  case "$body" in
+    *"**SHA-256:**"*) ;;
+    *) return 1 ;;
+  esac
+
+  local run_url sha256 artifact cli run_id head_sha
+  run_url="$(printf '%s\n' "$body" | sed -n 's/^- \*\*Run:\*\* //p' | head -n 1)"
+  sha256="$(printf '%s\n' "$body" | sed -n 's/^- \*\*SHA-256:\*\* `\([^`]*\)`.*/\1/p' | head -n 1)"
+  artifact="$(printf '%s\n' "$body" | sed -n 's/^- \*\*Artifact:\*\* `\([^`]*\)`.*/\1/p' | head -n 1)"
+  cli="$(printf '%s\n' "$body" | sed -n 's/^- \*\*CLI:\*\* `\([^`]*\)`.*/\1/p' | head -n 1)"
+  run_id="$(printf '%s\n' "$cli" | awk '{print $4}')"
+  head_sha="$(printf '%s\n' "$body" | sed -n 's|.*/commit/\([0-9a-f]\{40\}\).*|\1|p' | head -n 1)"
+  if [ -n "$run_url" ] && [ -n "$run_id" ] && [ -n "$head_sha" ] &&
+    [ -n "$artifact" ] && [ -n "$sha256" ]; then
+    PREV_RUN_URL="$run_url"
+    PREV_RUN_ID="$run_id"
+    PREV_HEAD_SHA="$head_sha"
+    PREV_ARTIFACT="$artifact"
+    PREV_SHA256="$sha256"
+    return 0
+  fi
+  return 1
+}
+
+load_success_from_body() {
+  local body="$1"
+  local line
+  clear_previous
+  line="$(printf '%s\n' "$body" | grep -m1 -F "$success_prefix" || true)"
+  if [ -n "$line" ]; then
+    parse_marker_line "$line"
+    return
+  fi
+  scrape_legacy_success "$body"
+}
 
 render() {
   local status="$1"
   local head="${HEAD_SHA:?}"
-  local short="${head:0:7}"
   local repo="${GITHUB_REPOSITORY:?}"
   local run_url="${RUN_URL:?}"
   local run_id="${RUN_ID:?}"
-  local commit_url="${GITHUB_SERVER_URL:-https://github.com}/${repo}/commit/${head}"
-  local commit="[\`$short\`](${commit_url})"
-  local body
+  local commit header body suffix
+  commit="$(commit_link "$head")"
   case "$status" in
     building)
+      header="$(comment_header_for_previous)"
+      suffix="$(last_success_suffix)"
       body="$(cat <<EOF
-${marker}
+${header}
 ### macOS preview build
 
 Building ${commit}...
@@ -36,15 +173,16 @@ Building ${commit}...
 - **Run:** ${run_url}
 - **Status:** in progress
 
-This comment is updated when the build finishes. A newer push replaces this run.
+This comment is updated when the build finishes. A newer push replaces this run.${suffix}
 EOF
 )"
       ;;
     success)
       local artifact="${ARTIFACT:?}"
       local sha256="${SHA256:?}"
+      header="$(comment_header "$run_url" "$run_id" "$head" "$artifact" "$sha256")"
       body="$(cat <<EOF
-${marker}
+${header}
 ### macOS preview build
 
 - **Run:** ${run_url}
@@ -62,15 +200,17 @@ EOF
 )"
       ;;
     failure)
+      header="$(comment_header_for_previous)"
+      suffix="$(last_success_suffix)"
       body="$(cat <<EOF
-${marker}
+${header}
 ### macOS preview build
 
 The build of ${commit} failed.
 
 - **Run:** ${run_url}
 
-See the run log for the error.
+See the run log for the error.${suffix}
 EOF
 )"
       ;;
@@ -84,16 +224,25 @@ EOF
 
 # Update the newest matching comment. A pull request should have one; if an
 # older duplicate is still there, the bottom one is the one readers see.
-upsert() {
-  local body="$1"
+find_comment_id() {
   local repo="${GITHUB_REPOSITORY:?}"
   local pr="${PR_NUMBER:?}"
-  local id
-  id="$(
-    gh api --paginate "repos/${repo}/issues/${pr}/comments" \
-      --jq ".[] | select((.body // \"\") | startswith(\"${marker}\")) | .id" \
-      | tail -n 1
-  )"
+  gh api --paginate "repos/${repo}/issues/${pr}/comments" \
+    --jq ".[] | select((.body // \"\") | startswith(\"${marker}\")) | .id" \
+    | tail -n 1
+}
+
+comment_body() {
+  local id="$1"
+  local repo="${GITHUB_REPOSITORY:?}"
+  gh api "repos/${repo}/issues/comments/${id}" --jq .body
+}
+
+upsert() {
+  local id="$1"
+  local body="$2"
+  local repo="${GITHUB_REPOSITORY:?}"
+  local pr="${PR_NUMBER:?}"
   if [ -n "$id" ]; then
     gh api -X PATCH "repos/${repo}/issues/comments/${id}" -f body="$body" >/dev/null
   else
@@ -125,9 +274,103 @@ if [ "${1:-}" = "--check" ]; then
   printf '%s' "$success" | grep -q "deadbeef"
   printf '%s' "$failure" | grep -q "failed"
   printf '%s' "$building" | grep -q "0123456"
+  second="${success#*$'\n'}"
+  second="${second%%$'\n'*}"
+  case "$second" in
+    "<!-- navidog-preview-success "*) ;;
+    *)
+      echo "success: hidden marker is not the second line" >&2
+      exit 1
+      ;;
+  esac
+  printf '%s' "$second" | grep -q "run_id=1"
+  printf '%s' "$second" | grep -q "sha256=deadbeef"
+  printf '%s' "$second" | grep -q "artifact=Navidog-preview-macos-aarch64"
+  if printf '%s' "$success" | grep -q "Last successful"; then
+    echo "success: duplicated the last-success section" >&2
+    exit 1
+  fi
+  if printf '%s' "$building" | grep -q "Last successful"; then
+    echo "building: invented a last success" >&2
+    exit 1
+  fi
+  if printf '%s' "$failure" | grep -q "Last successful"; then
+    echo "failure: invented a last success" >&2
+    exit 1
+  fi
+
+  # A success comment from before the marker: scrape the visible fields.
+  legacy="$(cat <<'EOF'
+<!-- navidog-preview -->
+### macOS preview build
+
+- **Run:** https://github.com/example/navidog/actions/runs/42
+- **Commit:** [`abcdef0`](https://github.com/example/navidog/commit/abcdef0123456789abcdef0123456789abcdef01)
+- **Artifact:** `Navidog-preview-macos-aarch64` (expires in 7 days)
+- **CLI:** `gh run download 42 -R example/navidog -n Navidog-preview-macos-aarch64`
+- **SHA-256:** `cafebabe`
+
+The app is ad-hoc signed and not notarized.
+EOF
+)"
+  load_success_from_body "$legacy"
+  [ "$PREV_RUN_ID" = "42" ]
+  [ "$PREV_SHA256" = "cafebabe" ]
+  [ "$PREV_ARTIFACT" = "Navidog-preview-macos-aarch64" ]
+  [ "$PREV_HEAD_SHA" = "abcdef0123456789abcdef0123456789abcdef01" ]
+  [ "$PREV_RUN_URL" = "https://github.com/example/navidog/actions/runs/42" ]
+
+  export RUN_URL="https://github.com/example/navidog/actions/runs/99"
+  export RUN_ID="99"
+  export HEAD_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  building="$(render building)"
+  failure="$(render failure)"
+  for body in "$building" "$failure"; do
+    printf '%s' "$body" | grep -q "Last successful"
+    printf '%s' "$body" | grep -q "cafebabe"
+    printf '%s' "$body" | grep -q "run_id=42"
+    printf '%s' "$body" | grep -q "actions/runs/99"
+    second="${body#*$'\n'}"
+    second="${second%%$'\n'*}"
+    case "$second" in
+      "<!-- navidog-preview-success "*) ;;
+      *)
+        echo "kept comment: hidden marker is not the second line" >&2
+        exit 1
+        ;;
+    esac
+  done
+  printf '%s' "$building" | grep -q "aaaaaaa"
+  printf '%s' "$building" | grep -q "abcdef0"
+  printf '%s' "$failure" | grep -q "failed"
+
+  # The next update must keep the same success, not the in-progress run.
+  load_success_from_body "$building"
+  [ "$PREV_RUN_ID" = "42" ]
+  [ "$PREV_SHA256" = "cafebabe" ]
+  load_success_from_body "$success"
+  [ "$PREV_RUN_ID" = "1" ]
+  [ "$PREV_SHA256" = "deadbeef" ]
+
+  clear_previous
+  if load_success_from_body "$(render building)"; then
+    echo "building comment without a success record parsed as success" >&2
+    exit 1
+  fi
+  if load_success_from_body "$(render failure)"; then
+    echo "failure comment without a success record parsed as success" >&2
+    exit 1
+  fi
+  [ -z "$PREV_RUN_ID" ]
   echo "ok"
   exit 0
 fi
 
 status="${1:?Usage: preview-comment.sh building|success|failure}"
-upsert "$(render "$status")"
+id="$(find_comment_id)"
+if [ "$status" != "success" ] && [ -n "$id" ]; then
+  # Fetch outside the `||` so a failed read stops before the comment is replaced.
+  existing="$(comment_body "$id")"
+  load_success_from_body "$existing" || true
+fi
+upsert "$id" "$(render "$status")"
