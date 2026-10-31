@@ -223,6 +223,14 @@ impl NavigatorPanel {
                                 sql: master.unwrap_or_default().into(),
                             }),
                         )
+                        .menu(
+                            t!("nav.maintain").to_string(),
+                            Box::new(OpenTool {
+                                scope: Some(scope.clone()),
+                                tool: "maintain".into(),
+                                target: None,
+                            }),
+                        )
                         .menu_with_disabled(
                             t!("nav.delete_database").to_string(),
                             true,
@@ -424,6 +432,14 @@ impl NavigatorPanel {
                 );
         }
         if o.kind == ObjectKind::Table {
+            menu = menu.menu(
+                t!("nav.maintain").to_string(),
+                Box::new(OpenTool {
+                    scope: Some(o.scope.clone()),
+                    tool: "maintain".into(),
+                    target: Some(o.name.clone().into()),
+                }),
+            );
             menu = menu.menu(t!("obj.empty_table").to_string(), Box::new(EmptyTables));
             if d.as_ref().is_none_or(|d| !d.features().exposes_rowid) {
                 menu = menu.menu(

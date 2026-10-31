@@ -422,6 +422,39 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
         None
     }
 
+    /// Which account form to show. SQLite explains the missing extension and runs nothing.
+    fn account_form(&self) -> crate::security::AccountForm {
+        crate::security::account_form(self.definition_family())
+    }
+
+    fn account_list_sql(&self) -> Option<&'static str> {
+        crate::security::account_list_sql(self.definition_family())
+    }
+
+    fn manages_privileges(&self) -> bool {
+        crate::security::manages_privileges(self.definition_family())
+    }
+
+    fn monitors_server(&self) -> bool {
+        crate::security::monitors_server(self.definition_family())
+    }
+
+    fn process_sql(&self) -> Option<&'static str> {
+        crate::security::process_sql(self.definition_family())
+    }
+
+    fn kill_sql(&self, id: &str) -> Result<Option<String>, String> {
+        crate::security::kill_sql(self.definition_family(), id)
+    }
+
+    fn variables_sql(&self) -> Option<&'static str> {
+        crate::security::variables_sql(self.definition_family())
+    }
+
+    fn status_sql(&self) -> Option<&'static str> {
+        crate::security::status_sql(self.definition_family())
+    }
+
     /// `ALTER TABLE … RENAME COLUMN`.
     fn rename_column(&self, scope: &Scope, table: &str, old: &str, new: &str) -> String {
         format!(

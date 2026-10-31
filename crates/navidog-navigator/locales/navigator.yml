@@ -162,6 +162,9 @@ nav:
   view_master:
     en: View Master
     zh-CN: 查看主表
+  maintain:
+    en: Maintain
+    zh-CN: 维护
   new_schema:
     en: New Schema…
     zh-CN: 新建模式…
@@ -466,6 +469,24 @@ info:
   fields:
     en: Fields
     zh-CN: 字段
+  used:
+    en: Used By
+    zh-CN: 被使用
+  members:
+    en: Members
+    zh-CN: 成员
+  uses:
+    en: Uses
+    zh-CN: 使用
+  used_by:
+    en: Used by
+    zh-CN: 被使用
+  member_of:
+    en: Member of
+    zh-CN: 隶属于
+  privileges:
+    en: Privileges
+    zh-CN: 权限
   nothing_selected:
     en: No object selected
     zh-CN: 没有选择对象

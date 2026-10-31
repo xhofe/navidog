@@ -561,4 +561,190 @@ designer:
   opt_path:
     en: File
     zh-CN: 文件
+  tool_users:
+    en: Users
+    zh-CN: 用户
+  tool_privileges:
+    en: Privileges
+    zh-CN: 权限
+  tool_monitor:
+    en: Server Monitor
+    zh-CN: 服务器监控
+  tool_find:
+    en: Find in Database
+    zh-CN: 在库中查找
+  tool_maintain:
+    en: Maintain
+    zh-CN: 维护
+  tool_host:
+    en: Host
+    zh-CN: 主机
+  tool_password:
+    en: Password
+    zh-CN: 密码
+  tool_role:
+    en: Role
+    zh-CN: 角色
+  tool_locked:
+    en: Locked
+    zh-CN: 锁定
+  tool_expire:
+    en: Expire
+    zh-CN: 过期
+  tool_max_queries:
+    en: Max queries per hour
+    zh-CN: 每小时最大查询数
+  tool_max_updates:
+    en: Max updates per hour
+    zh-CN: 每小时最大更新数
+  tool_max_connections:
+    en: Max connections per hour
+    zh-CN: 每小时最大连接数
+  tool_max_user_connections:
+    en: Max user connections
+    zh-CN: 最大用户连接数
+  tool_login:
+    en: Can log in
+    zh-CN: 可以登录
+  tool_superuser:
+    en: Superuser
+    zh-CN: 超级用户
+  tool_createdb:
+    en: Create databases
+    zh-CN: 创建数据库
+  tool_createrole:
+    en: Create roles
+    zh-CN: 创建角色
+  tool_inherit:
+    en: Inherit
+    zh-CN: 继承
+  tool_replication:
+    en: Replication
+    zh-CN: 复制
+  tool_connection_limit:
+    en: Connection limit
+    zh-CN: 连接限制
+  tool_valid_until:
+    en: Valid until
+    zh-CN: 有效期至
+  tool_preview:
+    en: Preview
+    zh-CN: 预览
+  tool_list:
+    en: List
+    zh-CN: 列出
+  tool_members:
+    en: Members
+    zh-CN: 成员
+  tool_privilege:
+    en: Privilege
+    zh-CN: 权限
+  tool_object:
+    en: Object
+    zh-CN: 对象
+  tool_grantee:
+    en: Grantee
+    zh-CN: 被授予者
+  tool_grant_option:
+    en: With grant option
+    zh-CN: 允许再授权
+  tool_grant:
+    en: Grant
+    zh-CN: 授予
+  tool_revoke:
+    en: Revoke
+    zh-CN: 撤销
+  tool_processes:
+    en: Processes
+    zh-CN: 进程
+  tool_variables:
+    en: Variables
+    zh-CN: 变量
+  tool_status:
+    en: Status
+    zh-CN: 状态
+  tool_auto:
+    en: Auto refresh
+    zh-CN: 自动刷新
+  tool_interval:
+    en: Interval (seconds)
+    zh-CN: 间隔（秒）
+  tool_process_id:
+    en: Process ID
+    zh-CN: 进程 ID
+  tool_kill:
+    en: End process
+    zh-CN: 结束进程
+  tool_variable:
+    en: Variable
+    zh-CN: 变量
+  tool_value:
+    en: Value
+    zh-CN: 值
+  tool_set:
+    en: Set
+    zh-CN: 设置
+  tool_find_text:
+    en: Find
+    zh-CN: 查找
+  tool_case:
+    en: Match case
+    zh-CN: 区分大小写
+  tool_data:
+    en: Search data
+    zh-CN: 搜索数据
+  tool_mode_contains:
+    en: Contains
+    zh-CN: 包含
+  tool_mode_word:
+    en: Whole word
+    zh-CN: 全字匹配
+  tool_mode_prefix:
+    en: Prefix
+    zh-CN: 前缀
+  tool_mode_regex:
+    en: Regular expression
+    zh-CN: 正则表达式
+  tool_analyze:
+    en: Analyze
+    zh-CN: 分析
+  tool_check:
+    en: Check
+    zh-CN: 检查
+  tool_optimize:
+    en: Optimize
+    zh-CN: 优化
+  tool_repair:
+    en: Repair
+    zh-CN: 修复
+  tool_vacuum:
+    en: Vacuum
+    zh-CN: 清理
+  tool_reindex:
+    en: Reindex
+    zh-CN: 重建索引
+  tool_integrity:
+    en: Integrity check
+    zh-CN: 完整性检查
+  tool_no_privileges:
+    en: This connection has no privilege manager.
+    zh-CN: 此连接没有权限管理员。
+  tool_no_monitor:
+    en: Server monitor is not available for this database.
+    zh-CN: 此数据库没有服务器监控。
+  tool_no_maintenance:
+    en: Select a table. SQLite can only vacuum the main database.
+    zh-CN: 请选择一张表。SQLite 只能清理 main 数据库。
+  tool_not_connected:
+    en: The connection is not open.
+    zh-CN: 连接未打开。
+  tool_need_name:
+    en: Enter a name.
+    zh-CN: 请输入名称。
+  tool_no_hits:
+    en: No matches.
+    zh-CN: 没有匹配。
+  tool_discard:
+    en: Close without running the preview?
+    zh-CN: 不执行预览就关闭？
 

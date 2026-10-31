@@ -6,3 +6,6 @@
 
 pub mod object_design;
 pub mod table_design;
+
+#[cfg(test)]
+mod security_plan;

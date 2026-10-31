@@ -237,3 +237,14 @@ pub struct RefreshMaterializedView {
 pub struct TableStructureChanged {
     pub scope: navidog_model::object::Scope,
 }
+
+/// Open a user, privilege, monitor, find, or maintenance panel.
+/// `tool` is `users`, `privileges`, `monitor`, `find`, or `maintain`.
+/// An empty scope is resolved from the current selection.
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(namespace = designer, no_json)]
+pub struct OpenTool {
+    pub scope: Option<navidog_model::object::Scope>,
+    pub tool: SharedString,
+    pub target: Option<SharedString>,
+}

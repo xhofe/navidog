@@ -16,7 +16,7 @@ use gpui_kit::{
 };
 use navidog_app_state::actions::{
     DesignField, DesignTable, InsertText, NewQuery, NewQueryText, NewTable, OpenConnection,
-    OpenConsole, OpenDefinition, OpenExternalQuery, OpenHistoryLog, OpenObject, RunQuery,
+    OpenConsole, OpenDefinition, OpenExternalQuery, OpenHistoryLog, OpenObject, OpenTool, RunQuery,
     ToggleFocusMode, ToggleHideObjectGroups, ToggleOnlyActive, ToggleShowHidden,
     ToggleShowTableProfile,
 };
@@ -739,6 +739,29 @@ impl MainWindow {
     }
 }
 
+/// The open connection's database, for tools opened from the menu rather than a tree node.
+fn tool_scope(cx: &App) -> Option<navidog_model::object::Scope> {
+    let selection = Workspace::global(cx).read(cx).selection().clone();
+    if let Some(scope) = selection.scope() {
+        return Some(scope);
+    }
+    let id = selection.connection_id()?.clone();
+    let (file, saved) = {
+        let store = ConnectionStore::global(cx).read(cx);
+        let connection = store.get(&id)?;
+        (
+            connection.general.file.is_some(),
+            connection.general.database.clone().unwrap_or_default(),
+        )
+    };
+    let database = if saved.is_empty() && file {
+        "main".into()
+    } else {
+        saved
+    };
+    Some(navidog_model::object::Scope::new(id, database, None))
+}
+
 /// Width the right dock gets when the info pane is maximized: whatever the
 /// viewport leaves after the left dock, minus one row-height sliver of the
 /// centre pane. The caller supplies the left dock's actual width (zero when
@@ -856,6 +879,21 @@ impl Render for MainWindow {
                     a.scope.clone(),
                     &a.kind,
                     a.name.as_ref().map(|name| name.to_string()),
+                    window,
+                    cx,
+                ) else {
+                    return;
+                };
+                this.add_editor(panel_handle(editor), window, cx);
+            }))
+            .on_action(cx.listener(|this, a: &OpenTool, window, cx| {
+                let Some(scope) = a.scope.clone().or_else(|| tool_scope(cx)) else {
+                    return;
+                };
+                let Some(editor) = navidog_designer::ToolPanel::open(
+                    scope,
+                    &a.tool,
+                    a.target.as_ref().map(|name| name.to_string()),
                     window,
                     cx,
                 ) else {

@@ -8,6 +8,7 @@ pub mod completion;
 pub mod definition;
 pub mod dialect;
 pub mod keywords;
+pub mod security;
 pub mod span;
 
 pub use dialect::{
