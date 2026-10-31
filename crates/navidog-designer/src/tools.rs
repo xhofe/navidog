@@ -1,4 +1,4 @@
-//! Users, privileges, maintenance, server monitor, and find. Statement text comes from
+//! Users, privileges, server monitor, and find. Statement text comes from
 //! `navidog-sql`; this panel edits the draft and shows what the server returns.
 
 use std::collections::BTreeMap;
@@ -44,7 +44,6 @@ enum Tool {
     Privileges,
     Monitor,
     Find,
-    Maintain,
 }
 
 impl Tool {
@@ -54,7 +53,6 @@ impl Tool {
             "privileges" => Some(Self::Privileges),
             "monitor" => Some(Self::Monitor),
             "find" => Some(Self::Find),
-            "maintain" => Some(Self::Maintain),
             _ => None,
         }
     }
@@ -65,7 +63,6 @@ impl Tool {
             Self::Privileges => "privileges",
             Self::Monitor => "monitor",
             Self::Find => "find",
-            Self::Maintain => "maintain",
         }
     }
 }
@@ -608,12 +605,6 @@ impl ToolPanel {
         cx.notify();
     }
 
-    fn maintain(&mut self, sql: String, cx: &mut Context<Self>) {
-        self.output = sql.clone();
-        self.preview = vec![sql];
-        cx.notify();
-    }
-
     fn dirty(&self) -> bool {
         !self.preview.is_empty()
     }
@@ -724,7 +715,6 @@ impl Panel for ToolPanel {
                 Tool::Privileges => "key",
                 Tool::Monitor => "server",
                 Tool::Find => "search",
-                Tool::Maintain => "list",
             })),
             t!(format!("designer.tool_{}", self.tool.key())).to_string(),
             None,
@@ -742,7 +732,6 @@ impl Render for ToolPanel {
             Tool::Privileges => self.render_privileges(disabled, cx),
             Tool::Monitor => self.render_monitor(disabled, cx),
             Tool::Find => self.render_find(disabled, cx),
-            Tool::Maintain => self.render_maintain(disabled, cx),
         };
         v_flex()
             .id("tool-panel")
@@ -1217,49 +1206,6 @@ impl ToolPanel {
                     .on_click(cx.listener(|this, _, _, cx| this.find(cx))),
             )
             .into_any_element()
-    }
-
-    fn render_maintain(&self, disabled: bool, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let jobs = security::maintenance(
-            self.dialect.as_ref(),
-            self.dialect.definition_family(),
-            &self.scope,
-            self.target.as_deref(),
-        );
-        v_flex()
-            .id("tool-maintain")
-            .p_3()
-            .gap_2()
-            .when(jobs.is_empty(), |col| {
-                col.child(t!("designer.tool_no_maintenance").to_string())
-            })
-            .children(jobs.into_iter().map(|job| {
-                let sql = job.sql.clone();
-                let label = job_label(job.key);
-                h_flex().gap_1().child(
-                    Button::new(SharedString::from(format!("tool-job-{}", job.key)))
-                        .small()
-                        .label(label)
-                        .disabled(disabled)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.maintain(sql.clone(), cx);
-                        })),
-                )
-            }))
-            .into_any_element()
-    }
-}
-
-fn job_label(key: &str) -> String {
-    match key {
-        "analyze" => t!("designer.tool_analyze").to_string(),
-        "check" => t!("designer.tool_check").to_string(),
-        "optimize" => t!("designer.tool_optimize").to_string(),
-        "repair" => t!("designer.tool_repair").to_string(),
-        "vacuum" => t!("designer.tool_vacuum").to_string(),
-        "reindex" => t!("designer.tool_reindex").to_string(),
-        "integrity" => t!("designer.tool_integrity").to_string(),
-        _ => key.to_string(),
     }
 }
 

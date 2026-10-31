@@ -36,6 +36,12 @@ impl Dialect for SqliteDialect {
     fn definition_family(&self) -> Option<navidog_sql::definition::DefinitionFamily> {
         Some(navidog_sql::definition::DefinitionFamily::Sqlite)
     }
+    fn master_table_sql(&self, database: &str) -> Option<String> {
+        Some(format!(
+            "SELECT * FROM {}.sqlite_master",
+            self.quote_ident(database)
+        ))
+    }
     fn definition_statements(
         &self,
         scope: &navidog_model::object::Scope,
@@ -228,3 +234,16 @@ const COLUMN_TYPES: &[ColumnType] = &[
         args: TypeArgs::None,
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sqlite_master_table_is_qualified() {
+        assert_eq!(
+            SqliteDialect.master_table_sql("main").as_deref(),
+            Some("SELECT * FROM \"main\".sqlite_master")
+        );
+    }
+}

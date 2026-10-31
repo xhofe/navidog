@@ -165,6 +165,33 @@ nav:
   maintain:
     en: Maintain
     zh-CN: 维护
+  maintain_analyze:
+    en: Analyze
+    zh-CN: 分析
+  maintain_check:
+    en: Check
+    zh-CN: 检查
+  maintain_optimize:
+    en: Optimize
+    zh-CN: 优化
+  maintain_repair:
+    en: Repair
+    zh-CN: 修复
+  maintain_vacuum:
+    en: Vacuum
+    zh-CN: 清理
+  maintain_reindex:
+    en: Reindex
+    zh-CN: 重建索引
+  maintain_integrity:
+    en: Integrity check
+    zh-CN: 完整性检查
+  maintain_done:
+    en: Done
+    zh-CN: 完成
+  maintain_offline:
+    en: The connection is not open.
+    zh-CN: 连接未打开。
   new_schema:
     en: New Schema…
     zh-CN: 新建模式…

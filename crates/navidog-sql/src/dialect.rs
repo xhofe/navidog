@@ -403,6 +403,12 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
         None
     }
 
+    /// `SELECT` of the catalog table that lists every object, such as SQLite's `sqlite_master`.
+    /// Products without that table return `None`, so the menu item is absent.
+    fn master_table_sql(&self, _database: &str) -> Option<String> {
+        None
+    }
+
     /// Preview SQL for a definition draft. Empty means nothing changed.
     fn definition_statements(
         &self,

@@ -238,8 +238,8 @@ pub struct TableStructureChanged {
     pub scope: navidog_model::object::Scope,
 }
 
-/// Open a user, privilege, monitor, find, or maintenance panel.
-/// `tool` is `users`, `privileges`, `monitor`, `find`, or `maintain`.
+/// Open a user, privilege, monitor, or find panel.
+/// `tool` is `users`, `privileges`, `monitor`, or `find`.
 /// An empty scope is resolved from the current selection.
 #[derive(Clone, PartialEq, Debug, Action)]
 #[action(namespace = designer, no_json)]
@@ -247,4 +247,13 @@ pub struct OpenTool {
     pub scope: Option<navidog_model::object::Scope>,
     pub tool: SharedString,
     pub target: Option<SharedString>,
+}
+
+/// Run one maintenance statement and show the server's rows.
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(namespace = navigator, no_json)]
+pub struct RunMaintenance {
+    pub connection: SharedString,
+    pub database: SharedString,
+    pub sql: SharedString,
 }

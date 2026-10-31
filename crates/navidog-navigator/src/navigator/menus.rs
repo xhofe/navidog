@@ -166,88 +166,77 @@ impl NavigatorPanel {
                 let postgres = features.is_some_and(|f| f.has_schemas);
                 let sqlite = features.is_some_and(|f| f.rebuilds_tables);
                 let scope = Scope::new(conn.clone(), db.clone(), None);
-                let master = dialect
-                    .as_ref()
-                    .map(|d| format!("SELECT * FROM {}.sqlite_master", d.quote_ident(db)));
+                let mut menu = NativeMenu::new()
+                    .menu(t!("nav.open_database").to_string(), Box::new(OpenDatabase))
+                    .menu(
+                        t!("nav.close_database").to_string(),
+                        Box::new(CloseDatabase),
+                    )
+                    .separator()
+                    .menu_with_disabled(
+                        t!("nav.new_database").to_string(),
+                        !(mysql || postgres),
+                        Box::new(OpenDefinition {
+                            scope: scope.clone(),
+                            kind: "database".into(),
+                            name: None,
+                        }),
+                    )
+                    .menu_with_disabled(
+                        t!("nav.edit_database").to_string(),
+                        !(mysql || postgres),
+                        Box::new(OpenDefinition {
+                            scope: scope.clone(),
+                            kind: "database".into(),
+                            name: Some(db.clone().into()),
+                        }),
+                    )
+                    .menu_with_disabled(
+                        t!("nav.attach_database").to_string(),
+                        !sqlite,
+                        Box::new(OpenDefinition {
+                            scope: scope.clone(),
+                            kind: "attach".into(),
+                            name: None,
+                        }),
+                    )
+                    .menu_with_disabled(
+                        t!("nav.detach_database").to_string(),
+                        !sqlite || db.eq_ignore_ascii_case("main"),
+                        Box::new(OpenDefinition {
+                            scope: scope.clone(),
+                            kind: "detach".into(),
+                            name: Some(db.clone().into()),
+                        }),
+                    );
+                if let Some(sql) = dialect.as_ref().and_then(|d| d.master_table_sql(db)) {
+                    menu = menu.menu(
+                        t!("nav.view_master").to_string(),
+                        Box::new(NewQueryText {
+                            connection: conn.clone().into(),
+                            database: db.clone().into(),
+                            schema: None,
+                            sql: sql.into(),
+                        }),
+                    );
+                }
+                if let Some(d) = dialect.as_ref() {
+                    menu = with_maintain(menu, d.as_ref(), &scope, None);
+                }
                 refresh(
-                    NativeMenu::new()
-                        .menu(t!("nav.open_database").to_string(), Box::new(OpenDatabase))
-                        .menu(
-                            t!("nav.close_database").to_string(),
-                            Box::new(CloseDatabase),
-                        )
-                        .separator()
-                        .menu_with_disabled(
-                            t!("nav.new_database").to_string(),
-                            !(mysql || postgres),
-                            Box::new(OpenDefinition {
-                                scope: scope.clone(),
-                                kind: "database".into(),
-                                name: None,
-                            }),
-                        )
-                        .menu_with_disabled(
-                            t!("nav.edit_database").to_string(),
-                            !(mysql || postgres),
-                            Box::new(OpenDefinition {
-                                scope: scope.clone(),
-                                kind: "database".into(),
-                                name: Some(db.clone().into()),
-                            }),
-                        )
-                        .menu_with_disabled(
-                            t!("nav.attach_database").to_string(),
-                            !sqlite,
-                            Box::new(OpenDefinition {
-                                scope: scope.clone(),
-                                kind: "attach".into(),
-                                name: None,
-                            }),
-                        )
-                        .menu_with_disabled(
-                            t!("nav.detach_database").to_string(),
-                            !sqlite || db.eq_ignore_ascii_case("main"),
-                            Box::new(OpenDefinition {
-                                scope: scope.clone(),
-                                kind: "detach".into(),
-                                name: Some(db.clone().into()),
-                            }),
-                        )
-                        .menu_with_disabled(
-                            t!("nav.view_master").to_string(),
-                            master.is_none(),
-                            Box::new(NewQueryText {
-                                connection: conn.clone().into(),
-                                database: db.clone().into(),
-                                schema: None,
-                                sql: master.unwrap_or_default().into(),
-                            }),
-                        )
-                        .menu(
-                            t!("nav.maintain").to_string(),
-                            Box::new(OpenTool {
-                                scope: Some(scope.clone()),
-                                tool: "maintain".into(),
-                                target: None,
-                            }),
-                        )
-                        .menu_with_disabled(
-                            t!("nav.delete_database").to_string(),
-                            true,
-                            Box::new(Refresh),
-                        )
-                        .separator()
-                        .menu(t!("nav.new_query").to_string(), Box::new(NewQuery))
-                        .menu_with_disabled(
-                            t!("nav.run_sql_file").to_string(),
-                            true,
-                            Box::new(Refresh),
-                        )
-                        .menu_with_disabled(
-                            t!("nav.dump_sql_file").to_string(),
-                            true,
-                            Box::new(Refresh),
-                        ),
+                    menu.menu_with_disabled(
+                        t!("nav.delete_database").to_string(),
+                        true,
+                        Box::new(Refresh),
+                    )
+                    .separator()
+                    .menu(t!("nav.new_query").to_string(), Box::new(NewQuery))
+                    .menu_with_disabled(t!("nav.run_sql_file").to_string(), true, Box::new(Refresh))
+                    .menu_with_disabled(
+                        t!("nav.dump_sql_file").to_string(),
+                        true,
+                        Box::new(Refresh),
+                    ),
                 )
             }
             Some(Node::Schema(scope)) => refresh(
@@ -432,14 +421,9 @@ impl NavigatorPanel {
                 );
         }
         if o.kind == ObjectKind::Table {
-            menu = menu.menu(
-                t!("nav.maintain").to_string(),
-                Box::new(OpenTool {
-                    scope: Some(o.scope.clone()),
-                    tool: "maintain".into(),
-                    target: Some(o.name.clone().into()),
-                }),
-            );
+            if let Some(d) = d {
+                menu = with_maintain(menu, d.as_ref(), &o.scope, Some(&o.name));
+            }
             menu = menu.menu(t!("obj.empty_table").to_string(), Box::new(EmptyTables));
             if d.as_ref().is_none_or(|d| !d.features().exposes_rowid) {
                 menu = menu.menu(
@@ -495,5 +479,42 @@ impl NavigatorPanel {
             ),
         )
         .menu(t!("obj.copy_name").to_string(), Box::new(CopyObjectNames))
+    }
+}
+
+fn with_maintain(
+    menu: NativeMenu,
+    dialect: &dyn Dialect,
+    scope: &Scope,
+    target: Option<&str>,
+) -> NativeMenu {
+    let jobs =
+        navidog_sql::security::maintenance(dialect, dialect.definition_family(), scope, target);
+    if jobs.is_empty() {
+        return menu;
+    }
+    let sub = jobs.into_iter().fold(NativeMenu::new(), |menu, job| {
+        menu.menu(
+            maintain_label(job.key),
+            Box::new(RunMaintenance {
+                connection: scope.connection.clone().into(),
+                database: scope.database.clone().into(),
+                sql: job.sql.into(),
+            }),
+        )
+    });
+    menu.submenu(t!("nav.maintain").to_string(), sub)
+}
+
+fn maintain_label(key: &str) -> String {
+    match key {
+        "analyze" => t!("nav.maintain_analyze").to_string(),
+        "check" => t!("nav.maintain_check").to_string(),
+        "optimize" => t!("nav.maintain_optimize").to_string(),
+        "repair" => t!("nav.maintain_repair").to_string(),
+        "vacuum" => t!("nav.maintain_vacuum").to_string(),
+        "reindex" => t!("nav.maintain_reindex").to_string(),
+        "integrity" => t!("nav.maintain_integrity").to_string(),
+        _ => key.to_string(),
     }
 }

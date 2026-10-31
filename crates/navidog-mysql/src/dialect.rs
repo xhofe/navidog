@@ -257,3 +257,13 @@ const COLUMN_TYPES: &[ColumnType] = &[
         args: TypeArgs::None,
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mysql_has_no_master_table() {
+        assert!(MysqlDialect.master_table_sql("testdb").is_none());
+    }
+}

@@ -31,6 +31,7 @@ mod test_env {
 }
 
 use gpui_kit::{Action, App, SharedString};
+use navidog_app_state::actions::OpenTool;
 use navidog_app_state::registry::{CommandInfo, CommandRegistry, Source};
 use navidog_app_state::store::ConnectionStore;
 use navidog_app_state::workspace::{Selection, Workspace};
@@ -112,7 +113,7 @@ fn register_commands(cx: &mut App) {
         fn() -> Box<dyn Action>,
         fn(&App) -> bool,
     );
-    let commands: [Entry; 4] = [
+    let commands: [Entry; 5] = [
         (
             "objects.tables",
             "kind.table",
@@ -156,6 +157,19 @@ fn register_commands(cx: &mut App) {
                 })
             },
             |cx| category_enabled(cx, ObjectKind::Query),
+        ),
+        (
+            "objects.users",
+            "toolbar.user",
+            "icons/user.svg",
+            || {
+                Box::new(OpenTool {
+                    scope: None,
+                    tool: "users".into(),
+                    target: None,
+                })
+            },
+            |cx| category_scope(cx).is_some(),
         ),
     ];
     for (id, title, icon, action, enabled) in commands {

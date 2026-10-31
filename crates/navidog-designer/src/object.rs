@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use gpui_kit::TestSupportExt;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::dock::{
@@ -12,12 +13,11 @@ use gpui_kit::component::dock::{
     register_panel,
 };
 use gpui_kit::component::input::{Editor, EditorState, Input, InputState};
-use gpui_kit::component::{
-    Disableable as _, Selectable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
-};
+use gpui_kit::component::tab::{Tab, TabBar};
+use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    KeyBinding, Render, SharedString, Task, WeakEntity, Window, prelude::*,
+    KeyBinding, Render, SharedString, Task, WeakEntity, Window, div, prelude::*,
 };
 use navidog_app_state::actions::{NewQueryText, TableStructureChanged};
 use navidog_db::{DbError, DbResult};
@@ -66,6 +66,7 @@ pub struct ObjectDesigner {
     kind: DefinitionKind,
     name: Entity<InputState>,
     body: Entity<EditorState>,
+    sql: Entity<EditorState>,
     options: Vec<(&'static str, Entity<InputState>)>,
     run_args: Entity<InputState>,
     run_raw: bool,
@@ -140,6 +141,8 @@ impl ObjectDesigner {
                     .language("sql")
                     .default_value(saved.body.clone())
             });
+            let sql = cx.new(|cx| EditorState::new(window, cx).language("sql"));
+            sql.update(cx, |s, cx| s.set_readonly(true, cx));
             let options = keys
                 .iter()
                 .map(|key| {
@@ -156,6 +159,7 @@ impl ObjectDesigner {
                 kind,
                 name,
                 body,
+                sql,
                 options,
                 run_args,
                 run_raw: false,
@@ -207,9 +211,15 @@ impl ObjectDesigner {
                 .any(|(_, input)| !input.read(cx).value().trim().is_empty())
     }
 
-    fn show_preview(&mut self, cx: &mut Context<Self>) {
+    fn show_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match object_design::plan(self.dialect.as_ref(), &self.scope, &self.draft(cx)) {
             Ok(sql) => {
+                let text = if sql.is_empty() {
+                    format!("-- {}", t!("designer.no_changes"))
+                } else {
+                    sql.join(";\n")
+                };
+                self.sql.update(cx, |s, cx| s.set_value(text, window, cx));
                 self.preview = Some(sql);
                 self.page = Page::Preview;
                 self.error = None;
@@ -568,24 +578,26 @@ impl Render for ObjectDesigner {
             self.kind,
             DefinitionKind::Function | DefinitionKind::Procedure
         );
-        let sql = self
-            .preview
-            .as_ref()
-            .map(|lines| {
-                if lines.is_empty() {
-                    format!("-- {}", t!("designer.no_changes"))
-                } else {
-                    lines.join(";\n")
-                }
-            })
-            .unwrap_or_default();
+        let pages: Vec<(Page, &'static str)> = [
+            (Page::Definition, "definition"),
+            (Page::Options, "options"),
+            (Page::Preview, "preview"),
+        ]
+        .into_iter()
+        .filter(|(page, _)| *page != Page::Options || !self.options.is_empty() && !self.raw)
+        .collect();
+        let selected = pages
+            .iter()
+            .position(|(page, _)| *page == self.page)
+            .unwrap_or(0);
+        let pages_for_bar = pages.clone();
         v_flex()
             .id("object-designer")
             .key_context(PANEL)
             .track_focus(&self.focus)
             .size_full()
             .bg(p.window_bg)
-            .on_action(cx.listener(|this, _: &Save, _, cx| this.show_preview(cx)))
+            .on_action(cx.listener(|this, _: &Save, window, cx| this.show_preview(window, cx)))
             .child(
                 h_flex()
                     .min_h(tokens::object_toolbar::HEIGHT.rems())
@@ -613,7 +625,11 @@ impl Render for ObjectDesigner {
                                 .icon(lucide("save"))
                                 .label(t!("designer.save").to_string())
                                 .disabled(disabled)
-                                .on_click(cx.listener(|this, _, _, cx| this.show_preview(cx))),
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.show_preview(window, cx)
+                                    }),
+                                ),
                         )
                     })
                     .when(show_data, |bar| {
@@ -639,45 +655,37 @@ impl Render for ObjectDesigner {
                     }),
             )
             .child(
-                h_flex()
-                    .px_2()
-                    .gap_1()
-                    .border_b_1()
-                    .border_color(p.separator)
-                    .children(
-                        [
-                            (Page::Definition, "definition"),
-                            (Page::Options, "options"),
-                            (Page::Preview, "preview"),
-                        ]
-                        .into_iter()
-                        .filter(|(page, _)| {
-                            *page != Page::Options || !self.options.is_empty() && !self.raw
-                        })
-                        .map(|(page, key)| {
-                            Button::new(SharedString::from(format!("object-page-{key}")))
-                                .ghost()
-                                .small()
-                                .label(t!(format!("designer.{key}")).to_string())
-                                .selected(self.page == page)
+                TabBar::new("object-pages")
+                    .underline()
+                    .small()
+                    .w_full()
+                    .selected_index(selected)
+                    .on_click(cx.listener(move |this, ix: &usize, _, cx| {
+                        if let Some((page, _)) = pages_for_bar.get(*ix) {
+                            this.page = *page;
+                            cx.notify();
+                        }
+                    }))
+                    .children(pages.into_iter().map(|(page, key)| {
+                        let label = t!(format!("designer.{key}")).to_string();
+                        Tab::new().child(
+                            div()
+                                .id(SharedString::from(format!("object-page-{key}")))
                                 .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
                                     this.page = page;
                                     cx.notify();
                                 }))
-                        }),
-                    ),
+                                .child(label)
+                                .test_support(),
+                        )
+                    })),
             )
             .when_some(self.error.clone(), |v, error| {
                 v.child(gpui_kit::div().px_2().text_color(p.danger).child(error))
             })
             .child(match self.page {
-                Page::Preview => v_flex()
-                    .id("object-sql")
-                    .p_3()
-                    .size_full()
-                    .overflow_y_scroll()
-                    .child(sql)
-                    .into_any_element(),
+                Page::Preview => Editor::new(&self.sql).size_full().into_any_element(),
                 Page::Options => self.render_options(disabled),
                 Page::Definition => self.render_definition(disabled),
             })
