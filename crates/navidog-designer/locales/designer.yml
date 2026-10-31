@@ -573,6 +573,102 @@ designer:
   tool_users:
     en: Users
     zh-CN: 用户
+  tool_user_new:
+    en: New User
+    zh-CN: 新建用户
+  tool_design:
+    en: Design
+    zh-CN: 设计
+  tool_refresh:
+    en: Refresh
+    zh-CN: 刷新
+  tool_filter:
+    en: Filter
+    zh-CN: 筛选
+  tool_users_count:
+    en: "%{n} users"
+    zh-CN: "%{n} 个用户"
+  tool_plugin:
+    en: Plugin
+    zh-CN: 插件
+  tool_confirm:
+    en: Confirm password
+    zh-CN: 确认密码
+  tool_ssl:
+    en: SSL type
+    zh-CN: SSL 类型
+  tool_cipher:
+    en: Cipher
+    zh-CN: 密码
+  tool_issuer:
+    en: Issuer
+    zh-CN: 发行者
+  tool_subject:
+    en: Subject
+    zh-CN: 主旨
+  tool_unlimited:
+    en: "0 (default) = no limit"
+    zh-CN: "0（默认）= 没有限制"
+  tool_default_role:
+    en: Default
+    zh-CN: 默认
+  tool_schema:
+    en: Schema
+    zh-CN: 模式
+  tool_password_mismatch:
+    en: The two passwords do not match.
+    zh-CN: 两次输入的密码不一致。
+  user_general:
+    en: General
+    zh-CN: 常规
+  user_advanced:
+    en: Advanced
+    zh-CN: 高级
+  user_member_of:
+    en: Member of
+    zh-CN: 成员属于
+  user_members:
+    en: Members
+    zh-CN: 成员
+  user_server:
+    en: Server Privileges
+    zh-CN: 服务器权限
+  user_objects:
+    en: Object Privileges
+    zh-CN: 对象权限
+  user_preview:
+    en: SQL Preview
+    zh-CN: SQL 预览
+  user_col_name:
+    en: Name
+    zh-CN: 名称
+  user_col_user:
+    en: User
+    zh-CN: 用户
+  user_col_host:
+    en: Host
+    zh-CN: 主机
+  user_col_plugin:
+    en: Plugin
+    zh-CN: 插件
+  user_col_expire:
+    en: Password expiry
+    zh-CN: 密码过期策略
+  user_col_queries:
+    en: Max queries
+    zh-CN: 最大查询
+  user_col_updates:
+    en: Max updates
+    zh-CN: 最大更新
+  user_col_connections:
+    en: Max connections
+    zh-CN: 最大连接
+  user_col_user_connections:
+    en: Max user connections
+    zh-CN: 最大用户连接数
+  user_col_kind:
+    en: Kind
+    zh-CN: 种类
   tool_privileges:
     en: Privileges
     zh-CN: 权限

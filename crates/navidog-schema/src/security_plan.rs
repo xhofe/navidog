@@ -4,6 +4,8 @@
 mod tests {
     use navidog_model::object::{ObjectKind, ObjectRef, Scope};
     use navidog_sql::dialect::Dialect;
+    use std::collections::BTreeSet;
+
     use navidog_sql::security::{
         self, AccountDraft, AccountForm, FindRequest, GrantDraft, MatchMode, Probe,
         SQLITE_AUTH_REASON,
@@ -82,6 +84,68 @@ mod tests {
         assert!(reason.contains("user-auth"));
         assert!(!reason.contains("CREATE"));
         assert!(sqlite.account_list_sql().is_none());
+        let list = mysql.account_list_sql().unwrap();
+        assert!(list.contains("AS plugin"), "{list}");
+        assert!(list.contains("max_user_connections"), "{list}");
+        user.plugin = "caching_sha2_password".into();
+        user.ssl_type = "ANY".into();
+        user.previous_name = None;
+        user.previous_plugin = None;
+        user.role = false;
+        user.locked = false;
+        user.expire.clear();
+        user.max_queries = "10".into();
+        let shaped = security::account_statements(&mysql, mysql.definition_family(), &user)
+            .unwrap()
+            .join("\n");
+        assert!(
+            shaped.contains("IDENTIFIED WITH caching_sha2_password BY"),
+            "{shaped}"
+        );
+        assert!(shaped.contains("REQUIRE SSL"), "{shaped}");
+        let load = security::user_load_sql(&mysql, mysql.definition_family(), "ada", "%", "sakila")
+            .unwrap();
+        assert!(load.profile.contains("ssl_type"), "{}", load.profile);
+        assert!(load.grants.contains("SHOW GRANTS FOR"), "{}", load.grants);
+        assert!(load.tables.unwrap().contains("sakila"));
+        let lines = vec![
+            "GRANT SELECT, INSERT ON *.* TO `ada`@`%` WITH GRANT OPTION".into(),
+            "GRANT `app`@`%` TO `ada`@`%`".into(),
+            "GRANT SELECT ON `sakila`.`film` TO `ada`@`%`".into(),
+            "GRANT USAGE ON *.* TO `ada`@`%`".into(),
+        ];
+        let parsed = security::parse_show_grants(&lines);
+        assert!(parsed.server.contains("SELECT"));
+        assert!(parsed.server.contains("INSERT"));
+        assert!(!parsed.server.contains("USAGE"));
+        assert!(parsed.server_grant_option);
+        assert!(parsed.roles.contains(&("app".into(), "%".into())));
+        assert!(
+            parsed.objects[&("sakila".into(), "film".into())]
+                .privileges
+                .contains("SELECT")
+        );
+        let mut after = parsed.clone();
+        after.server.remove("INSERT");
+        after.roles.insert(("audit".into(), "%".into()));
+        let none = BTreeSet::new();
+        let diff = security::privilege_statements(
+            &mysql,
+            mysql.definition_family(),
+            security::PrivilegeEdit {
+                grantee: "ada",
+                host: "%",
+                before: &parsed,
+                after: &after,
+                before_members: &none,
+                after_members: &none,
+            },
+        )
+        .unwrap()
+        .join("\n");
+        assert!(diff.contains("REVOKE INSERT ON *.* FROM"), "{diff}");
+        assert!(diff.contains("GRANT `audit`@`%` TO"), "{diff}");
+        assert!(!diff.contains("REVOKE SELECT"), "{diff}");
         assert!(!sqlite.manages_privileges());
         assert!(!sqlite.monitors_server());
         assert!(sqlite.process_sql().is_none());

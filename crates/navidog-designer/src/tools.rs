@@ -1,32 +1,39 @@
 //! Users, privileges, server monitor, and find. Statement text comes from
 //! `navidog-sql`; this panel edits the draft and shows what the server returns.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui_kit::component::button::Button;
+use gpui_kit::TestSupportExt;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, TabGroup, panel_handle,
     register_panel,
 };
-use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
-use gpui_kit::{
-    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    KeyBinding, Render, SharedString, Task, WeakEntity, Window, div, prelude::*,
+use gpui_kit::component::input::{Editor, EditorState, Input, InputState};
+use gpui_kit::component::select::{Select, SelectState};
+use gpui_kit::component::tab::{Tab, TabBar};
+use gpui_kit::component::{
+    Disableable as _, IndexPath, Selectable as _, Sizable as _, h_flex, v_flex,
 };
+use gpui_kit::{
+    App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    IntoElement, KeyBinding, Render, SharedString, Task, WeakEntity, Window, div, prelude::*,
+};
+use navidog_app_state::actions::OpenTool;
 use navidog_db::{DbError, DbResult, ResultSet};
 use navidog_model::object::{ObjectKind, Scope};
 use navidog_session::sessions::Sessions;
 use navidog_sql::dialect::Dialect;
 use navidog_sql::security::{
-    self, AccountDraft, AccountForm, FindRequest, GrantDraft, MatchMode, Probe,
+    self, AccountDraft, AccountForm, FindRequest, GrantDraft, GrantSet, MatchMode,
+    OBJECT_PRIVILEGES, Probe, SERVER_PRIVILEGES,
 };
 use navidog_ui::assets::lucide;
-use navidog_ui::skin::FormRow;
+use navidog_ui::skin::{FormRow, truncated};
 use navidog_ui::{palette, tabs, tokens};
 use rust_i18n::t;
 use serde::{Deserialize, Serialize};
@@ -70,6 +77,57 @@ enum MonitorPage {
     Processes,
     Variables,
     Status,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UserPage {
+    General,
+    Advanced,
+    MemberOf,
+    Members,
+    Server,
+    Objects,
+    Preview,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FetchKind {
+    Output,
+    Accounts,
+    Detail,
+    Defaults,
+    Members,
+}
+
+#[derive(Clone)]
+struct RoleRow {
+    name: String,
+    host: String,
+    member_of: bool,
+    default_role: bool,
+    member: bool,
+}
+
+#[derive(Clone)]
+struct ObjectRow {
+    schema: String,
+    name: String,
+    on: Vec<bool>,
+}
+
+struct ProfileFill {
+    name: String,
+    host: String,
+    plugin: String,
+    locked: bool,
+    max_queries: String,
+    max_updates: String,
+    max_connections: String,
+    max_user_connections: String,
+    ssl_type: String,
+    ssl_cipher: String,
+    ssl_issuer: String,
+    ssl_subject: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -125,6 +183,29 @@ pub struct ToolPanel {
     kinds: Vec<(ObjectKind, bool)>,
     task: Option<Task<()>>,
     watch: Option<Task<()>>,
+    user_page: UserPage,
+    plugin_choice: Entity<SelectState<Vec<SharedString>>>,
+    ssl_choice: Entity<SelectState<Vec<SharedString>>>,
+    confirm: Entity<InputState>,
+    ssl_cipher: Entity<InputState>,
+    ssl_issuer: Entity<InputState>,
+    ssl_subject: Entity<InputState>,
+    user_filter: Entity<InputState>,
+    sql_view: Entity<EditorState>,
+    account_columns: Vec<String>,
+    account_rows: Vec<Vec<String>>,
+    selected_account: Option<usize>,
+    server_on: Vec<bool>,
+    roles: Vec<RoleRow>,
+    objects: Vec<ObjectRow>,
+    loaded_draft: AccountDraft,
+    loaded_grants: GrantSet,
+    loaded_members: BTreeSet<(String, String)>,
+    grants_touched: bool,
+    expect_tables: bool,
+    fetch_kind: FetchKind,
+    fetch_gen: u64,
+    pending_fill: Option<ProfileFill>,
 }
 
 impl ToolPanel {
@@ -137,7 +218,9 @@ impl ToolPanel {
     ) -> Option<Entity<Self>> {
         let tool = Tool::parse(tool)?;
         let dialect = Sessions::global(cx).read(cx).dialect(&scope.connection)?;
-        Some(cx.new(|cx| Self::new(scope, tool, target, dialect, window, cx)))
+        let panel = cx.new(|cx| Self::new(scope, tool, target, dialect, window, cx));
+        panel.update(cx, |this, cx| this.start(cx));
+        Some(panel)
     }
 
     fn new(
@@ -148,13 +231,6 @@ impl ToolPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut input = |value: &str, masked: bool, cx: &mut Context<Self>| {
-            cx.new(|cx| {
-                InputState::new(window, cx)
-                    .default_value(value)
-                    .masked(masked)
-            })
-        };
         let kinds = dialect
             .object_kinds()
             .iter()
@@ -162,6 +238,22 @@ impl ToolPanel {
             .filter(|kind| *kind != ObjectKind::Query)
             .map(|kind| (kind, true))
             .collect();
+        let input = |value: &str, masked: bool, window: &mut Window, cx: &mut Context<Self>| {
+            cx.new(|cx| {
+                InputState::new(window, cx)
+                    .default_value(value)
+                    .masked(masked)
+            })
+        };
+        let choice = |items: &[&str], window: &mut Window, cx: &mut Context<Self>| {
+            let items: Vec<SharedString> = items.iter().map(|item| (*item).into()).collect();
+            cx.new(|cx| SelectState::new(items, Some(IndexPath::default().row(0)), window, cx))
+        };
+        let sql_view = cx.new(|cx| EditorState::new(window, cx).language("sql"));
+        sql_view.update(cx, |state, cx| state.set_readonly(true, cx));
+        let user_filter = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("designer.tool_filter").to_string())
+        });
         Self {
             scope,
             tool,
@@ -173,9 +265,9 @@ impl ToolPanel {
             error: None,
             output: String::new(),
             preview: Vec::new(),
-            name: input("", false, cx),
-            host: input("%", false, cx),
-            password: input("", true, cx),
+            name: input("", false, window, cx),
+            host: input("%", false, window, cx),
+            password: input("", true, window, cx),
             monitor: MonitorPage::Processes,
             role: false,
             locked: false,
@@ -185,29 +277,61 @@ impl ToolPanel {
             createrole: false,
             inherit: true,
             replication: false,
-            expire: input("", false, cx),
-            max_queries: input("", false, cx),
-            max_updates: input("", false, cx),
-            max_connections: input("", false, cx),
-            max_user_connections: input("", false, cx),
-            connection_limit: input("", false, cx),
-            valid_until: input("", false, cx),
-            privilege: input("SELECT", false, cx),
-            object_name: input("", false, cx),
-            grantee: input("", false, cx),
+            expire: input("", false, window, cx),
+            max_queries: input("0", false, window, cx),
+            max_updates: input("0", false, window, cx),
+            max_connections: input("0", false, window, cx),
+            max_user_connections: input("0", false, window, cx),
+            connection_limit: input("", false, window, cx),
+            valid_until: input("", false, window, cx),
+            privilege: input("SELECT", false, window, cx),
+            object_name: input("", false, window, cx),
+            grantee: input("", false, window, cx),
             grant_option: false,
             auto: false,
-            interval: input("5", false, cx),
-            kill_id: input("", false, cx),
-            var_name: input("", false, cx),
-            var_value: input("", false, cx),
-            needle: input("", false, cx),
+            interval: input("5", false, window, cx),
+            kill_id: input("", false, window, cx),
+            var_name: input("", false, window, cx),
+            var_value: input("", false, window, cx),
+            needle: input("", false, window, cx),
             mode: MatchMode::Contains,
             case_sensitive: false,
             search_data: false,
             kinds,
             task: None,
             watch: None,
+            user_page: UserPage::General,
+            plugin_choice: choice(
+                &[
+                    "",
+                    "caching_sha2_password",
+                    "mysql_native_password",
+                    "sha256_password",
+                ],
+                window,
+                cx,
+            ),
+            ssl_choice: choice(&["", "NONE", "ANY", "X509", "SPECIFIED"], window, cx),
+            confirm: input("", true, window, cx),
+            ssl_cipher: input("", false, window, cx),
+            ssl_issuer: input("", false, window, cx),
+            ssl_subject: input("", false, window, cx),
+            user_filter,
+            sql_view,
+            account_columns: Vec::new(),
+            account_rows: Vec::new(),
+            selected_account: None,
+            server_on: vec![false; SERVER_PRIVILEGES.len()],
+            roles: Vec::new(),
+            objects: Vec::new(),
+            loaded_draft: AccountDraft::default(),
+            loaded_grants: GrantSet::default(),
+            loaded_members: BTreeSet::new(),
+            grants_touched: false,
+            expect_tables: false,
+            fetch_kind: FetchKind::Output,
+            fetch_gen: 0,
+            pending_fill: None,
         }
     }
 
@@ -235,27 +359,73 @@ impl ToolPanel {
             replication: self.replication,
             connection_limit: Self::text(&self.connection_limit, cx),
             valid_until: Self::text(&self.valid_until, cx),
+            plugin: choice_text(&self.plugin_choice, cx),
+            ssl_type: choice_text(&self.ssl_choice, cx),
+            ssl_cipher: Self::text(&self.ssl_cipher, cx),
+            ssl_issuer: Self::text(&self.ssl_issuer, cx),
+            ssl_subject: Self::text(&self.ssl_subject, cx),
             ..AccountDraft::default()
         }
     }
 
-    fn show_account(&mut self, cx: &mut Context<Self>) {
+    fn show_account(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.dialect.account_form(), AccountForm::Unavailable(_)) {
             self.preview.clear();
             self.error = Some(security::SQLITE_AUTH_REASON.into());
             return;
         }
+        let password = Self::text(&self.password, cx);
+        let confirm = Self::text(&self.confirm, cx);
+        if !confirm.is_empty() && confirm != password {
+            self.preview.clear();
+            self.error = Some(t!("designer.tool_password_mismatch").to_string());
+            cx.notify();
+            return;
+        }
+        let mut draft = self.account_draft(cx);
+        draft.previous_name = self.loaded_draft.previous_name.clone();
+        draft.previous_host = self.loaded_draft.previous_host.clone();
+        draft.previous_plugin = self.loaded_draft.previous_plugin.clone();
+        draft.previous_ssl = self.loaded_draft.previous_ssl.clone();
+        draft.previous_cipher = self.loaded_draft.previous_cipher.clone();
+        draft.previous_issuer = self.loaded_draft.previous_issuer.clone();
+        draft.previous_subject = self.loaded_draft.previous_subject.clone();
+        draft.previous_locked = self.loaded_draft.previous_locked;
+        let (grants, members) = self.current_grants();
+        let privileges = if self.dialect.account_form() == AccountForm::Mysql {
+            security::privilege_statements(
+                self.dialect.as_ref(),
+                self.dialect.definition_family(),
+                security::PrivilegeEdit {
+                    grantee: draft.name.trim(),
+                    host: draft.host.trim(),
+                    before: &self.loaded_grants,
+                    after: &grants,
+                    before_members: &self.loaded_members,
+                    after_members: &members,
+                },
+            )
+        } else {
+            Ok(Vec::new())
+        };
         match security::account_statements(
             self.dialect.as_ref(),
             self.dialect.definition_family(),
-            &self.account_draft(cx),
-        ) {
+            &draft,
+        )
+        .and_then(|mut sql| {
+            sql.extend(privileges?);
+            Ok(sql)
+        }) {
             Ok(sql) => {
-                let password = Self::text(&self.password, cx);
                 let literal = (!password.trim().is_empty())
                     .then(|| self.dialect.string_literal(password.trim()));
                 // The preview keeps the real statement. The pane must not show the password.
-                self.output = redact_password_literal(&sql.join(";\n"), literal.as_deref());
+                let redacted = redact_password_literal(&sql.join(";\n"), literal.as_deref());
+                self.sql_view.update(cx, |state, cx| {
+                    state.set_value(redacted, window, cx);
+                });
+                self.output.clear();
                 self.preview = sql;
                 self.error = None;
             }
@@ -308,6 +478,16 @@ impl ToolPanel {
     }
 
     fn run(&mut self, sqls: Vec<String>, read: bool, cx: &mut Context<Self>) {
+        self.spawn_query(sqls, read, FetchKind::Output, cx);
+    }
+
+    fn spawn_query(
+        &mut self,
+        sqls: Vec<String>,
+        read: bool,
+        kind: FetchKind,
+        cx: &mut Context<Self>,
+    ) {
         if sqls.is_empty() {
             return;
         }
@@ -324,9 +504,14 @@ impl ToolPanel {
             return;
         };
         self.busy = true;
-        self.error = None;
+        self.fetch_kind = kind;
+        self.fetch_gen += 1;
+        let generation = self.fetch_gen;
+        if !matches!(kind, FetchKind::Defaults | FetchKind::Members) {
+            self.error = None;
+        }
         self.task = Some(cx.spawn(async move |this, cx| {
-            let result: DbResult<String> = async {
+            let result: DbResult<Vec<ResultSet>> = async {
                 let mut session = job.await.map_err(|e| DbError::msg(e.to_string()))??;
                 let job = navidog_db::runtime::spawn(async move {
                     let result = async {
@@ -338,16 +523,16 @@ impl ToolPanel {
                         {
                             r.execute(&sql).await?;
                         }
-                        let mut out = String::new();
+                        let mut sets = Vec::new();
                         for sql in &sqls {
-                            let sets = if read {
+                            let mut got = if read {
                                 r.execute_read(sql).await?
                             } else {
                                 r.execute(sql).await?
                             };
-                            out.push_str(&format_sets(sets));
+                            sets.append(&mut got);
                         }
-                        Ok(out)
+                        Ok(sets)
                     }
                     .await;
                     let _ = session.close().await;
@@ -357,14 +542,18 @@ impl ToolPanel {
             }
             .await;
             let _ = this.update(cx, |this, cx| {
+                if this.fetch_gen != generation {
+                    return;
+                }
                 this.busy = false;
                 match result {
-                    Ok(text) => {
-                        this.output = text;
-                        this.preview.clear();
-                        this.error = None;
+                    Ok(sets) => this.apply_fetch(sets, cx),
+                    Err(error) => {
+                        if !matches!(this.fetch_kind, FetchKind::Defaults | FetchKind::Members) {
+                            this.error = Some(error.to_string());
+                        }
+                        this.finish_optional_fetch(cx);
                     }
-                    Err(error) => this.error = Some(error.to_string()),
                 }
                 cx.notify();
             });
@@ -378,38 +567,7 @@ impl ToolPanel {
             cx.notify();
             return;
         };
-        self.run(vec![sql.into()], true, cx);
-    }
-
-    fn show_members(&mut self, cx: &mut Context<Self>) {
-        let name = Self::text(&self.name, cx);
-        if name.trim().is_empty() {
-            self.error = Some(t!("designer.tool_need_name").to_string());
-            cx.notify();
-            return;
-        }
-        let object = navidog_model::object::ObjectRef {
-            scope: self.scope.clone(),
-            kind: ObjectKind::Table,
-            name,
-        };
-        let plan = security::relation_plan(
-            self.dialect.as_ref(),
-            self.dialect.definition_family(),
-            &object,
-            true,
-        );
-        if let Some(note) = plan.note {
-            self.output = note.to_string();
-            self.error = None;
-            cx.notify();
-            return;
-        }
-        self.run(
-            plan.queries.into_iter().map(|query| query.sql).collect(),
-            true,
-            cx,
-        );
+        self.spawn_query(vec![sql.into()], true, FetchKind::Accounts, cx);
     }
 
     fn load_monitor(&mut self, page: MonitorPage, cx: &mut Context<Self>) {
@@ -634,12 +792,15 @@ impl ToolPanel {
         cx.notify();
     }
 
-    fn dirty(&self) -> bool {
+    fn is_dirty(&self, cx: &App) -> bool {
+        if self.tool == Tool::Users {
+            return self.user_dirty(cx);
+        }
         !self.preview.is_empty()
     }
 
     fn ask_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy || !self.dirty() {
+        if self.busy || !self.is_dirty(cx) {
             return;
         }
         let weak = cx.entity().downgrade();
@@ -679,8 +840,8 @@ impl BasePanel for ToolPanel {
     fn panel_name(&self) -> &'static str {
         PANEL
     }
-    fn closable(&self, _: &App) -> bool {
-        !self.busy && (self.close_approved || !self.dirty())
+    fn closable(&self, cx: &App) -> bool {
+        !self.busy && (self.close_approved || !self.is_dirty(cx))
     }
     fn dump(&self, _: &App) -> PanelState {
         PanelState {
@@ -733,6 +894,11 @@ impl BasePanel for ToolPanel {
 
 impl Panel for ToolPanel {
     fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let label = if self.tool == Tool::Users {
+            self.user_tab_title(cx)
+        } else {
+            t!(format!("designer.tool_{}", self.tool.key())).to_string()
+        };
         tabs::title(
             PanelId::from(cx.entity_id()),
             Some(lucide(match self.tool {
@@ -741,19 +907,23 @@ impl Panel for ToolPanel {
                 Tool::Monitor => "server",
                 Tool::Find => "search",
             })),
-            t!(format!("designer.tool_{}", self.tool.key())).to_string(),
+            label,
             None,
-            self.dirty(),
+            self.is_dirty(cx),
         )
     }
 }
 
 impl Render for ToolPanel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(fill) = self.pending_fill.take() {
+            self.apply_fill(fill, window, cx);
+        }
         let p = palette(cx);
         let disabled = self.busy;
+        let users = self.tool == Tool::Users;
         let body = match self.tool {
-            Tool::Users => self.render_users(disabled, cx),
+            Tool::Users => self.render_users(disabled, window, cx),
             Tool::Privileges => self.render_privileges(disabled, cx),
             Tool::Monitor => self.render_monitor(disabled, cx),
             Tool::Find => self.render_find(disabled, cx),
@@ -764,34 +934,46 @@ impl Render for ToolPanel {
             .track_focus(&self.focus)
             .size_full()
             .bg(p.window_bg)
-            .on_action(cx.listener(|this, _: &Save, _, cx| match this.tool {
-                Tool::Users => this.show_account(cx),
+            .on_action(cx.listener(|this, _: &Save, window, cx| match this.tool {
+                Tool::Users => this.show_account(window, cx),
                 Tool::Privileges => this.show_grant(false, cx),
                 _ => {}
             }))
-            .child(
-                h_flex()
-                    .min_h(tokens::object_toolbar::HEIGHT.rems())
-                    .px_2()
-                    .gap_1()
-                    .border_b_1()
-                    .border_color(p.separator)
-                    .when(!self.preview.is_empty(), |bar| {
-                        bar.child(
-                            Button::new("tool-execute")
-                                .small()
-                                .icon(lucide("play"))
-                                .label(t!("designer.execute").to_string())
-                                .disabled(disabled)
-                                .on_click(cx.listener(|this, _, _, cx| this.execute_preview(cx))),
-                        )
-                    }),
-            )
+            .when(!users || !self.preview.is_empty(), |col| {
+                col.child(
+                    h_flex()
+                        .min_h(tokens::object_toolbar::HEIGHT.rems())
+                        .px_2()
+                        .gap_1()
+                        .border_b_1()
+                        .border_color(p.separator)
+                        .when(!self.preview.is_empty(), |bar| {
+                            bar.child(
+                                Button::new("tool-execute")
+                                    .small()
+                                    .icon(lucide("play"))
+                                    .label(t!("designer.execute").to_string())
+                                    .disabled(disabled)
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.execute_preview(cx)),
+                                    ),
+                            )
+                        }),
+                )
+            })
             .when_some(self.error.clone(), |col, error| {
                 col.child(div().px_2().text_color(p.danger).child(error))
             })
             .child(body)
-            .child(self.render_output())
+            .when(!users, |col| col.child(self.render_output()))
+            .when(users && !self.output.is_empty(), |col| {
+                col.child(
+                    div()
+                        .px_2()
+                        .text_color(p.label_secondary)
+                        .child(self.output.clone()),
+                )
+            })
     }
 }
 
@@ -808,196 +990,6 @@ impl ToolPanel {
                 self.output
                     .lines()
                     .map(|line| div().child(line.to_string())),
-            )
-            .into_any_element()
-    }
-
-    fn render_users(&self, disabled: bool, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        if let AccountForm::Unavailable(reason) = self.dialect.account_form() {
-            return v_flex()
-                .id("tool-users")
-                .p_3()
-                .child(reason.to_string())
-                .into_any_element();
-        }
-        let mysql = self.dialect.account_form() == AccountForm::Mysql;
-        v_flex()
-            .id("tool-users")
-            .p_3()
-            .gap_2()
-            .overflow_y_scroll()
-            .max_h(tokens::designer::PROPERTY_MIN_HEIGHT.rems())
-            .child(FormRow::new(
-                t!("designer.name").to_string(),
-                Input::new(&self.name)
-                    .id("tool-name")
-                    .small()
-                    .disabled(disabled),
-            ))
-            .when(mysql, |col| {
-                col.child(FormRow::new(
-                    t!("designer.tool_host").to_string(),
-                    Input::new(&self.host)
-                        .id("tool-host")
-                        .small()
-                        .disabled(disabled),
-                ))
-            })
-            .child(FormRow::new(
-                t!("designer.tool_password").to_string(),
-                Input::new(&self.password)
-                    .id("tool-password")
-                    .small()
-                    .mask_toggle()
-                    .disabled(disabled),
-            ))
-            .when(mysql, |col| {
-                col.child(check(
-                    "tool-role",
-                    "tool_role",
-                    self.role,
-                    disabled,
-                    cx,
-                    |this, on| {
-                        this.role = on;
-                    },
-                ))
-                .child(check(
-                    "tool-locked",
-                    "tool_locked",
-                    self.locked,
-                    disabled,
-                    cx,
-                    |this, on| {
-                        this.locked = on;
-                    },
-                ))
-                .child(FormRow::new(
-                    t!("designer.tool_expire").to_string(),
-                    Input::new(&self.expire)
-                        .id("tool-expire")
-                        .small()
-                        .disabled(disabled),
-                ))
-                .child(FormRow::new(
-                    t!("designer.tool_max_queries").to_string(),
-                    Input::new(&self.max_queries)
-                        .id("tool-max-queries")
-                        .small()
-                        .disabled(disabled),
-                ))
-                .child(FormRow::new(
-                    t!("designer.tool_max_updates").to_string(),
-                    Input::new(&self.max_updates)
-                        .id("tool-max-updates")
-                        .small()
-                        .disabled(disabled),
-                ))
-                .child(FormRow::new(
-                    t!("designer.tool_max_connections").to_string(),
-                    Input::new(&self.max_connections)
-                        .id("tool-max-connections")
-                        .small()
-                        .disabled(disabled),
-                ))
-                .child(FormRow::new(
-                    t!("designer.tool_max_user_connections").to_string(),
-                    Input::new(&self.max_user_connections)
-                        .id("tool-max-user-connections")
-                        .small()
-                        .disabled(disabled),
-                ))
-            })
-            .when(!mysql, |col| {
-                col.child(check(
-                    "tool-login",
-                    "tool_login",
-                    self.login,
-                    disabled,
-                    cx,
-                    |this, on| {
-                        this.login = on;
-                    },
-                ))
-                .child(check(
-                    "tool-superuser",
-                    "tool_superuser",
-                    self.superuser,
-                    disabled,
-                    cx,
-                    |this, on| this.superuser = on,
-                ))
-                .child(check(
-                    "tool-createdb",
-                    "tool_createdb",
-                    self.createdb,
-                    disabled,
-                    cx,
-                    |this, on| this.createdb = on,
-                ))
-                .child(check(
-                    "tool-createrole",
-                    "tool_createrole",
-                    self.createrole,
-                    disabled,
-                    cx,
-                    |this, on| this.createrole = on,
-                ))
-                .child(check(
-                    "tool-inherit",
-                    "tool_inherit",
-                    self.inherit,
-                    disabled,
-                    cx,
-                    |this, on| this.inherit = on,
-                ))
-                .child(check(
-                    "tool-replication",
-                    "tool_replication",
-                    self.replication,
-                    disabled,
-                    cx,
-                    |this, on| this.replication = on,
-                ))
-                .child(FormRow::new(
-                    t!("designer.tool_connection_limit").to_string(),
-                    Input::new(&self.connection_limit)
-                        .id("tool-connection-limit")
-                        .small()
-                        .disabled(disabled),
-                ))
-                .child(FormRow::new(
-                    t!("designer.tool_valid_until").to_string(),
-                    Input::new(&self.valid_until)
-                        .id("tool-valid-until")
-                        .small()
-                        .disabled(disabled),
-                ))
-            })
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Button::new("tool-preview-user")
-                            .small()
-                            .label(t!("designer.tool_preview").to_string())
-                            .disabled(disabled)
-                            .on_click(cx.listener(|this, _, _, cx| this.show_account(cx))),
-                    )
-                    .child(
-                        Button::new("tool-list-users")
-                            .small()
-                            .label(t!("designer.tool_list").to_string())
-                            .disabled(disabled || self.dialect.account_list_sql().is_none())
-                            .on_click(cx.listener(|this, _, _, cx| this.list_accounts(cx))),
-                    )
-                    .child(
-                        Button::new("tool-members")
-                            .small()
-                            .label(t!("designer.tool_members").to_string())
-                            .disabled(disabled)
-                            .on_click(cx.listener(|this, _, _, cx| this.show_members(cx))),
-                    ),
             )
             .into_any_element()
     }
@@ -1342,6 +1334,8 @@ pub(crate) fn init(cx: &mut App) {
         }
     });
 }
+
+include!("user_panel.rs");
 
 #[cfg(test)]
 mod tests {

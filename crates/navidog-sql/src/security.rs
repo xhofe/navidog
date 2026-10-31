@@ -1,6 +1,8 @@
 //! Users, grants, maintenance, server monitor, find, and dependency SQL.
 //! Product differences are a [`DefinitionFamily`] match here. Callers ask the [`Dialect`] methods.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use navidog_model::object::{ObjectKind, ObjectRef, Scope};
 
 use crate::definition::DefinitionFamily;
@@ -20,7 +22,7 @@ pub enum AccountForm {
 }
 
 /// A user, role, or group draft. Unused fields are ignored for the other products.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AccountDraft {
     pub name: String,
     pub host: String,
@@ -45,6 +47,20 @@ pub struct AccountDraft {
     pub replication: bool,
     pub connection_limit: String,
     pub valid_until: String,
+    /// Authentication plugin. Empty keeps the server default.
+    pub plugin: String,
+    /// `NONE`, `ANY`, `X509`, `SPECIFIED`, or empty to leave SSL alone.
+    pub ssl_type: String,
+    pub ssl_cipher: String,
+    pub ssl_issuer: String,
+    pub ssl_subject: String,
+    /// Set when the account was loaded. `None` is a new account.
+    pub previous_plugin: Option<String>,
+    pub previous_ssl: Option<String>,
+    pub previous_cipher: Option<String>,
+    pub previous_issuer: Option<String>,
+    pub previous_subject: Option<String>,
+    pub previous_locked: Option<bool>,
 }
 
 impl Default for AccountDraft {
@@ -70,8 +86,92 @@ impl Default for AccountDraft {
             replication: false,
             connection_limit: String::new(),
             valid_until: String::new(),
+            plugin: String::new(),
+            ssl_type: String::new(),
+            ssl_cipher: String::new(),
+            ssl_issuer: String::new(),
+            ssl_subject: String::new(),
+            previous_plugin: None,
+            previous_ssl: None,
+            previous_cipher: None,
+            previous_issuer: None,
+            previous_subject: None,
+            previous_locked: None,
         }
     }
+}
+
+/// Global privileges shown on the server page, in Navicat's order.
+/// `GRANT OPTION` is the `WITH GRANT OPTION` clause, not a name in the privilege list.
+pub const SERVER_PRIVILEGES: &[&str] = &[
+    "ALTER",
+    "ALTER ROUTINE",
+    "CREATE",
+    "CREATE ROUTINE",
+    "CREATE TEMPORARY TABLES",
+    "CREATE USER",
+    "CREATE VIEW",
+    "DELETE",
+    "DROP",
+    "EVENT",
+    "EXECUTE",
+    "FILE",
+    "GRANT OPTION",
+    "INDEX",
+    "INSERT",
+    "LOCK TABLES",
+    "PROCESS",
+    "REFERENCES",
+    "RELOAD",
+    "REPLICATION CLIENT",
+    "REPLICATION SLAVE",
+    "SELECT",
+    "SHOW DATABASES",
+    "SHOW VIEW",
+    "SHUTDOWN",
+    "SUPER",
+    "SYSTEM_USER",
+    "TRIGGER",
+    "UPDATE",
+];
+
+/// Privileges that apply to a database object. Same `GRANT OPTION` rule as the server list.
+pub const OBJECT_PRIVILEGES: &[&str] = &[
+    "ALTER",
+    "ALTER ROUTINE",
+    "CREATE",
+    "CREATE ROUTINE",
+    "CREATE TEMPORARY TABLES",
+    "CREATE VIEW",
+    "DELETE",
+    "DROP",
+    "EVENT",
+    "EXECUTE",
+    "GRANT OPTION",
+    "INDEX",
+    "INSERT",
+    "LOCK TABLES",
+    "REFERENCES",
+    "SELECT",
+    "SHOW VIEW",
+    "TRIGGER",
+    "UPDATE",
+];
+
+/// What `SHOW GRANTS` said, plus default roles the designer loaded separately.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GrantSet {
+    pub server: BTreeSet<String>,
+    pub server_grant_option: bool,
+    pub roles: BTreeSet<(String, String)>,
+    pub defaults: BTreeSet<(String, String)>,
+    pub objects: BTreeMap<(String, String), ObjectGrant>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ObjectGrant {
+    pub privileges: BTreeSet<String>,
+    pub grant_option: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -183,11 +283,19 @@ pub fn account_statements(
 
 pub fn account_list_sql(family: Option<DefinitionFamily>) -> Option<&'static str> {
     match family {
-        Some(DefinitionFamily::Mysql) => {
-            Some("SELECT User, Host FROM mysql.user ORDER BY User, Host")
-        }
+        Some(DefinitionFamily::Mysql) => Some(
+            "SELECT CONCAT(User, '@', Host) AS name, User AS user_name, Host AS host, \
+             IFNULL(plugin, '') AS plugin, \
+             IF(password_expired = 'Y', 'EXPIRED', 'DEFAULT') AS expire, \
+             max_questions AS max_queries, max_updates, max_connections, max_user_connections \
+             FROM mysql.user ORDER BY User, Host",
+        ),
         Some(DefinitionFamily::Postgres) => Some(
-            "SELECT rolname, CASE WHEN rolcanlogin THEN 'login' ELSE 'group' END FROM pg_roles ORDER BY rolname",
+            "SELECT rolname AS name, \
+             CASE WHEN rolcanlogin THEN 'login' ELSE 'group' END AS kind, \
+             rolsuper AS superuser, rolcreatedb AS createdb, rolcreaterole AS createrole, \
+             rolconnlimit AS connection_limit \
+             FROM pg_roles ORDER BY rolname",
         ),
         _ => None,
     }
@@ -642,15 +750,15 @@ fn mysql_account(dialect: &dyn Dialect, draft: &AccountDraft) -> Result<Vec<Stri
         dialect.quote_ident(host)
     );
     let mut alter = String::new();
-    if let Some(password) = optional_password(&draft.password) {
-        alter.push_str(" IDENTIFIED BY ");
-        alter.push_str(&dialect.string_literal(password));
-    }
-    // Grammar: auth option, then WITH limits, then PASSWORD EXPIRE, then ACCOUNT LOCK.
+    // Grammar: auth option, REQUIRE, WITH limits, PASSWORD EXPIRE, then ACCOUNT LOCK.
+    alter.push_str(&mysql_identified(dialect, draft)?);
+    alter.push_str(&mysql_require(dialect, draft)?);
     alter.push_str(&mysql_limits(draft)?);
     alter.push_str(&mysql_expire(draft.expire.trim())?);
     if draft.locked {
         alter.push_str(" ACCOUNT LOCK");
+    } else if draft.previous_locked == Some(true) {
+        alter.push_str(" ACCOUNT UNLOCK");
     }
     if let Some(previous) = previous {
         let previous_host = host_or_default(draft.previous_host.as_deref().unwrap_or("").trim());
@@ -1138,6 +1246,454 @@ fn privilege(raw: &str) -> Result<String, String> {
         return Err("Enter a privilege such as SELECT.".into());
     }
     Ok(raw.to_ascii_uppercase())
+}
+
+fn mysql_identified(dialect: &dyn Dialect, draft: &AccountDraft) -> Result<String, String> {
+    let plugin = draft.plugin.trim();
+    if !plugin.is_empty()
+        && !plugin
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err("Plugin name must be letters, digits, or underscores.".into());
+    }
+    let previous = draft.previous_plugin.as_deref();
+    if let Some(password) = optional_password(&draft.password) {
+        let by = dialect.string_literal(password);
+        if plugin.is_empty() {
+            return Ok(format!(" IDENTIFIED BY {by}"));
+        }
+        return Ok(format!(" IDENTIFIED WITH {plugin} BY {by}"));
+    }
+    // A loaded account keeps its plugin until the field actually changes.
+    let changed = match previous {
+        Some(previous) => previous != plugin && !plugin.is_empty(),
+        None => !plugin.is_empty() && draft.previous_name.is_none(),
+    };
+    if changed {
+        Ok(format!(" IDENTIFIED WITH {plugin}"))
+    } else {
+        Ok(String::new())
+    }
+}
+
+fn mysql_require(dialect: &dyn Dialect, draft: &AccountDraft) -> Result<String, String> {
+    let ssl = draft.ssl_type.trim();
+    if ssl.is_empty() {
+        return Ok(String::new());
+    }
+    let same = draft.previous_ssl.as_deref().unwrap_or("") == ssl
+        && draft.previous_cipher.as_deref().unwrap_or("") == draft.ssl_cipher.trim()
+        && draft.previous_issuer.as_deref().unwrap_or("") == draft.ssl_issuer.trim()
+        && draft.previous_subject.as_deref().unwrap_or("") == draft.ssl_subject.trim();
+    if same {
+        return Ok(String::new());
+    }
+    let clause = match ssl.to_ascii_uppercase().as_str() {
+        "NONE" => "NONE".to_string(),
+        "ANY" => "SSL".to_string(),
+        "X509" => "X509".to_string(),
+        "SPECIFIED" => {
+            let mut parts = Vec::new();
+            if !draft.ssl_cipher.trim().is_empty() {
+                parts.push(format!(
+                    "CIPHER {}",
+                    dialect.string_literal(draft.ssl_cipher.trim())
+                ));
+            }
+            if !draft.ssl_issuer.trim().is_empty() {
+                parts.push(format!(
+                    "ISSUER {}",
+                    dialect.string_literal(draft.ssl_issuer.trim())
+                ));
+            }
+            if !draft.ssl_subject.trim().is_empty() {
+                parts.push(format!(
+                    "SUBJECT {}",
+                    dialect.string_literal(draft.ssl_subject.trim())
+                ));
+            }
+            if parts.is_empty() {
+                return Err("SSL SPECIFIED needs a cipher, issuer, or subject.".into());
+            }
+            parts.join(" AND ")
+        }
+        _ => return Err("SSL type must be NONE, ANY, X509, or SPECIFIED.".into()),
+    };
+    Ok(format!(" REQUIRE {clause}"))
+}
+
+/// Queries that fill the user designer. `tables` is omitted when no database is open.
+pub struct UserLoadSql {
+    pub profile: String,
+    pub grants: String,
+    pub accounts: String,
+    pub tables: Option<String>,
+    pub defaults: String,
+    pub members: String,
+}
+
+pub fn user_load_sql(
+    dialect: &dyn Dialect,
+    family: Option<DefinitionFamily>,
+    name: &str,
+    host: &str,
+    database: &str,
+) -> Result<UserLoadSql, String> {
+    if family != Some(DefinitionFamily::Mysql) {
+        return Err("This connection has no user designer.".into());
+    }
+    let name_lit = dialect.string_literal(account_name(name)?);
+    let host_lit = dialect.string_literal(host_or_default(host.trim()));
+    let user = format!(
+        "{}@{}",
+        dialect.quote_ident(account_name(name)?),
+        dialect.quote_ident(host_or_default(host.trim()))
+    );
+    let tables = (!database.trim().is_empty()).then(|| {
+        format!(
+            "SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.TABLES \
+             WHERE TABLE_SCHEMA = {} AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME",
+            dialect.string_literal(database.trim())
+        )
+    });
+    Ok(UserLoadSql {
+        profile: format!(
+            "SELECT IFNULL(plugin, ''), IF(account_locked = 'Y', '1', '0'), \
+             IF(password_expired = 'Y', 'EXPIRED', 'DEFAULT'), \
+             max_questions, max_updates, max_connections, max_user_connections, \
+             IFNULL(ssl_type, ''), IFNULL(ssl_cipher, ''), IFNULL(x509_issuer, ''), \
+             IFNULL(x509_subject, '') \
+             FROM mysql.user WHERE User = {name_lit} AND Host = {host_lit}"
+        ),
+        grants: format!("SHOW GRANTS FOR {user}"),
+        accounts: account_list_sql(family)
+            .unwrap_or("SELECT User AS user_name, Host AS host FROM mysql.user")
+            .to_string(),
+        tables,
+        defaults: format!(
+            "SELECT DEFAULT_ROLE_USER, DEFAULT_ROLE_HOST FROM mysql.default_roles \
+             WHERE USER = {name_lit} AND HOST = {host_lit}"
+        ),
+        members: format!(
+            "SELECT TO_USER, TO_HOST FROM mysql.role_edges \
+             WHERE FROM_USER = {name_lit} AND FROM_HOST = {host_lit}"
+        ),
+    })
+}
+
+/// Reads `SHOW GRANTS` lines. `USAGE` is ignored. `ALL PRIVILEGES` stays literal;
+/// the designer expands it onto the checkboxes it knows.
+pub fn parse_show_grants(lines: &[String]) -> GrantSet {
+    let mut set = GrantSet::default();
+    for line in lines {
+        let Some(piece) = parse_grant_line(line) else {
+            continue;
+        };
+        match piece {
+            GrantPiece::Server {
+                privileges,
+                grant_option,
+            } => {
+                for privilege in privileges {
+                    if privilege != "USAGE" {
+                        set.server.insert(privilege);
+                    }
+                }
+                set.server_grant_option |= grant_option;
+            }
+            GrantPiece::Role { name, host } => {
+                set.roles.insert((name, host));
+            }
+            GrantPiece::Object {
+                schema,
+                name,
+                privileges,
+                grant_option,
+            } => {
+                let entry = set.objects.entry((schema, name)).or_default();
+                entry.privileges.extend(privileges);
+                entry.grant_option |= grant_option;
+            }
+        }
+    }
+    set
+}
+
+enum GrantPiece {
+    Server {
+        privileges: Vec<String>,
+        grant_option: bool,
+    },
+    Role {
+        name: String,
+        host: String,
+    },
+    Object {
+        schema: String,
+        name: String,
+        privileges: Vec<String>,
+        grant_option: bool,
+    },
+}
+
+fn parse_grant_line(line: &str) -> Option<GrantPiece> {
+    let line = line.trim().trim_end_matches(';');
+    let rest = line.strip_prefix("GRANT ")?;
+    let grant_option = rest.contains("WITH GRANT OPTION");
+    let rest = rest
+        .split(" WITH GRANT OPTION")
+        .next()
+        .unwrap_or(rest)
+        .trim();
+    let to = rest.rfind(" TO ")?;
+    let left = rest[..to].trim();
+    if let Some(on) = left.rfind(" ON ") {
+        let privileges = split_privs(&left[..on]);
+        let object = left[on + 4..].trim();
+        if object == "*.*" {
+            return Some(GrantPiece::Server {
+                privileges,
+                grant_option,
+            });
+        }
+        let (schema, name) = parse_grant_object(object)?;
+        return Some(GrantPiece::Object {
+            schema,
+            name,
+            privileges,
+            grant_option,
+        });
+    }
+    let (name, host) = parse_role_ref(left)?;
+    Some(GrantPiece::Role { name, host })
+}
+
+fn split_privs(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|part| part.trim().to_ascii_uppercase())
+        .filter(|part| !part.is_empty() && part != "USAGE")
+        .collect()
+}
+
+fn parse_grant_object(raw: &str) -> Option<(String, String)> {
+    let (schema, rest) = take_ident(raw.trim())?;
+    let rest = rest.trim().strip_prefix('.')?.trim();
+    if rest == "*" {
+        return Some((schema, "*".into()));
+    }
+    let (name, _) = take_ident(rest)?;
+    Some((schema, name))
+}
+
+fn parse_role_ref(raw: &str) -> Option<(String, String)> {
+    let (name, rest) = take_ident(raw.trim())?;
+    let rest = rest.trim().strip_prefix('@')?.trim();
+    let (host, _) = take_ident(rest)?;
+    Some((name, host))
+}
+
+fn take_ident(raw: &str) -> Option<(String, &str)> {
+    let raw = raw.trim();
+    if let Some(rest) = raw.strip_prefix('`') {
+        let end = rest.find('`')?;
+        return Some((rest[..end].to_string(), &rest[end + 1..]));
+    }
+    let end = raw.find(['@', ' ', '.', ',']).unwrap_or(raw.len());
+    if end == 0 {
+        return None;
+    }
+    Some((raw[..end].to_string(), &raw[end..]))
+}
+
+/// The two snapshots a privilege diff is taken from.
+pub struct PrivilegeEdit<'a> {
+    pub grantee: &'a str,
+    pub host: &'a str,
+    pub before: &'a GrantSet,
+    pub after: &'a GrantSet,
+    pub before_members: &'a BTreeSet<(String, String)>,
+    pub after_members: &'a BTreeSet<(String, String)>,
+}
+
+/// `GRANT` / `REVOKE` for the difference between two snapshots. Privileges that are in
+/// `before` but not in the designer's checklist stay if the caller copied them into `after`.
+pub fn privilege_statements(
+    dialect: &dyn Dialect,
+    family: Option<DefinitionFamily>,
+    edit: PrivilegeEdit<'_>,
+) -> Result<Vec<String>, String> {
+    match family {
+        Some(DefinitionFamily::Mysql) => mysql_privilege_statements(dialect, &edit),
+        Some(DefinitionFamily::Postgres) => {
+            postgres_privilege_statements(dialect, edit.grantee, edit.before, edit.after)
+        }
+        Some(DefinitionFamily::Sqlite) | None => {
+            Err("This connection has no privilege manager.".into())
+        }
+    }
+}
+
+fn mysql_privilege_statements(
+    dialect: &dyn Dialect,
+    edit: &PrivilegeEdit<'_>,
+) -> Result<Vec<String>, String> {
+    let PrivilegeEdit {
+        grantee,
+        host,
+        before,
+        after,
+        before_members,
+        after_members,
+    } = edit;
+    let user = mysql_account_ref(dialect, grantee, host)?;
+    let mut sql = Vec::new();
+    push_priv_diff(
+        &mut sql,
+        "*.*",
+        &user,
+        &before.server,
+        before.server_grant_option,
+        &after.server,
+        after.server_grant_option,
+    );
+    let mut keys: BTreeSet<&(String, String)> = before.objects.keys().collect();
+    keys.extend(after.objects.keys());
+    for key in keys {
+        let empty = ObjectGrant::default();
+        let old = before.objects.get(key).unwrap_or(&empty);
+        let new = after.objects.get(key).unwrap_or(&empty);
+        let object = if key.1 == "*" {
+            format!("{}.*", dialect.quote_ident(&key.0))
+        } else {
+            format!(
+                "{}.{}",
+                dialect.quote_ident(&key.0),
+                dialect.quote_ident(&key.1)
+            )
+        };
+        push_priv_diff(
+            &mut sql,
+            &object,
+            &user,
+            &old.privileges,
+            old.grant_option,
+            &new.privileges,
+            new.grant_option,
+        );
+    }
+    for role in after.roles.difference(&before.roles) {
+        sql.push(format!(
+            "GRANT {} TO {user}",
+            mysql_account_ref(dialect, &role.0, &role.1)?
+        ));
+    }
+    for role in before.roles.difference(&after.roles) {
+        sql.push(format!(
+            "REVOKE {} FROM {user}",
+            mysql_account_ref(dialect, &role.0, &role.1)?
+        ));
+    }
+    if before.defaults != after.defaults {
+        if after.defaults.is_empty() {
+            sql.push(format!("SET DEFAULT ROLE NONE TO {user}"));
+        } else {
+            let roles = after
+                .defaults
+                .iter()
+                .map(|(name, host)| mysql_account_ref(dialect, name, host))
+                .collect::<Result<Vec<_>, _>>()?
+                .join(", ");
+            sql.push(format!("SET DEFAULT ROLE {roles} TO {user}"));
+        }
+    }
+    for member in after_members.difference(before_members) {
+        sql.push(format!(
+            "GRANT {user} TO {}",
+            mysql_account_ref(dialect, &member.0, &member.1)?
+        ));
+    }
+    for member in before_members.difference(after_members) {
+        sql.push(format!(
+            "REVOKE {user} FROM {}",
+            mysql_account_ref(dialect, &member.0, &member.1)?
+        ));
+    }
+    Ok(sql)
+}
+
+fn push_priv_diff(
+    sql: &mut Vec<String>,
+    object: &str,
+    user: &str,
+    before: &BTreeSet<String>,
+    before_option: bool,
+    after: &BTreeSet<String>,
+    after_option: bool,
+) {
+    let added: Vec<&String> = after.difference(before).collect();
+    let removed: Vec<&String> = before.difference(after).collect();
+    if !added.is_empty() {
+        let mut statement = format!("GRANT {} ON {object} TO {user}", join_privs(&added));
+        if after_option && !before_option {
+            statement.push_str(" WITH GRANT OPTION");
+        }
+        sql.push(statement);
+    } else if after_option && !before_option && !after.is_empty() {
+        let held: Vec<&String> = after.iter().collect();
+        sql.push(format!(
+            "GRANT {} ON {object} TO {user} WITH GRANT OPTION",
+            join_privs(&held)
+        ));
+    }
+    if before_option && !after_option {
+        sql.push(format!("REVOKE GRANT OPTION ON {object} FROM {user}"));
+    }
+    if !removed.is_empty() {
+        sql.push(format!(
+            "REVOKE {} ON {object} FROM {user}",
+            join_privs(&removed)
+        ));
+    }
+}
+
+fn join_privs(privileges: &[&String]) -> String {
+    privileges
+        .iter()
+        .map(|privilege| privilege.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn mysql_account_ref(dialect: &dyn Dialect, name: &str, host: &str) -> Result<String, String> {
+    Ok(format!(
+        "{}@{}",
+        dialect.quote_ident(account_name(name)?),
+        dialect.quote_ident(host_or_default(host.trim()))
+    ))
+}
+
+fn postgres_privilege_statements(
+    dialect: &dyn Dialect,
+    grantee: &str,
+    before: &GrantSet,
+    after: &GrantSet,
+) -> Result<Vec<String>, String> {
+    let user = dialect.quote_ident(account_name(grantee)?);
+    let mut sql = Vec::new();
+    for role in after.roles.difference(&before.roles) {
+        sql.push(format!(
+            "GRANT {} TO {user}",
+            dialect.quote_ident(account_name(&role.0)?)
+        ));
+    }
+    for role in before.roles.difference(&after.roles) {
+        sql.push(format!(
+            "REVOKE {} FROM {user}",
+            dialect.quote_ident(account_name(&role.0)?)
+        ));
+    }
+    Ok(sql)
 }
 
 fn quote_grant_object(dialect: &dyn Dialect, raw: &str, mysql: bool) -> Result<String, String> {

@@ -718,17 +718,11 @@ impl Render for ObjectDesigner {
             .when_some(self.error.clone(), |v, error| {
                 v.child(gpui_kit::div().px_2().text_color(p.danger).child(error))
             })
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .child(match self.page {
-                        Page::Preview => Editor::new(&self.sql).size_full().into_any_element(),
-                        Page::Options => self.render_options(disabled),
-                        Page::Definition => self.render_definition(disabled),
-                    }),
-            )
+            .child(div().flex_1().min_h_0().w_full().child(match self.page {
+                Page::Preview => Editor::new(&self.sql).size_full().into_any_element(),
+                Page::Options => self.render_options(disabled),
+                Page::Definition => self.render_definition(disabled),
+            }))
     }
 }
 
