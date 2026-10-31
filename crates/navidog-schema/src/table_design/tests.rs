@@ -99,7 +99,7 @@ fn sqlite_rebuild_renames_the_old_table_and_leaves_it() {
     assert!(statements.iter().all(|sql| !sql.contains("DROP TABLE")));
     assert_eq!(
         statements[0],
-        "ALTER TABLE \"main\".\"test\" RENAME TO \"_test_old_20261024\""
+        "-- Rebuilding the whole table.\nALTER TABLE \"main\".\"test\" RENAME TO \"_test_old_20261024\""
     );
     assert!(statements[1].starts_with("CREATE TABLE \"main\".\"test\""));
     assert!(statements[1].contains("\"add_col\" TEXT"));
@@ -124,7 +124,7 @@ fn sqlite_rebuild_renames_the_old_table_and_leaves_it() {
     .unwrap();
     assert_eq!(
         statements[0],
-        "ALTER TABLE \"main\".\"test\" RENAME TO \"_test_old_20261024_1\""
+        "-- Rebuilding the whole table.\nALTER TABLE \"main\".\"test\" RENAME TO \"_test_old_20261024_1\""
     );
     assert!(!statements[1].contains("detail"));
     assert_eq!(
@@ -378,7 +378,7 @@ fn foreign_key_requires_matching_nonempty_field_lists() {
 }
 
 #[test]
-fn sqlite_strict_rebuild_preserves_data_and_rejects_rowid_conversion() {
+fn sqlite_strict_rebuild_preserves_data_and_converts_without_rowid() {
     navidog_db::runtime::runtime().block_on(async {
         let mut session = navidog_db::connect(
             Arc::new(navidog_sqlite::SqliteDriver::default()),
@@ -428,11 +428,22 @@ fn sqlite_strict_rebuild_preserves_data_and_rejects_rowid_conversion() {
             &navidog_sqlite::SqliteDialect,
         )
         .unwrap();
-        assert!(
-            plan(&navidog_sqlite::SqliteDialect, &scope, Some(&strict), &next)
-                .unwrap_err()
-                .message
-                .contains("row identity")
+        let preview = plan(&navidog_sqlite::SqliteDialect, &scope, Some(&strict), &next).unwrap();
+        assert!(preview[0].contains("Rebuilding the whole table"));
+        assert!(preview[0].contains("drops the implicit rowid"));
+        let converted = apply(r, &scope, Some(&strict), &next).await.unwrap();
+        assert_eq!(
+            table_option(
+                &converted.design.options,
+                "without_rowid",
+                &navidog_sqlite::SqliteDialect
+            )
+            .unwrap(),
+            "true"
+        );
+        assert_eq!(
+            r.execute("SELECT id,v FROM t").await.unwrap()[0].rows[0][0].as_deref(),
+            Some("8")
         );
         r.execute("CREATE TABLE bad(v INTEGER); INSERT INTO bad VALUES('text')")
             .await
@@ -793,6 +804,76 @@ fn live_postgres_comments_round_trip_rename_rollback_and_concurrency() {
 }
 
 #[test]
+fn live_type_names_round_trip_from_the_server() {
+    if std::env::var_os("NAVIDOG_LIVE").is_none() {
+        return;
+    }
+    navidog_db::runtime::runtime().block_on(async {
+        for (driver, port, db, user, column) in [
+            (
+                Arc::new(navidog_mysql::MySqlDriver::mysql()) as Arc<dyn navidog_db::Driver>,
+                13306,
+                "sakila",
+                "root",
+                "varchar(12)",
+            ),
+            (
+                Arc::new(navidog_mysql::MySqlDriver::mariadb()) as Arc<dyn navidog_db::Driver>,
+                13307,
+                "sakila",
+                "root",
+                "varchar(12)",
+            ),
+            (
+                Arc::new(navidog_postgres::PostgresDriver::default())
+                    as Arc<dyn navidog_db::Driver>,
+                15432,
+                "pagila",
+                "postgres",
+                "character varying(12)",
+            ),
+        ] {
+            let mut session = navidog_db::connect(
+                driver,
+                navidog_db::ConnectParams {
+                    host: "127.0.0.1".into(),
+                    port,
+                    database: Some(db.into()),
+                    user: user.into(),
+                    password: Some("navidog".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            let r = session.relational().unwrap();
+            let d = r.dialect();
+            let scope = Scope::new("test", db, Some("public".into()));
+            let name = format!("navidog_types_{}", std::process::id());
+            let table = d.qualified(&scope, &name);
+            r.execute(&format!("DROP TABLE IF EXISTS {table}"))
+                .await
+                .unwrap();
+            let mut draft = TableDesign::blank(d.as_ref());
+            draft.name = name;
+            draft
+                .columns
+                .push(DesignColumn::new(2, "label", format!("{column} NOT NULL")));
+            apply(r, &scope, None, &draft).await.unwrap();
+            let loaded = load(r, &scope, &draft.name).await.unwrap();
+            let printed = loaded.design.columns[1].definition.to_lowercase();
+            assert!(
+                printed.starts_with(&column.to_lowercase()),
+                "{db} printed {}",
+                loaded.design.columns[1].definition
+            );
+            r.execute(&format!("DROP TABLE {table}")).await.unwrap();
+            session.close().await.unwrap();
+        }
+    });
+}
+
+#[test]
 fn mysql_standalone_index_removal_names_its_table() {
     let mut design = TableDesign::new();
     design.name = "t".into();
@@ -810,4 +891,128 @@ fn mysql_standalone_index_removal_names_its_table() {
         plan(&navidog_mysql::MysqlDialect, &scope(), Some(&old), &design).unwrap(),
         vec!["ALTER TABLE `main`.`t` DROP INDEX `ix`"]
     );
+}
+
+#[test]
+fn postgres_column_reorder_rebuilds_without_cascade() {
+    let dialect = navidog_postgres::PostgresDialect;
+    let sql = "CREATE TABLE \"t\" (\"b\" integer, \"a\" integer)";
+    let design = super::parse::create(sql, "t", &dialect).unwrap();
+    let before = TableSnapshot {
+        design: design.clone(),
+        ddl: sql.into(),
+        triggers: vec!["CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into()],
+    };
+    let mut after = design;
+    after.columns.swap(0, 1);
+    let statements = plan(&dialect, &scope(), Some(&before), &after).unwrap();
+    assert!(statements[0].contains("Rebuilding the whole table"));
+    assert!(statements[0].contains("CREATE TABLE"));
+    assert!(
+        statements
+            .iter()
+            .any(|sql| sql == "DROP TABLE \"public\".\"t\"")
+    );
+    assert!(statements.iter().all(|sql| !sql.contains("CASCADE")));
+    assert!(statements.iter().any(|sql| sql.contains("RENAME TO")));
+    assert!(
+        statements
+            .iter()
+            .any(|sql| sql.contains("CREATE TRIGGER audit"))
+    );
+}
+
+#[test]
+fn postgres_identity_can_be_added_and_sequence_options_stay_fixed() {
+    let dialect = navidog_postgres::PostgresDialect;
+    let sql = "CREATE TABLE \"t\" (\"id\" integer NOT NULL)";
+    let design = super::parse::create(sql, "t", &dialect).unwrap();
+    let before = TableSnapshot {
+        design: design.clone(),
+        ddl: sql.into(),
+        triggers: vec![],
+    };
+    let mut added = design.clone();
+    added.columns[0].definition = "integer NOT NULL GENERATED ALWAYS AS IDENTITY".into();
+    let statements = plan(&dialect, &scope(), Some(&before), &added).unwrap();
+    assert!(
+        statements
+            .iter()
+            .any(|sql| sql.contains("ADD GENERATED ALWAYS AS IDENTITY"))
+    );
+    let mut switched = added.clone();
+    switched.columns[0].definition = "integer NOT NULL GENERATED BY DEFAULT AS IDENTITY".into();
+    let switched_before = TableSnapshot {
+        design: added,
+        ddl: String::new(),
+        triggers: vec![],
+    };
+    let statements = plan(&dialect, &scope(), Some(&switched_before), &switched).unwrap();
+    assert!(
+        statements
+            .iter()
+            .any(|sql| sql.contains("SET GENERATED BY DEFAULT"))
+    );
+    let mut options = switched;
+    options.columns[0].definition =
+        "integer NOT NULL GENERATED BY DEFAULT AS IDENTITY (START WITH 5)".into();
+    assert!(
+        plan(&dialect, &scope(), Some(&switched_before), &options)
+            .unwrap_err()
+            .message
+            .contains("sequence options")
+    );
+}
+
+#[test]
+fn sqlite_rebuild_keeps_generated_columns_and_combines_renames() {
+    navidog_db::runtime::runtime().block_on(async {
+        let mut session = navidog_db::connect(
+            Arc::new(navidog_sqlite::SqliteDriver::default()),
+            navidog_db::ConnectParams {
+                file: Some(":memory:".into()),
+                create_new: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let r = session.relational().unwrap();
+        let scope = Scope::new("test", "main", None);
+        r.execute(
+            "CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT, label TEXT GENERATED ALWAYS AS (name || '!') STORED); INSERT INTO t(id, name) VALUES(3, 'a')",
+        )
+        .await
+        .unwrap();
+        let old = load(r, &scope, "t").await.unwrap();
+        let mut next = old.design.clone();
+        next.columns[0].name = "pk".into();
+        next.columns.push(DesignColumn::new(9, "extra", "TEXT DEFAULT 'x'"));
+        let saved = apply(r, &scope, Some(&old), &next).await.unwrap();
+        let rows = r
+            .execute("SELECT pk, name, label, extra FROM t")
+            .await
+            .unwrap();
+        assert_eq!(
+            rows[0].rows[0],
+            vec![
+                Some("3".into()),
+                Some("a".into()),
+                Some("a!".into()),
+                Some("x".into())
+            ]
+        );
+        assert!(saved.design.columns.iter().any(|c| c.name == "pk"));
+        r.execute("CREATE TABLE types(n int, s varchar(8), d numeric(4,1))")
+            .await
+            .unwrap();
+        let loaded = load(r, &scope, "types").await.unwrap();
+        let spellings: Vec<_> = loaded
+            .design
+            .columns
+            .iter()
+            .map(|c| c.definition.split_whitespace().next().unwrap())
+            .collect();
+        assert_eq!(spellings, ["int", "varchar(8)", "numeric(4,1)"]);
+    });
 }

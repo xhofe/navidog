@@ -99,6 +99,9 @@ pub(super) fn plan_on(
         }
         return sqlite(d, scope, before, after, occupied, day);
     }
+    if !d.features().supports_column_position && columns_reordered(old, after) {
+        return postgres_rebuild(d, scope, before, after);
+    }
     let table = d.qualified(scope, &old.name);
     let mut out = Vec::new();
     // Drop changed constraints before columns; add replacements after columns exist.
@@ -162,11 +165,6 @@ pub(super) fn plan_on(
                         c.definition
                     ));
                 } else {
-                    if moved {
-                        return Err(DbError::msg(
-                            "PostgreSQL does not support reordering existing columns.",
-                        ));
-                    }
                     if c.name != previous.name {
                         out.push(format!(
                             "ALTER TABLE {table} RENAME COLUMN {} TO {}",
@@ -175,24 +173,11 @@ pub(super) fn plan_on(
                         ));
                     }
                     if c.definition != previous.definition {
-                        if let (Some((a, b, mode, params)), Some((oa, ob, old_mode, old_params))) = (
-                            properties::identity(&c.definition, d),
-                            properties::identity(&previous.definition, d),
-                        ) {
-                            let stripped = format!("{}{}", &c.definition[..a], &c.definition[b..]);
-                            let old_stripped = format!(
-                                "{}{}",
-                                &previous.definition[..oa],
-                                &previous.definition[ob..]
-                            );
-                            if stripped == old_stripped && params == old_params && mode != old_mode
-                            {
-                                out.push(format!(
-                                    "ALTER TABLE {table} ALTER COLUMN {} SET GENERATED {mode}",
-                                    d.quote_ident(&c.name)
-                                ));
-                                continue;
-                            }
+                        if let Some(statements) =
+                            alter_identity(d, &table, &c.name, &previous.definition, &c.definition)?
+                        {
+                            out.extend(statements);
+                            continue;
                         }
                         let (ty, null, default) = pg_column(&c.definition, d)?;
                         let (old_ty, old_null, old_default) = pg_column(&previous.definition, d)?;
@@ -375,6 +360,187 @@ pub(super) fn backup_name(table: &str, day: &str, taken: &[String]) -> DbResult<
         "Too many leftover SQLite backup tables for this date.",
     ))
 }
+fn columns_reordered(old: &TableDesign, after: &TableDesign) -> bool {
+    let current: Vec<&str> = after
+        .columns
+        .iter()
+        .filter_map(|c| c.original.as_deref())
+        .collect();
+    let previous: Vec<&str> = old
+        .columns
+        .iter()
+        .map(|c| c.name.as_str())
+        .filter(|name| current.contains(name))
+        .collect();
+    current != previous
+}
+
+fn rebuild_note(sql: String, drop_rowid: bool) -> String {
+    let extra = if drop_rowid {
+        " Changing WITHOUT ROWID drops the implicit rowid."
+    } else {
+        ""
+    };
+    format!("-- Rebuilding the whole table.{extra}\n{sql}")
+}
+
+fn strip_identity(definition: &str, identity: Option<&(usize, usize, String, String)>) -> String {
+    match identity {
+        Some((start, end, _, _)) => format!("{}{}", &definition[..*start], &definition[*end..]),
+        None => definition.to_string(),
+    }
+}
+
+/// Identity add, drop, and mode switch. Sequence options must stay as loaded.
+/// `None` means the column has no identity on either side.
+fn alter_identity(
+    d: &dyn Dialect,
+    table: &str,
+    column: &str,
+    old_def: &str,
+    new_def: &str,
+) -> DbResult<Option<Vec<String>>> {
+    let new_id = properties::identity(new_def, d);
+    let old_id = properties::identity(old_def, d);
+    if new_id.is_none() && old_id.is_none() {
+        return Ok(None);
+    }
+    if let (Some(new_id), Some(old_id)) = (&new_id, &old_id) {
+        if new_id.3 != old_id.3 {
+            return Err(DbError::msg(
+                "Changing identity sequence options is not supported.",
+            ));
+        }
+    } else if new_id.as_ref().is_some_and(|id| !id.3.is_empty()) {
+        return Err(DbError::msg(
+            "Changing identity sequence options is not supported.",
+        ));
+    }
+    let new_rest = strip_identity(new_def, new_id.as_ref());
+    let old_rest = strip_identity(old_def, old_id.as_ref());
+    let mut out = Vec::new();
+    if new_rest.trim() != old_rest.trim() {
+        out.extend(pg_column_alters(
+            d,
+            table,
+            column,
+            old_rest.trim(),
+            new_rest.trim(),
+        )?);
+    }
+    let target = format!("ALTER TABLE {table} ALTER COLUMN {}", d.quote_ident(column));
+    match (&old_id, &new_id) {
+        (None, Some(id)) => out.push(format!("{target} ADD GENERATED {} AS IDENTITY", id.2)),
+        (Some(_), None) => out.push(format!("{target} DROP IDENTITY")),
+        (Some(old_id), Some(new_id)) if old_id.2 != new_id.2 => {
+            out.push(format!("{target} SET GENERATED {}", new_id.2));
+        }
+        _ => {}
+    }
+    Ok(Some(out))
+}
+
+fn pg_column_alters(
+    d: &dyn Dialect,
+    table: &str,
+    column: &str,
+    old_def: &str,
+    new_def: &str,
+) -> DbResult<Vec<String>> {
+    let (ty, null, default) = pg_column(new_def, d)?;
+    let (old_ty, old_null, old_default) = pg_column(old_def, d)?;
+    let target = format!("ALTER TABLE {table} ALTER COLUMN {}", d.quote_ident(column));
+    let mut out = Vec::new();
+    if default != old_default || ty != old_ty {
+        out.push(format!("{target} DROP DEFAULT"));
+    }
+    if ty != old_ty {
+        out.push(format!("{target} TYPE {ty}"));
+    }
+    if null != old_null {
+        out.push(format!(
+            "{target} {} NOT NULL",
+            if null { "SET" } else { "DROP" }
+        ));
+    }
+    if (default != old_default || ty != old_ty)
+        && let Some(value) = default
+    {
+        out.push(format!("{target} SET DEFAULT {value}"));
+    }
+    Ok(out)
+}
+
+fn postgres_rebuild(
+    d: &dyn Dialect,
+    scope: &Scope,
+    before: &TableSnapshot,
+    after: &TableDesign,
+) -> DbResult<Vec<String>> {
+    let old = &before.design;
+    let temp = format!("{}__navidog_new", old.name);
+    let mut out = vec![rebuild_note(after.create_sql(d, scope, &temp)?, false)];
+    let mut destination = Vec::new();
+    let mut source = Vec::new();
+    let mut identity = false;
+    for column in &after.columns {
+        let Some(original) = &column.original else {
+            continue;
+        };
+        if properties::is_generated(&column.definition, d) {
+            continue;
+        }
+        if properties::identity(&column.definition, d).is_some() {
+            identity = true;
+        }
+        destination.push(d.quote_ident(&column.name));
+        source.push(d.quote_ident(original));
+    }
+    if !destination.is_empty() {
+        let overriding = if identity {
+            " OVERRIDING SYSTEM VALUE"
+        } else {
+            ""
+        };
+        out.push(format!(
+            "INSERT INTO {} ({}){overriding} SELECT {} FROM {}",
+            d.qualified(scope, &temp),
+            destination.join(", "),
+            source.join(", "),
+            d.qualified(scope, &old.name)
+        ));
+    }
+    out.push(format!("DROP TABLE {}", d.qualified(scope, &old.name)));
+    out.push(format!(
+        "ALTER TABLE {} RENAME TO {}",
+        d.qualified(scope, &temp),
+        d.quote_ident(&old.name)
+    ));
+    out.extend(after.indexes.clone());
+    out.extend(before.triggers.clone());
+    for column in &after.columns {
+        if column.original.is_none() || properties::identity(&column.definition, d).is_none() {
+            continue;
+        }
+        let table = d.qualified(scope, &old.name);
+        let quoted = d.quote_ident(&column.name);
+        out.push(format!(
+            "SELECT setval(pg_get_serial_sequence({}, {}), COALESCE((SELECT MAX({quoted}) FROM {table}), 1), (SELECT MAX({quoted}) FROM {table}) IS NOT NULL)",
+            d.string_literal(&format!("{}.{}", scope.schema.as_deref().unwrap_or("public"), old.name)),
+            d.string_literal(&column.name),
+        ));
+    }
+    if d.features().separate_comments {
+        out.extend(comments::statements(scope, None, after, d));
+    }
+    if !after.owner.is_empty()
+        && let Some(sql) = d.table_owner_sql(&d.qualified(scope, &old.name), &after.owner)
+    {
+        out.push(sql);
+    }
+    Ok(out)
+}
+
 fn pg_column(definition: &str, d: &dyn Dialect) -> DbResult<(String, bool, Option<String>)> {
     let upper = definition.to_uppercase();
     for unsupported in [
@@ -428,23 +594,11 @@ fn sqlite(
     day: &str,
 ) -> DbResult<Vec<String>> {
     let old = &before.design;
-    if table_option(&old.options, "without_rowid", d)?
-        != table_option(&after.options, "without_rowid", d)?
-    {
-        return Err(DbError::msg(
-            "Changing WITHOUT ROWID on an existing table can lose row identity; create a new table instead.",
-        ));
-    }
-    if old.columns.iter().chain(&after.columns).any(|c| {
-        c.definition.to_uppercase().contains("GENERATED")
-            || c.definition.to_uppercase().contains(" AS ")
-    }) {
-        return Err(DbError::msg(
-            "Rebuilding tables with generated columns is not supported; no changes were made.",
-        ));
-    }
-    // Renaming fields also requires rewriting dependent constraint/index/trigger SQL. Refuse
-    // rather than guessing at identifier occurrences inside expressions and string literals.
+    let old_without = table_option(&old.options, "without_rowid", d)? == "true";
+    let new_without = table_option(&after.options, "without_rowid", d)? == "true";
+    // Renaming fields also requires rewriting dependent constraint/index/trigger SQL. A
+    // rename by itself uses SQLite's own rewrite. Combined edits rebuild and copy by the
+    // original name, without guessing at identifiers inside expressions.
     let renamed = after
         .columns
         .iter()
@@ -457,42 +611,41 @@ fn sqlite(
             && old.columns.iter().zip(&after.columns).all(|(old, new)| {
                 new.original.as_ref() == Some(&old.name) && old.definition == new.definition
             });
-        if !rename_only {
-            return Err(DbError::msg(
-                "Save SQLite field renames separately before making other schema changes.",
-            ));
+        if rename_only {
+            return Ok(after
+                .columns
+                .iter()
+                .filter(|c| c.original.as_ref().is_some_and(|old| old != &c.name))
+                .map(|c| {
+                    format!(
+                        "ALTER TABLE {} RENAME COLUMN {} TO {}",
+                        d.qualified(scope, &old.name),
+                        d.quote_ident(c.original.as_ref().unwrap()),
+                        d.quote_ident(&c.name)
+                    )
+                })
+                .collect());
         }
-        return Ok(after
-            .columns
-            .iter()
-            .filter(|c| c.original.as_ref().is_some_and(|old| old != &c.name))
-            .map(|c| {
-                format!(
-                    "ALTER TABLE {} RENAME COLUMN {} TO {}",
-                    d.qualified(scope, &old.name),
-                    d.quote_ident(c.original.as_ref().unwrap()),
-                    d.quote_ident(&c.name)
-                )
-            })
-            .collect());
     }
     let backup = backup_name(&after.name, day, occupied)?;
     let table = d.qualified(scope, &old.name);
-    let mut out = vec![format!(
-        "ALTER TABLE {table} RENAME TO {}",
-        d.quote_ident(&backup)
+    let mut out = vec![rebuild_note(
+        format!("ALTER TABLE {table} RENAME TO {}", d.quote_ident(&backup)),
+        !old_without && new_without,
     )];
     out.push(after.create_sql(d, scope, &after.name)?);
     let mut destination = Vec::new();
     let mut source = Vec::new();
     for c in &after.columns {
-        if let Some(old) = &c.original {
+        if let Some(old_name) = &c.original {
+            if properties::is_generated(&c.definition, d) {
+                continue;
+            }
             destination.push(d.quote_ident(&c.name));
-            source.push(d.quote_ident(old));
+            source.push(d.quote_ident(old_name));
         }
     }
-    let without = old.options.to_uppercase().contains("WITHOUT ROWID")
-        || after.options.to_uppercase().contains("WITHOUT ROWID");
+    let without = new_without || old_without;
     if !without {
         let alias = ["rowid", "_rowid_", "oid"]
             .into_iter()
