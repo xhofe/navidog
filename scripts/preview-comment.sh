@@ -11,8 +11,7 @@
 #
 # building and failure keep the last successful build. success records it on
 # the second line as a hidden marker; later updates copy that line and show
-# the fields again. A comment written before the marker existed is scraped
-# once from its Run / Commit / Artifact / CLI / SHA-256 lines.
+# the fields again.
 #
 # Requires GH_TOKEN, GITHUB_REPOSITORY, PR_NUMBER, RUN_URL, RUN_ID, and
 # HEAD_SHA. success also requires ARTIFACT and SHA256.
@@ -109,37 +108,6 @@ parse_marker_line() {
   have_previous
 }
 
-# Old success comments have no marker. Building says "in progress" and failure
-# says "failed", so those bodies are not a success record.
-scrape_legacy_success() {
-  local body="$1"
-  case "$body" in
-    *"in progress"* | *"failed"*) return 1 ;;
-  esac
-  case "$body" in
-    *"**SHA-256:**"*) ;;
-    *) return 1 ;;
-  esac
-
-  local run_url sha256 artifact cli run_id head_sha
-  run_url="$(printf '%s\n' "$body" | sed -n 's/^- \*\*Run:\*\* //p' | head -n 1)"
-  sha256="$(printf '%s\n' "$body" | sed -n 's/^- \*\*SHA-256:\*\* `\([^`]*\)`.*/\1/p' | head -n 1)"
-  artifact="$(printf '%s\n' "$body" | sed -n 's/^- \*\*Artifact:\*\* `\([^`]*\)`.*/\1/p' | head -n 1)"
-  cli="$(printf '%s\n' "$body" | sed -n 's/^- \*\*CLI:\*\* `\([^`]*\)`.*/\1/p' | head -n 1)"
-  run_id="$(printf '%s\n' "$cli" | awk '{print $4}')"
-  head_sha="$(printf '%s\n' "$body" | sed -n 's|.*/commit/\([0-9a-f]\{40\}\).*|\1|p' | head -n 1)"
-  if [ -n "$run_url" ] && [ -n "$run_id" ] && [ -n "$head_sha" ] &&
-    [ -n "$artifact" ] && [ -n "$sha256" ]; then
-    PREV_RUN_URL="$run_url"
-    PREV_RUN_ID="$run_id"
-    PREV_HEAD_SHA="$head_sha"
-    PREV_ARTIFACT="$artifact"
-    PREV_SHA256="$sha256"
-    return 0
-  fi
-  return 1
-}
-
 load_success_from_body() {
   local body="$1"
   local line
@@ -149,7 +117,7 @@ load_success_from_body() {
     parse_marker_line "$line"
     return
   fi
-  scrape_legacy_success "$body"
+  return 1
 }
 
 render() {
@@ -299,21 +267,13 @@ if [ "${1:-}" = "--check" ]; then
     exit 1
   fi
 
-  # A success comment from before the marker: scrape the visible fields.
-  legacy="$(cat <<'EOF'
-<!-- navidog-preview -->
-### macOS preview build
-
-- **Run:** https://github.com/example/navidog/actions/runs/42
-- **Commit:** [`abcdef0`](https://github.com/example/navidog/commit/abcdef0123456789abcdef0123456789abcdef01)
-- **Artifact:** `Navidog-preview-macos-aarch64` (expires in 7 days)
-- **CLI:** `gh run download 42 -R example/navidog -n Navidog-preview-macos-aarch64`
-- **SHA-256:** `cafebabe`
-
-The app is ad-hoc signed and not notarized.
-EOF
-)"
-  load_success_from_body "$legacy"
+  # A later run keeps the success recorded by the marker.
+  export RUN_URL="https://github.com/example/navidog/actions/runs/42"
+  export RUN_ID="42"
+  export HEAD_SHA="abcdef0123456789abcdef0123456789abcdef01"
+  export SHA256="cafebabe"
+  previous="$(render success)"
+  load_success_from_body "$previous"
   [ "$PREV_RUN_ID" = "42" ]
   [ "$PREV_SHA256" = "cafebabe" ]
   [ "$PREV_ARTIFACT" = "Navidog-preview-macos-aarch64" ]
