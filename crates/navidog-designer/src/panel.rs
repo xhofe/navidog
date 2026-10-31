@@ -9,9 +9,7 @@ use gpui_kit::component::input::{
     Editor, EditorState, Enter, IndentInline, Input, InputEvent, InputState, MoveDown, MoveUp,
 };
 use gpui_kit::component::table::{DataTable, TableEvent, TableState};
-use gpui_kit::component::{
-    Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
-};
+use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, SharedString,
     Subscription, Task, WeakEntity, Window, div, prelude::*,
