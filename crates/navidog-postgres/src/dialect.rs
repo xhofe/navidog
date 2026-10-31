@@ -37,7 +37,43 @@ impl Dialect for PostgresDialect {
             ObjectKind::MaterializedView,
             ObjectKind::Function,
             ObjectKind::Sequence,
+            ObjectKind::Tablespace,
+            ObjectKind::Type,
+            ObjectKind::Domain,
+            ObjectKind::Extension,
+            ObjectKind::ForeignServer,
+            ObjectKind::Aggregate,
+            ObjectKind::Cast,
+            ObjectKind::Operator,
+            ObjectKind::Collation,
         ]
+    }
+    fn definition_family(&self) -> Option<navidog_sql::definition::DefinitionFamily> {
+        Some(navidog_sql::definition::DefinitionFamily::Postgres)
+    }
+    fn definition_statements(
+        &self,
+        scope: &Scope,
+        draft: &navidog_sql::definition::DefinitionDraft,
+    ) -> Result<Vec<String>, String> {
+        navidog_sql::definition::plan(
+            self,
+            navidog_sql::definition::DefinitionFamily::Postgres,
+            scope,
+            draft,
+        )
+    }
+    fn refresh_materialized_view(
+        &self,
+        scope: &navidog_model::object::Scope,
+        name: &str,
+        with_data: bool,
+    ) -> Option<String> {
+        let tail = if with_data { "" } else { " WITH NO DATA" };
+        Some(format!(
+            "REFRESH MATERIALIZED VIEW {}{tail}",
+            self.qualified(scope, name)
+        ))
     }
     fn begin_transaction(&self) -> &'static str {
         "BEGIN"

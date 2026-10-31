@@ -84,13 +84,23 @@ fn category_enabled(cx: &App, kind: ObjectKind) -> bool {
     if kind == ObjectKind::Query {
         return category_scope(cx).is_some();
     }
-    category_scope(cx)
-        .and_then(|s| {
-            navidog_session::sessions::Sessions::global(cx)
-                .read(cx)
-                .dialect(&s.connection)
-        })
-        .is_some_and(|d| d.object_kinds().contains(&kind))
+    let Some(scope) = category_scope(cx) else {
+        return false;
+    };
+    let sessions = navidog_session::sessions::Sessions::global(cx).read(cx);
+    let Some(dialect) = sessions.dialect(&scope.connection) else {
+        return false;
+    };
+    let driver = navidog_app_state::store::ConnectionStore::global(cx)
+        .read(cx)
+        .get(&scope.connection)
+        .map(|c| c.driver.clone())
+        .unwrap_or_default();
+    let version = match sessions.state(&scope.connection) {
+        navidog_session::sessions::ConnState::Open { version, .. } => version.clone(),
+        _ => String::new(),
+    };
+    dialect.lists_kind(kind, &driver, &version)
 }
 
 fn register_commands(cx: &mut App) {

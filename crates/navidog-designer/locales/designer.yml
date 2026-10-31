@@ -381,3 +381,184 @@ designer:
   not_relational:
     en: Not a relational connection.
     zh-CN: 当前连接不是关系数据库连接。
+  untitled_object:
+    en: New object
+    zh-CN: 新建对象
+  preview_data:
+    en: Preview Data
+    zh-CN: 预览数据
+  run:
+    en: Run
+    zh-CN: 运行
+  arguments:
+    en: Arguments
+    zh-CN: 参数
+  raw_arguments:
+    en: Raw
+    zh-CN: 原始
+  kind_materialized_view:
+    en: Materialized View
+    zh-CN: 实体化视图
+  kind_procedure:
+    en: Procedure
+    zh-CN: 过程
+  kind_event:
+    en: Event
+    zh-CN: 事件
+  kind_tablespace:
+    en: Tablespace
+    zh-CN: 表空间
+  kind_sequence:
+    en: Sequence
+    zh-CN: 序列
+  kind_domain:
+    en: Domain
+    zh-CN: 域
+  kind_extension:
+    en: Extension
+    zh-CN: 扩展
+  kind_foreign_server:
+    en: Foreign Server
+    zh-CN: 外部服务器
+  kind_aggregate:
+    en: Aggregate
+    zh-CN: 聚合
+  kind_cast:
+    en: Cast
+    zh-CN: 转换
+  kind_operator:
+    en: Operator
+    zh-CN: 运算符
+  kind_collation:
+    en: Collation
+    zh-CN: 排序规则
+  kind_index:
+    en: Index
+    zh-CN: 索引
+  kind_trigger:
+    en: Trigger
+    zh-CN: 触发器
+  kind_attach:
+    en: Attach
+    zh-CN: 附加
+  kind_detach:
+    en: Detach
+    zh-CN: 分离
+  opt_algorithm:
+    en: Algorithm
+    zh-CN: 算法
+  opt_security:
+    en: Security
+    zh-CN: 安全性
+  opt_check_option:
+    en: Check option
+    zh-CN: 检查选项
+  opt_with_data:
+    en: Populate
+    zh-CN: 填充
+  opt_routine:
+    en: Type
+    zh-CN: 类型
+  opt_parameters:
+    en: Parameters
+    zh-CN: 参数
+  opt_returns:
+    en: Returns
+    zh-CN: 返回
+  opt_language:
+    en: Language
+    zh-CN: 语言
+  opt_status:
+    en: Status
+    zh-CN: 状态
+  opt_schedule:
+    en: Schedule
+    zh-CN: 计划
+  opt_charset:
+    en: Character set
+    zh-CN: 字符集
+  opt_collation:
+    en: Collation
+    zh-CN: 排序规则
+  opt_owner:
+    en: Owner
+    zh-CN: 拥有者
+  opt_encoding:
+    en: Encoding
+    zh-CN: 编码
+  opt_template:
+    en: Template
+    zh-CN: 模板
+  opt_engine:
+    en: Engine
+    zh-CN: 引擎
+  opt_datafile:
+    en: Data file
+    zh-CN: 数据文件
+  opt_start:
+    en: Start
+    zh-CN: 起始
+  opt_increment:
+    en: Increment
+    zh-CN: 递增值
+  opt_type_kind:
+    en: Kind
+    zh-CN: 种类
+  opt_base_type:
+    en: Base type
+    zh-CN: 基类型
+  opt_not_null:
+    en: Not null
+    zh-CN: 非空
+  opt_default:
+    en: Default
+    zh-CN: 默认值
+  opt_action:
+    en: Action
+    zh-CN: 动作
+  opt_wrapper:
+    en: Wrapper
+    zh-CN: 包装器
+  opt_input_type:
+    en: Input type
+    zh-CN: 输入类型
+  opt_state_func:
+    en: State function
+    zh-CN: 状态函数
+  opt_state_type:
+    en: State type
+    zh-CN: 状态类型
+  opt_source:
+    en: Source
+    zh-CN: 源类型
+  opt_target:
+    en: Target
+    zh-CN: 目标类型
+  opt_function:
+    en: Function
+    zh-CN: 函数
+  opt_left:
+    en: Left type
+    zh-CN: 左类型
+  opt_right:
+    en: Right type
+    zh-CN: 右类型
+  opt_provider:
+    en: Provider
+    zh-CN: 提供者
+  opt_locale:
+    en: Locale
+    zh-CN: 区域
+  opt_table:
+    en: Table
+    zh-CN: 表
+  opt_timing:
+    en: Timing
+    zh-CN: 时机
+  opt_events:
+    en: Events
+    zh-CN: 事件
+  opt_path:
+    en: File
+    zh-CN: 文件
+

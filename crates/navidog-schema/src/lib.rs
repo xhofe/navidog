@@ -4,4 +4,5 @@
 //! dialect-specific SQL. `navidog-db` keeps only the driver traits, dialects, metadata and SQL
 //! scanning.
 
+pub mod object_design;
 pub mod table_design;

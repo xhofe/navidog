@@ -66,7 +66,10 @@ impl TableDesigner {
             .map(|(ix, label)| {
                 h_flex()
                     .gap_2()
-                    .child(truncated(SharedString::from(format!("designer-more-row-{ix}")), label))
+                    .child(truncated(
+                        SharedString::from(format!("designer-more-row-{ix}")),
+                        label,
+                    ))
                     .child(
                         Button::new(SharedString::from(format!("designer-more-delete-{ix}")))
                             .ghost()

@@ -197,6 +197,40 @@ pub struct DesignTable {
     pub object: Option<ObjectRef>,
 }
 
+/// Open the shared definition designer. `kind` is a definition key
+/// (`view`, `database`, `attach`, …). `name` is `None` when creating.
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(namespace = designer, no_json)]
+pub struct OpenDefinition {
+    pub scope: navidog_model::object::Scope,
+    pub kind: SharedString,
+    pub name: Option<SharedString>,
+}
+
+/// Open the table designer with a field selected.
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(namespace = designer, no_json)]
+pub struct DesignField {
+    pub object: ObjectRef,
+    pub column: SharedString,
+}
+
+/// Rename a table column in place in the navigator.
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(namespace = designer, no_json)]
+pub struct RenameColumn {
+    pub object: ObjectRef,
+    pub column: SharedString,
+}
+
+/// `REFRESH MATERIALIZED VIEW`.
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(namespace = designer, no_json)]
+pub struct RefreshMaterializedView {
+    pub object: ObjectRef,
+    pub with_data: bool,
+}
+
 /// A table was saved; the shell refreshes catalog and completion caches.
 #[derive(Clone, PartialEq, Debug, Action)]
 #[action(namespace = designer, no_json)]

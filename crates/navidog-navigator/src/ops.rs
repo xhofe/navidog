@@ -9,7 +9,7 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, InteractiveElement, Window};
 use navidog_app_state::actions::{
     DeleteObjects, DuplicateQuery, DuplicateTable, EmptyTables, OpenQueryExternally, QueryRenamed,
-    ReopenConnectionId, RevealQuery, TruncateTables,
+    RefreshMaterializedView, ReopenConnectionId, RevealQuery, TruncateTables,
 };
 use navidog_app_state::workspace::{Selection, Workspace};
 use navidog_db::DbError;
@@ -43,6 +43,17 @@ pub(crate) fn bind<E: InteractiveElement>(el: E) -> E {
         .on_action(|_: &EmptyTables, window, cx| empty(false, window, cx))
         .on_action(|_: &TruncateTables, window, cx| empty(true, window, cx))
         .on_action(|a: &DuplicateTable, window, cx| duplicate(a.with_data, window, cx))
+        .on_action(|a: &RefreshMaterializedView, window, cx| {
+            let sql = Sessions::global(cx)
+                .read(cx)
+                .dialect(&a.object.scope.connection)
+                .and_then(|d| {
+                    d.refresh_materialized_view(&a.object.scope, &a.object.name, a.with_data)
+                });
+            if let Some(sql) = sql {
+                run(vec![(a.object.clone(), sql)], None, window, cx);
+            }
+        })
         .on_action(|_: &DuplicateQuery, window, cx| duplicate_query(window, cx))
         .on_action(|_: &OpenQueryExternally, _, cx| {
             for o in selected_queries(cx) {

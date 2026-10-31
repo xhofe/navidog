@@ -377,8 +377,59 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
             ObjectKind::Trigger if self.features().drop_trigger_by_name => "TRIGGER",
             ObjectKind::Index if self.features().drop_index_by_name => "INDEX",
             ObjectKind::Sequence => "SEQUENCE",
-            _ => return None,
+            ObjectKind::Tablespace => "TABLESPACE",
+            ObjectKind::Type => "TYPE",
+            ObjectKind::Domain => "DOMAIN",
+            ObjectKind::Extension => "EXTENSION",
+            ObjectKind::ForeignServer => "SERVER",
+            ObjectKind::Aggregate => "AGGREGATE",
+            ObjectKind::Operator => "OPERATOR",
+            ObjectKind::Collation => "COLLATION",
+            ObjectKind::Trigger
+            | ObjectKind::Index
+            | ObjectKind::Cast
+            | ObjectKind::Function
+            | ObjectKind::Query => return None,
         })
+    }
+
+    /// Kinds this connection shows. MariaDB sequences depend on the driver id and server version.
+    fn lists_kind(&self, kind: ObjectKind, _driver: &str, _version: &str) -> bool {
+        self.object_kinds().contains(&kind)
+    }
+
+    /// Statement family for the shared object designer. `None` when the product has no designer.
+    fn definition_family(&self) -> Option<crate::definition::DefinitionFamily> {
+        None
+    }
+
+    /// Preview SQL for a definition draft. Empty means nothing changed.
+    fn definition_statements(
+        &self,
+        _scope: &Scope,
+        _draft: &crate::definition::DefinitionDraft,
+    ) -> Result<Vec<String>, String> {
+        Err("This database cannot change that object.".into())
+    }
+
+    /// `REFRESH MATERIALIZED VIEW`, when the product has materialized views.
+    fn refresh_materialized_view(
+        &self,
+        _scope: &Scope,
+        _name: &str,
+        _with_data: bool,
+    ) -> Option<String> {
+        None
+    }
+
+    /// `ALTER TABLE … RENAME COLUMN`.
+    fn rename_column(&self, scope: &Scope, table: &str, old: &str, new: &str) -> String {
+        format!(
+            "ALTER TABLE {} RENAME COLUMN {} TO {}",
+            self.qualified(scope, table),
+            self.quote_ident(old),
+            self.quote_ident(new)
+        )
     }
 
     #[allow(clippy::too_many_arguments)]

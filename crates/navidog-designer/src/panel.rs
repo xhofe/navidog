@@ -97,14 +97,14 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 /// Shown when a saved table-design tab outlives its connection.
-struct MissingConnection {
+pub(crate) struct MissingConnection {
     focus: FocusHandle,
     state: PanelState,
     close_approved: bool,
 }
 
 impl MissingConnection {
-    fn open(state: PanelState, cx: &mut App) -> Entity<Self> {
+    pub(crate) fn open(state: PanelState, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| Self {
             focus: cx.focus_handle().tab_stop(true),
             state,
@@ -234,7 +234,7 @@ impl Render for MissingConnection {
     }
 }
 
-fn connection_dialect(cx: &App, connection: &str) -> Option<Arc<dyn Dialect>> {
+pub(crate) fn connection_dialect(cx: &App, connection: &str) -> Option<Arc<dyn Dialect>> {
     Sessions::global(cx)
         .read(cx)
         .dialect(connection)
@@ -313,6 +313,8 @@ pub struct TableDesigner {
     error: Option<String>,
     preview: Option<Vec<String>>,
     close_approved: bool,
+    /// Column to select once the table snapshot arrives.
+    focus_column: Option<String>,
     task: Option<Task<()>>,
     references: references::ReferenceChoices,
     reference_task: Option<Task<()>>,
@@ -423,6 +425,10 @@ impl TableDesigner {
             window,
             cx,
         )
+    }
+    /// Selects this column after the table snapshot loads.
+    pub fn select_column(&mut self, name: impl Into<String>) {
+        self.focus_column = Some(name.into());
     }
     pub fn open(object: ObjectRef, window: &mut Window, cx: &mut App) -> Entity<Self> {
         let entity = Self::new(object.scope.clone(), window, cx);
@@ -710,6 +716,7 @@ impl TableDesigner {
                 error: migration_error,
                 preview: None,
                 close_approved: false,
+                focus_column: None,
                 task: None,
                 references: Default::default(),
                 reference_task: None,
@@ -1141,7 +1148,13 @@ impl TableDesigner {
         self.loaded = true;
         self.needs_reload = false;
         self.preview = None;
-        self.selected = self.draft.columns.first().map(|c| c.id);
+        self.selected = self
+            .focus_column
+            .as_deref()
+            .and_then(|name| self.draft.columns.iter().find(|c| c.name == name))
+            .or_else(|| self.draft.columns.first())
+            .map(|c| c.id);
+        self.focus_column = None;
         self.next_id = self.draft.columns.iter().map(|c| c.id).max().unwrap_or(0) + 1;
         self.sync_all(window, cx);
         // The preview editor stays mounted on this page, so discarding the

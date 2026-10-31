@@ -32,7 +32,29 @@ impl Dialect for MysqlDialect {
             ObjectKind::View,
             ObjectKind::Function,
             ObjectKind::Event,
+            ObjectKind::Tablespace,
         ]
+    }
+    fn lists_kind(&self, kind: ObjectKind, driver: &str, version: &str) -> bool {
+        if kind == ObjectKind::Sequence {
+            return navidog_sql::definition::mariadb_sequences(driver, version);
+        }
+        self.object_kinds().contains(&kind)
+    }
+    fn definition_family(&self) -> Option<navidog_sql::definition::DefinitionFamily> {
+        Some(navidog_sql::definition::DefinitionFamily::Mysql)
+    }
+    fn definition_statements(
+        &self,
+        scope: &navidog_model::object::Scope,
+        draft: &navidog_sql::definition::DefinitionDraft,
+    ) -> Result<Vec<String>, String> {
+        navidog_sql::definition::plan(
+            self,
+            navidog_sql::definition::DefinitionFamily::Mysql,
+            scope,
+            draft,
+        )
     }
     fn begin_transaction(&self) -> &'static str {
         "START TRANSACTION"

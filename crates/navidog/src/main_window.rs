@@ -15,9 +15,10 @@ use gpui_kit::{
     Render, Styled as _, Subscription, Window, div,
 };
 use navidog_app_state::actions::{
-    DesignTable, InsertText, NewQuery, NewQueryText, NewTable, OpenConnection, OpenConsole,
-    OpenExternalQuery, OpenHistoryLog, OpenObject, RunQuery, ToggleFocusMode,
-    ToggleHideObjectGroups, ToggleOnlyActive, ToggleShowHidden, ToggleShowTableProfile,
+    DesignField, DesignTable, InsertText, NewQuery, NewQueryText, NewTable, OpenConnection,
+    OpenConsole, OpenDefinition, OpenExternalQuery, OpenHistoryLog, OpenObject, RunQuery,
+    ToggleFocusMode, ToggleHideObjectGroups, ToggleOnlyActive, ToggleShowHidden,
+    ToggleShowTableProfile,
 };
 use navidog_app_state::favorites::Favorites;
 use navidog_app_state::registry::CommandRegistry;
@@ -842,6 +843,25 @@ impl Render for MainWindow {
                 if let Some(object) = a.object.as_ref().filter(|o| o.kind == ObjectKind::Table) {
                     this.open_editor(object, true, window, cx);
                 }
+            }))
+            .on_action(cx.listener(|this, a: &DesignField, window, cx| {
+                let editor = navidog_designer::TableDesigner::open(a.object.clone(), window, cx);
+                editor.update(cx, |designer, _| {
+                    designer.select_column(a.column.to_string())
+                });
+                this.add_editor(panel_handle(editor), window, cx);
+            }))
+            .on_action(cx.listener(|this, a: &OpenDefinition, window, cx| {
+                let Some(editor) = navidog_designer::ObjectDesigner::blank(
+                    a.scope.clone(),
+                    &a.kind,
+                    a.name.as_ref().map(|name| name.to_string()),
+                    window,
+                    cx,
+                ) else {
+                    return;
+                };
+                this.add_editor(panel_handle(editor), window, cx);
             }))
             .on_action(cx.listener(|this, _: &NewTable, window, cx| {
                 let scope = Workspace::global(cx).read(cx).selection().scope();

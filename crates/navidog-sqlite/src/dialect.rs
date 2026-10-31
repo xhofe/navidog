@@ -33,6 +33,21 @@ impl Dialect for SqliteDialect {
             ObjectKind::Trigger,
         ]
     }
+    fn definition_family(&self) -> Option<navidog_sql::definition::DefinitionFamily> {
+        Some(navidog_sql::definition::DefinitionFamily::Sqlite)
+    }
+    fn definition_statements(
+        &self,
+        scope: &navidog_model::object::Scope,
+        draft: &navidog_sql::definition::DefinitionDraft,
+    ) -> Result<Vec<String>, String> {
+        navidog_sql::definition::plan(
+            self,
+            navidog_sql::definition::DefinitionFamily::Sqlite,
+            scope,
+            draft,
+        )
+    }
     fn begin_transaction(&self) -> &'static str {
         "BEGIN"
     }

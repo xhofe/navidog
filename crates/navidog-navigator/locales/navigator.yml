@@ -153,6 +153,21 @@ nav:
   new_database:
     en: New Database…
     zh-CN: 新建数据库…
+  attach_database:
+    en: Attach Database…
+    zh-CN: 附加数据库…
+  detach_database:
+    en: Detach Database
+    zh-CN: 分离数据库
+  view_master:
+    en: View Master
+    zh-CN: 查看主表
+  new_schema:
+    en: New Schema…
+    zh-CN: 新建模式…
+  edit_schema:
+    en: Edit Schema…
+    zh-CN: 编辑模式…
 kind:
   table:
     en: Tables
@@ -178,6 +193,33 @@ kind:
   sequence:
     en: Sequences
     zh-CN: 序列
+  tablespace:
+    en: Tablespaces
+    zh-CN: 表空间
+  type:
+    en: Types
+    zh-CN: 类型
+  domain:
+    en: Domains
+    zh-CN: 域
+  extension:
+    en: Extensions
+    zh-CN: 扩展
+  foreign_server:
+    en: Foreign Servers
+    zh-CN: 外部服务器
+  aggregate:
+    en: Aggregates
+    zh-CN: 聚合
+  cast:
+    en: Casts
+    zh-CN: 转换
+  operator:
+    en: Operators
+    zh-CN: 运算符
+  collation:
+    en: Collations
+    zh-CN: 排序规则
   query:
     en: Queries
     zh-CN: 查询
@@ -263,6 +305,12 @@ obj:
   rename:
     en: Rename
     zh-CN: 重命名
+  refresh_mview:
+    en: Refresh Materialized View
+    zh-CN: 刷新实体化视图
+  refresh_mview_empty:
+    en: Refresh Materialized View With No Data
+    zh-CN: 刷新实体化视图（无数据）
   new_object:
     en: "New %{kind}"
     zh-CN: "新建%{kind}"
