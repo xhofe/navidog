@@ -71,8 +71,16 @@ pub async fn apply(r: &mut dyn Relational, scope: &Scope, draft: &DefinitionDraf
     }
     .await;
     if transactional {
-        let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
-        let _ = r.execute(end).await;
+        if result.is_ok() {
+            // A failed COMMIT must not look like a saved object. Roll back while
+            // the transaction is still open, then surface the commit error.
+            if let Err(error) = r.execute("COMMIT").await {
+                let _ = r.execute("ROLLBACK").await;
+                return Err(error);
+            }
+        } else {
+            let _ = r.execute("ROLLBACK").await;
+        }
     }
     result
 }
@@ -341,6 +349,49 @@ mod tests {
             "{error}"
         );
         assert!(rel.log.is_empty(), "{:?}", rel.log);
+    }
+
+    #[test]
+    fn a_failed_commit_is_not_reported_as_saved() {
+        struct CommitFails {
+            log: Vec<String>,
+        }
+        impl Relational for CommitFails {
+            fn dialect(&self) -> std::sync::Arc<dyn Dialect> {
+                std::sync::Arc::new(navidog_sqlite::SqliteDialect)
+            }
+            fn execute<'a>(
+                &'a mut self,
+                sql: &'a str,
+            ) -> navidog_db::BoxFuture<'a, DbResult<Vec<navidog_db::ResultSet>>> {
+                self.log.push(sql.to_string());
+                let fail = sql == "COMMIT";
+                Box::pin(async move {
+                    if fail {
+                        Err(DbError::msg("injected COMMIT failure"))
+                    } else {
+                        Ok(vec![navidog_db::ResultSet {
+                            affected_rows: Some(1),
+                            ..Default::default()
+                        }])
+                    }
+                })
+            }
+            navidog_db::unsupported_catalog!();
+        }
+
+        let mut view = draft(DefinitionKind::View, "v");
+        view.body = "SELECT 1".into();
+        let mut rel = CommitFails { log: Vec::new() };
+        let error = navidog_db::runtime::runtime()
+            .block_on(apply(&mut rel, &Scope::new("c", "main", None), &view))
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("injected COMMIT failure"),
+            "{error}"
+        );
+        assert_eq!(rel.log.last().map(String::as_str), Some("ROLLBACK"));
+        assert!(rel.log.iter().any(|sql| sql == "COMMIT"));
     }
 
     fn mariadb_lists(driver: &str, version: &str) -> bool {

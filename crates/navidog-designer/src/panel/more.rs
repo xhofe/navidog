@@ -183,7 +183,7 @@ impl TableDesigner {
         let sql = if self.dialect.features().enriches_from_catalog {
             format!("CREATE TRIGGER {quoted} {timing} {event} ON {table} FOR EACH ROW {body}")
         } else if self.dialect.features().rebuilds_tables {
-            format!("CREATE TRIGGER {quoted} {timing} {event} ON {table} BEGIN {body}; END")
+            sqlite_trigger_statement(&quoted, timing, event, &table, body)
         } else {
             format!("CREATE TRIGGER {quoted} {timing} {event} ON {table} FOR EACH ROW {body}")
         };
@@ -278,6 +278,18 @@ impl TableDesigner {
     }
 }
 
+/// SQLite wants one `;` before `END`. A body that already ends with `;` must not become `;; END`.
+fn sqlite_trigger_statement(
+    quoted: &str,
+    timing: &str,
+    event: &str,
+    table: &str,
+    body: &str,
+) -> String {
+    let body = body.trim().trim_end_matches(';').trim();
+    format!("CREATE TRIGGER {quoted} {timing} {event} ON {table} BEGIN {body}; END")
+}
+
 fn mysql_partition(
     method: &str,
     key: &str,
@@ -318,6 +330,33 @@ mod tests {
         assert_eq!(
             mysql_partition("HASH", "id", "", "PARTITIONS 4", &dialect),
             "PARTITION BY HASH(id) PARTITIONS 4"
+        );
+    }
+
+    #[test]
+    fn sqlite_trigger_body_keeps_one_terminator() {
+        let sql = super::sqlite_trigger_statement(
+            "\"audit\"",
+            "AFTER",
+            "INSERT",
+            "\"main\".\"t\"",
+            "INSERT INTO a VALUES (1);\nINSERT INTO a VALUES (2);",
+        );
+        assert!(
+            sql.ends_with("BEGIN INSERT INTO a VALUES (1);\nINSERT INTO a VALUES (2); END"),
+            "{sql}"
+        );
+        assert!(!sql.contains(";;"), "{sql}");
+        let bare = super::sqlite_trigger_statement(
+            "\"audit\"",
+            "AFTER",
+            "INSERT",
+            "\"t\"",
+            "INSERT INTO a VALUES (1)",
+        );
+        assert!(
+            bare.ends_with("BEGIN INSERT INTO a VALUES (1); END"),
+            "{bare}"
         );
     }
 }

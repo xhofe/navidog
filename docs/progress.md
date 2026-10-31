@@ -252,7 +252,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | F-OBJ-009 维护 | 完成 | `security_statements_cover_each_product` | 表和数据库菜单打开维护面板，先显示语句再执行。SQLite 只对 main 做 VACUUM |
 | F-INFO-003 使用与被使用 | 完成 | `relation_plan` | 信息窗格页。PostgreSQL 用 pg_depend；MySQL 只用外键目录；SQLite 在 sqlite_master 里按名字匹配 |
 | F-INFO-008 成员、成员属于、权限 | 完成 | 同上 | 信息窗格页，只读。SQLite 显示缺少用户认证扩展，不执行 SQL |
-| F-SEC-001 MySQL 用户 | 完成 | `security_statements_cover_each_product` | 用户名、主机、密码、锁定、过期、资源限制、SQL 预览。密码输入遮挡，不回读。不能从列表选择已有账号 |
+| F-SEC-001 MySQL 用户 | 完成 | `security_statements_cover_each_product` | 用户名、主机、密码、锁定、过期、资源限制、SQL 预览。密码输入遮挡，预览里的密码显示为 `***`，不回读。不能从列表选择已有账号 |
 | F-SEC-002 MySQL 角色 | 完成 | 同上 | 角色走 CREATE ROLE，不带主机 |
 | F-SEC-003 PostgreSQL 用户、角色、组 | 完成 | 同上 | 组是 NOLOGIN。可改登录、超级用户、建库、建角色、继承、复制、连接限制和有效期 |
 | F-SEC-004 权限管理员 | 完成 | 同上 | 以对象为中心授予或撤销。SQLite 不提供，面板说明原因 |

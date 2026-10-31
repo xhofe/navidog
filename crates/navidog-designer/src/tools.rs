@@ -251,7 +251,11 @@ impl ToolPanel {
             &self.account_draft(cx),
         ) {
             Ok(sql) => {
-                self.output = sql.join(";\n");
+                let password = Self::text(&self.password, cx);
+                let literal = (!password.trim().is_empty())
+                    .then(|| self.dialect.string_literal(password.trim()));
+                // The preview keeps the real statement. The pane must not show the password.
+                self.output = redact_password_literal(&sql.join(";\n"), literal.as_deref());
                 self.preview = sql;
                 self.error = None;
             }
@@ -1296,6 +1300,29 @@ fn format_sets(sets: Vec<ResultSet>) -> String {
     out
 }
 
+/// Hides a password literal in the text the user sees. `IDENTIFIED BY` and `PASSWORD`
+/// are the only clauses that carry it; a matching literal used as a name or a date stays.
+fn redact_password_literal(sql: &str, literal: Option<&str>) -> String {
+    let Some(literal) = literal.filter(|literal| !literal.is_empty()) else {
+        return sql.to_string();
+    };
+    const MARKS: &[&str] = &["IDENTIFIED BY ", "PASSWORD "];
+    let mut out = String::with_capacity(sql.len());
+    let mut rest = sql;
+    while let Some(index) = rest.find(literal) {
+        let (head, tail) = rest.split_at(index);
+        out.push_str(head);
+        if MARKS.iter().any(|mark| head.ends_with(mark)) {
+            out.push_str("'***'");
+        } else {
+            out.push_str(literal);
+        }
+        rest = &tail[literal.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
 pub(crate) fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-s", Save, Some(PANEL)),
@@ -1314,4 +1341,20 @@ pub(crate) fn init(cx: &mut App) {
             None => panel_handle(panel::MissingConnection::open(ctx.state().clone(), cx)),
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_password_literal;
+
+    #[test]
+    fn account_preview_hides_the_password_and_leaves_the_same_text_elsewhere() {
+        let sql = "CREATE USER `ada`@`%` IDENTIFIED BY 's''ecret' PASSWORD EXPIRE;\n\
+                   ALTER ROLE \"ada\" PASSWORD 's''ecret' VALID UNTIL 's''ecret'";
+        let shown = redact_password_literal(sql, Some("'s''ecret'"));
+        assert!(shown.contains("IDENTIFIED BY '***'"), "{shown}");
+        assert!(shown.contains("PASSWORD '***'"), "{shown}");
+        assert!(shown.contains("VALID UNTIL 's''ecret'"), "{shown}");
+        assert!(!shown.contains("IDENTIFIED BY 's''ecret'"), "{shown}");
+    }
 }

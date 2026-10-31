@@ -667,3 +667,13 @@ SELECT ... FROM pg_inherits i ... WHERE i.inhrelid = c.oid
 | 触发器要有 PostgreSQL 实库往返，包括改过的定义 | `live_postgres_reorder_keeps_a_loaded_and_edited_trigger`：从目录读出触发器，改定义并重排列后，插入能走到新触发器。这条和上面的 MySQL 正则实库测试已在本机通过 |
 
 命名约束那条评论已由对方标为解决，排除约束换行也已解决，不再改。
+
+### 7.5 `33a7255` 之后没贴进行内的评论
+
+| 评论 | 处理 |
+| --- | --- |
+| 用户预览把密码明文写在 `IDENTIFIED BY` / `PASSWORD` 里 | 显示文本把这两处字面量换成 `'***'`。真正执行的 `preview` 仍是原语句。`account_preview_hides_the_password_and_leaves_the_same_text_elsewhere` |
+| SQLite 触发器正文已以 `;` 结尾时，拼出来是 `;; END` | 拼 `BEGIN … END` 前去掉正文末尾的分号，语句中间的分号保留。`sqlite_trigger_body_keeps_one_terminator` |
+| `COMMIT` 失败被忽略，界面仍当成已保存 | `COMMIT` 失败时回滚并返回该错误。`a_failed_commit_is_not_reported_as_saved` |
+
+更早的行外评论里，已有账号编辑、关闭对话框、空查找标题已在 `05a1f78` 处理；已有对象结构化编辑和按产品生成 DROP 仍不做。
