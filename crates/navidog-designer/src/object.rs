@@ -656,7 +656,7 @@ impl Render for ObjectDesigner {
             )
             .child(
                 TabBar::new("object-pages")
-                    .underline()
+                    .segmented()
                     .small()
                     .w_full()
                     .selected_index(selected)

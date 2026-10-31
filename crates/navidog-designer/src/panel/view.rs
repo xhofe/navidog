@@ -561,7 +561,7 @@ impl Render for TableDesigner {
                     .unwrap_or(0);
                 let pages_for_bar = pages.clone();
                 TabBar::new("designer-pages")
-                    .underline()
+                    .segmented()
                     .small()
                     .w_full()
                     .selected_index(selected)
