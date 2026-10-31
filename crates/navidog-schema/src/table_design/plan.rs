@@ -862,6 +862,7 @@ fn sqlite(
             && old.constraints == after.constraints
             && old.indexes == after.indexes
             && old.options == after.options
+            && resolved_triggers(old, Some(before)) == resolved_triggers(after, Some(before))
             && old.columns.iter().zip(&after.columns).all(|(old, new)| {
                 new.original.as_ref() == Some(&old.name) && old.definition == new.definition
             });

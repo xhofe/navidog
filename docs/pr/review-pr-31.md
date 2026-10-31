@@ -676,4 +676,13 @@ SELECT ... FROM pg_inherits i ... WHERE i.inhrelid = c.oid
 | SQLite 触发器正文已以 `;` 结尾时，拼出来是 `;; END` | 拼 `BEGIN … END` 前去掉正文末尾的分号，语句中间的分号保留。`sqlite_trigger_body_keeps_one_terminator` |
 | `COMMIT` 失败被忽略，界面仍当成已保存 | `COMMIT` 失败时回滚并返回该错误。`a_failed_commit_is_not_reported_as_saved` |
 
-更早的行外评论里，已有账号编辑、关闭对话框、空查找标题已在 `05a1f78` 处理；已有对象结构化编辑和按产品生成 DROP 仍不做。
+更早的行外评论里，关闭对话框和空查找标题已在 `05a1f78` 处理。已有账号编辑、已有对象结构化编辑和按产品生成 DROP 仍不做，与第 7.2 节一致。
+
+### 7.6 `44668cf` 之后的评论
+
+| 评论 | 处理 |
+| --- | --- |
+| 正文以 `--` 注释结尾时，`; END` 被注释吃掉 | 用 SQLite 词法切出末尾的行注释，分号放在注释前，`END` 单独占下一行。`sqlite_trigger_body_keeps_one_terminator` |
+| 第 7.5 节把已有账号编辑写成已在 `05a1f78` 处理，和第 7.2 节矛盾 | 已从已处理列表去掉。已有账号编辑仍未做 |
+| 只改列名时如果同时改了触发器，快路径会丢掉触发器修改 | 快路径要求解析后的触发器列表不变，否则走整表重建。`sqlite_rename_with_a_trigger_edit_rebuilds` |
+| 信息窗格的成员页要从导航器选中用户或角色 | 未做。导航器还没有用户和角色对象，与第 7.2 节一致 |

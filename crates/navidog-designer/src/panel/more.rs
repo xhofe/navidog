@@ -279,6 +279,8 @@ impl TableDesigner {
 }
 
 /// SQLite wants one `;` before `END`. A body that already ends with `;` must not become `;; END`.
+/// A trailing `--` comment would swallow `; END` on the same line, so that comment stays after
+/// the terminator and `END` moves to the next line.
 fn sqlite_trigger_statement(
     quoted: &str,
     timing: &str,
@@ -286,8 +288,30 @@ fn sqlite_trigger_statement(
     table: &str,
     body: &str,
 ) -> String {
-    let body = body.trim().trim_end_matches(';').trim();
-    format!("CREATE TRIGGER {quoted} {timing} {event} ON {table} BEGIN {body}; END")
+    let (code, comment) = split_trailing_line_comment(body);
+    let code = code.trim().trim_end_matches(';').trim();
+    let head = format!("CREATE TRIGGER {quoted} {timing} {event} ON {table} BEGIN {code};");
+    if comment.is_empty() {
+        format!("{head} END")
+    } else {
+        format!("{head} {comment}\nEND")
+    }
+}
+
+/// `(code, trailing line comments)`. The comment text starts at `--`.
+fn split_trailing_line_comment(body: &str) -> (&str, &str) {
+    let spans = navidog_sql::span::spans(body, navidog_sql::span::Lex::SQLITE);
+    let mut comment_at = None;
+    for span in spans.iter().rev() {
+        if span.kind != navidog_sql::span::SpanKind::LineComment {
+            break;
+        }
+        comment_at = Some(span.range.start);
+    }
+    match comment_at {
+        Some(at) => (&body[..at], body[at..].trim_end()),
+        None => (body, ""),
+    }
 }
 
 fn mysql_partition(
@@ -358,5 +382,17 @@ mod tests {
             bare.ends_with("BEGIN INSERT INTO a VALUES (1); END"),
             "{bare}"
         );
+        for body in [
+            "INSERT INTO audit VALUES (1); -- audit",
+            "INSERT INTO audit VALUES (1) -- audit",
+        ] {
+            let sql =
+                super::sqlite_trigger_statement("\"audit\"", "AFTER", "INSERT", "\"t\"", body);
+            assert!(
+                sql.contains("BEGIN INSERT INTO audit VALUES (1); -- audit\nEND"),
+                "{body} -> {sql}"
+            );
+            assert!(!sql.contains(";;"), "{sql}");
+        }
     }
 }

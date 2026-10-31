@@ -135,6 +135,44 @@ fn sqlite_rebuild_renames_the_old_table_and_leaves_it() {
 }
 
 #[test]
+fn sqlite_rename_with_a_trigger_edit_rebuilds() {
+    let dialect = navidog_sqlite::SqliteDialect;
+    let sql = "CREATE TABLE \"t\" (\"id\" INTEGER NOT NULL, \"name\" TEXT, PRIMARY KEY (\"id\"))";
+    let design = super::parse::create(sql, "t", &dialect).unwrap();
+    let before = TableSnapshot {
+        design: design.clone(),
+        ddl: sql.into(),
+        triggers: vec!["CREATE TRIGGER audit AFTER INSERT ON t BEGIN SELECT 1; END".into()],
+    };
+    let mut renamed = design;
+    renamed.columns[1].name = "title".into();
+    let only =
+        super::plan::plan_on(&dialect, &scope(), Some(&before), &renamed, &[], "20261024").unwrap();
+    assert!(
+        only.iter().any(|sql| sql.contains("RENAME COLUMN")),
+        "{only:?}"
+    );
+    assert!(
+        only.iter().all(|sql| !sql.contains("CREATE TRIGGER")),
+        "{only:?}"
+    );
+    let mut edited = renamed;
+    edited.triggers = Some(vec![
+        "CREATE TRIGGER audit AFTER INSERT ON t BEGIN SELECT 2; END".into(),
+    ]);
+    let statements =
+        super::plan::plan_on(&dialect, &scope(), Some(&before), &edited, &[], "20261024").unwrap();
+    assert!(
+        statements.iter().any(|sql| sql.contains("Rebuilding")),
+        "{statements:?}"
+    );
+    assert!(
+        statements.iter().any(|sql| sql.contains("SELECT 2")),
+        "{statements:?}"
+    );
+}
+
+#[test]
 fn sqlite_rebuild_preserves_rows_indexes_triggers_and_rolls_back() {
     navidog_db::runtime::runtime().block_on(async {
         let mut session=navidog_db::connect(Arc::new(navidog_sqlite::SqliteDriver::default()),navidog_db::ConnectParams {file:Some(":memory:".into()),create_new:true,..Default::default()}).await.unwrap();
