@@ -254,8 +254,15 @@ impl ToolPanel {
     }
 
     fn adopt_saved(&mut self, cx: &mut Context<Self>) {
-        let Some(snapshot) = self.account_preview.take() else {
+        let Some(running) = self.running_account.take() else {
             return;
+        };
+        let snapshot = match self.account_preview.clone() {
+            Some(later) => AccountPreview {
+                account: adopted_account(running.account, later.account),
+                ..running
+            },
+            None => running,
         };
         let clear_password = Self::text(&self.password, cx).trim() == snapshot.password;
         self.loaded_grants = snapshot.grants;
@@ -1153,6 +1160,11 @@ impl ProfileFill {
 
 /// Baseline after a successful save. The next preview alters this account
 /// instead of creating it again, and an empty password field is not dirty.
+/// The baseline is the snapshot captured when execution started.
+fn adopted_account(running: AccountDraft, _later: AccountDraft) -> AccountDraft {
+    running
+}
+
 fn saved_account(mut draft: AccountDraft) -> AccountDraft {
     let name = draft.name.trim().to_string();
     let host = draft.host.trim().to_string();

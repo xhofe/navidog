@@ -715,3 +715,9 @@ SELECT ... FROM pg_inherits i ... WHERE i.inhrelid = c.oid
 | 预览生成后又改了表单，执行的仍是旧 SQL，成功后却把当前表单记成已保存，下一次预览会漏掉没执行的修改 | 生成预览时记下那份草稿、权限和密码。成功后只采用这份快照。之后改过的 SSL 或权限仍标脏，密码只有和预览里的一致才清空。`a_later_edit_stays_dirty_after_the_previewed_account_is_saved`、`security_statements_cover_each_product` |
 
 `PARTITION BY` 子串切分仍按上一轮推迟。
+
+### 7.10 `1ea02cd` 之后的评论
+
+| 评论 | 处理 |
+| --- | --- |
+| 执行过程中再按保存会换掉 `account_preview`，查询跑的仍是旧 SQL，成功后却把后来的设置记成已保存 | 开始执行时复制一份快照。成功只采用这份，查询进行中不再生成新预览。失败则丢掉这份进行中的快照。`a_running_save_keeps_the_snapshot_from_when_it_started` |

@@ -150,6 +150,7 @@ struct Saved {
 }
 
 /// The account state that the current preview will execute.
+#[derive(Clone)]
 struct AccountPreview {
     account: AccountDraft,
     grants: GrantSet,
@@ -170,6 +171,8 @@ pub struct ToolPanel {
     preview: Vec<String>,
     /// Draft and grants that produced `preview`. Success adopts this, not the form.
     account_preview: Option<AccountPreview>,
+    /// Copy of `account_preview` taken when execution starts. A later preview must not replace it.
+    running_account: Option<AccountPreview>,
     name: Entity<InputState>,
     host: Entity<InputState>,
     password: Entity<InputState>,
@@ -289,6 +292,7 @@ impl ToolPanel {
             output: String::new(),
             preview: Vec::new(),
             account_preview: None,
+            running_account: None,
             name: input("", false, window, cx),
             host: input("%", false, window, cx),
             password: input("", true, window, cx),
@@ -394,6 +398,9 @@ impl ToolPanel {
     }
 
     fn show_account(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
         if matches!(self.dialect.account_form(), AccountForm::Unavailable(_)) {
             self.preview.clear();
             self.error = Some(security::SQLITE_AUTH_REASON.into());
@@ -507,6 +514,7 @@ impl ToolPanel {
             return;
         }
         let sql = self.preview.clone();
+        self.running_account = self.account_preview.clone();
         self.run(sql, false, cx);
     }
 
@@ -584,6 +592,9 @@ impl ToolPanel {
                     Err(error) => {
                         if !matches!(this.fetch_kind, FetchKind::Defaults | FetchKind::Members) {
                             this.error = Some(error.to_string());
+                        }
+                        if this.fetch_kind == FetchKind::Output {
+                            this.running_account = None;
                         }
                         this.finish_optional_fetch(cx);
                     }
@@ -1437,6 +1448,25 @@ mod tests {
             super::comparable(super::saved_account(moved.clone())),
             super::comparable(moved)
         );
+    }
+
+    #[test]
+    fn a_running_save_keeps_the_snapshot_from_when_it_started() {
+        let running = super::saved_account(navidog_sql::security::AccountDraft {
+            name: "ada".into(),
+            host: "%".into(),
+            ssl_type: "ANY".into(),
+            ..navidog_sql::security::AccountDraft::default()
+        });
+        let later = super::saved_account(navidog_sql::security::AccountDraft {
+            name: "ada".into(),
+            host: "%".into(),
+            ssl_type: "NONE".into(),
+            ..navidog_sql::security::AccountDraft::default()
+        });
+        let adopted = super::adopted_account(running, later);
+        assert_eq!(adopted.ssl_type, "ANY");
+        assert_eq!(adopted.previous_ssl.as_deref(), Some("ANY"));
     }
 
     #[test]
