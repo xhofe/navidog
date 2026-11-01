@@ -102,6 +102,31 @@ mod tests {
             shaped.contains("IDENTIFIED WITH caching_sha2_password BY"),
             "{shaped}"
         );
+        user.password.clear();
+        user.previous_name = Some("ada".into());
+        user.previous_plugin = Some("mysql_native_password".into());
+        let refused =
+            security::account_statements(&mysql, mysql.definition_family(), &user).unwrap_err();
+        assert!(refused.contains("password"), "{refused}");
+        user.password = "secret".into();
+        let changed = security::account_statements(&mysql, mysql.definition_family(), &user)
+            .unwrap()
+            .join("\n");
+        assert!(
+            changed.contains("IDENTIFIED WITH caching_sha2_password BY"),
+            "{changed}"
+        );
+        user.password.clear();
+        user.previous_plugin = Some("caching_sha2_password".into());
+        let again = security::account_statements(&mysql, mysql.definition_family(), &user)
+            .unwrap()
+            .join("\n");
+        assert!(again.contains("ALTER USER"), "{again}");
+        assert!(!again.contains("CREATE USER"), "{again}");
+        assert!(!again.contains("IDENTIFIED"), "{again}");
+        let profile = security::role_profile_sql(&postgres, "ada").unwrap();
+        assert!(profile.contains("rolcanlogin"), "{profile}");
+        assert!(profile.contains("pg_roles"), "{profile}");
         assert!(shaped.contains("REQUIRE SSL"), "{shaped}");
         let load = security::user_load_sql(&mysql, mysql.definition_family(), "ada", "%", "sakila")
             .unwrap();

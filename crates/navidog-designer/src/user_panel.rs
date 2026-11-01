@@ -130,6 +130,16 @@ impl ToolPanel {
         set(&self.ssl_cipher, &fill.ssl_cipher, cx);
         set(&self.ssl_issuer, &fill.ssl_issuer, cx);
         set(&self.ssl_subject, &fill.ssl_subject, cx);
+        if let Some(attrs) = &fill.postgres {
+            self.login = attrs.login;
+            self.superuser = attrs.superuser;
+            self.createdb = attrs.createdb;
+            self.createrole = attrs.createrole;
+            self.inherit = attrs.inherit;
+            self.replication = attrs.replication;
+            set(&self.connection_limit, &attrs.connection_limit, cx);
+            set(&self.valid_until, &attrs.valid_until, cx);
+        }
         self.locked = fill.locked;
         select_value(&self.plugin_choice, &fill.plugin, PLUGINS, window, cx);
         select_value(&self.ssl_choice, &fill.ssl_type, SSL_TYPES, window, cx);
@@ -151,6 +161,9 @@ impl ToolPanel {
                 self.output = format_sets(sets);
                 self.preview.clear();
                 self.error = None;
+                if self.tool == Tool::Users && self.target.is_some() {
+                    self.adopt_saved(cx);
+                }
             }
             FetchKind::Accounts => {
                 if let Some(set) = sets.iter().find(|set| !set.columns.is_empty()) {
@@ -174,6 +187,13 @@ impl ToolPanel {
         let Some((name, host)) = self.editing() else {
             return;
         };
+        if self.dialect.account_form() == AccountForm::Postgres {
+            match security::role_profile_sql(self.dialect.as_ref(), &name) {
+                Ok(sql) => self.spawn_query(vec![sql], true, FetchKind::Detail, cx),
+                Err(error) => self.error = Some(error),
+            }
+            return;
+        }
         if self.dialect.account_form() != AccountForm::Mysql {
             self.pending_fill = Some(ProfileFill::named(name, host));
             self.loaded_draft = AccountDraft::default();
@@ -233,8 +253,25 @@ impl ToolPanel {
         self.spawn_query(vec![sql.members], true, FetchKind::Members, cx);
     }
 
+    fn adopt_saved(&mut self, cx: &mut Context<Self>) {
+        let (grants, members) = self.current_grants();
+        self.loaded_grants = grants;
+        self.loaded_members = members;
+        self.grants_touched = false;
+        self.loaded_draft = saved_account(self.account_draft(cx));
+        self.clear_password = true;
+    }
+
     fn apply_detail(&mut self, sets: Vec<ResultSet>, cx: &mut Context<Self>) {
         let (name, host) = self.editing().unwrap_or_default();
+        if self.dialect.account_form() == AccountForm::Postgres {
+            self.pending_fill = Some(match sets.first().and_then(|set| set.rows.first()) {
+                Some(row) => postgres_profile(name, host, row),
+                None => ProfileFill::named(name, host),
+            });
+            self.error = None;
+            return;
+        }
         if let Some(row) = sets.first().and_then(|set| set.rows.first()) {
             let cell = |index: usize| {
                 row.get(index)
@@ -254,6 +291,7 @@ impl ToolPanel {
                 ssl_cipher: cell(8),
                 ssl_issuer: cell(9),
                 ssl_subject: cell(10),
+                postgres: None,
             });
         } else {
             self.pending_fill = Some(ProfileFill::named(name, host));
@@ -1105,8 +1143,56 @@ impl ProfileFill {
             ssl_cipher: String::new(),
             ssl_issuer: String::new(),
             ssl_subject: String::new(),
+            postgres: None,
         }
     }
+}
+
+/// Baseline after a successful save. The next preview alters this account
+/// instead of creating it again, and an empty password field is not dirty.
+fn saved_account(mut draft: AccountDraft) -> AccountDraft {
+    let name = draft.name.trim().to_string();
+    let host = draft.host.trim().to_string();
+    draft.password.clear();
+    draft.previous_name = Some(name);
+    draft.previous_host = Some(host);
+    draft.previous_plugin = Some(draft.plugin.clone());
+    draft.previous_ssl = Some(draft.ssl_type.clone());
+    draft.previous_cipher = Some(draft.ssl_cipher.clone());
+    draft.previous_issuer = Some(draft.ssl_issuer.clone());
+    draft.previous_subject = Some(draft.ssl_subject.clone());
+    draft.previous_locked = Some(draft.locked);
+    draft
+}
+
+fn postgres_profile(name: String, host: String, row: &[Option<String>]) -> ProfileFill {
+    let cell = |index: usize| {
+        row.get(index)
+            .and_then(|value| value.clone())
+            .unwrap_or_default()
+    };
+    let limit = cell(6);
+    let limit = if limit.trim().is_empty() || limit.trim() == "-1" {
+        String::new()
+    } else {
+        limit
+    };
+    let mut fill = ProfileFill::named(name, host);
+    fill.postgres = Some(PostgresAttrs {
+        login: pg_flag(&cell(0)),
+        superuser: pg_flag(&cell(1)),
+        createdb: pg_flag(&cell(2)),
+        createrole: pg_flag(&cell(3)),
+        inherit: pg_flag(&cell(4)),
+        replication: pg_flag(&cell(5)),
+        connection_limit: limit,
+        valid_until: cell(7),
+    });
+    fill
+}
+
+fn pg_flag(value: &str) -> bool {
+    matches!(value.trim(), "t" | "T" | "true" | "TRUE" | "1")
 }
 
 fn comparable(mut draft: AccountDraft) -> AccountDraft {

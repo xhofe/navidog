@@ -694,3 +694,16 @@ SELECT ... FROM pg_inherits i ... WHERE i.inhrelid = c.oid
 | 列重命名同时改了别的触发器时，重建会用旧列名重建没改过的触发器，`UPDATE OF` 不再触发，视图也留着旧列名 | 这种编辑不再整表重建。先替换文本变了的触发器，再 `RENAME COLUMN`，让 SQLite 改写没改过的触发器、新触发器正文、视图和外键。`sqlite_rename_with_a_trigger_edit_keeps_the_other_trigger`、`sqlite_rename_and_trigger_edit_keeps_update_of_and_the_view`。第 7.6 节里的 `sqlite_rename_with_a_trigger_edit_rebuilds` 已改成前一个测试 |
 | 这条重建会留下带外键的备份表，删光子行后仍删不掉父行 | 同一条路径不再产生备份表。加列这类本来就要重建的保存仍会留下备份表，这是原有行为 |
 | 对象已被外部删除时，空的 `object_ddl` 会跳过冲突检查，保存把对象建回来 | 当前定义和打开时读到的定义不一致就拒绝，空字符串也算。`a_deleted_object_is_not_recreated` |
+
+### 7.8 `8ca59f7` 之后的评论
+
+| 评论 | 处理 |
+| --- | --- |
+| 用户保存成功后基线不更新，页签仍标脏，下次再发 `CREATE USER` 或再 `RENAME` | 成功执行后把当前草稿记成已保存：`previous_name` 换成现名，权限基线换成当前勾选，并清空密码框。`a_saved_account_is_altered_instead_of_created_again` |
+| 打开已有 PostgreSQL 角色时不读属性，只改密码也会写成默认的 `LOGIN` / `NOSUPERUSER` | 从 `pg_roles` 读 `rolcanlogin`、`rolsuper`、`rolcreatedb`、`rolcreaterole`、`rolinherit`、`rolreplication`、`rolconnlimit`、`rolvaliduntil`，填进表单后再记基线。`role_profile_sql`、`a_loaded_postgres_role_keeps_nologin_and_superuser` |
+| 已有账号只改认证插件、密码为空时发出 `IDENTIFIED WITH plugin`，会换掉现有口令哈希 | 这种情况预览直接报错，要求填写密码。新建账号仍可以只指定插件。`security_statements_cover_each_product` |
+| 预览评论的隐藏标记不限作者，字段原样拼进 `gh run download` | 只认 `github-actions[bot]` 的评论。URL、运行号、提交、产物名和 SHA-256 对不上字符集就丢掉这条记录。`preview-comment.sh --check` |
+
+对象设计器保存后用编辑器正文当冲突基线的那条，代码已经改成比较 `server_ddl`（`9dccbb6`、`33a7255`），本轮不再改。`PARTITION BY` 子串切分仍按上一轮推迟。页签键盘导航对方已接受。
+
+第 7.6 节写的「已有账号编辑仍未做」已被 `8ca59f7` 的用户列表和设计器取代。实库创建账号本轮仍未跑。

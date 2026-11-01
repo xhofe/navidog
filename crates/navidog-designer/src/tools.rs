@@ -115,6 +115,17 @@ struct ObjectRow {
     on: Vec<bool>,
 }
 
+struct PostgresAttrs {
+    login: bool,
+    superuser: bool,
+    createdb: bool,
+    createrole: bool,
+    inherit: bool,
+    replication: bool,
+    connection_limit: String,
+    valid_until: String,
+}
+
 struct ProfileFill {
     name: String,
     host: String,
@@ -128,6 +139,7 @@ struct ProfileFill {
     ssl_cipher: String,
     ssl_issuer: String,
     ssl_subject: String,
+    postgres: Option<PostgresAttrs>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -206,6 +218,7 @@ pub struct ToolPanel {
     fetch_kind: FetchKind,
     fetch_gen: u64,
     pending_fill: Option<ProfileFill>,
+    clear_password: bool,
 }
 
 impl ToolPanel {
@@ -332,6 +345,7 @@ impl ToolPanel {
             fetch_kind: FetchKind::Output,
             fetch_gen: 0,
             pending_fill: None,
+            clear_password: false,
         }
     }
 
@@ -919,6 +933,13 @@ impl Render for ToolPanel {
         if let Some(fill) = self.pending_fill.take() {
             self.apply_fill(fill, window, cx);
         }
+        if self.clear_password {
+            self.clear_password = false;
+            self.password
+                .update(cx, |state, cx| state.set_value(String::new(), window, cx));
+            self.confirm
+                .update(cx, |state, cx| state.set_value(String::new(), window, cx));
+        }
         let p = palette(cx);
         let disabled = self.busy;
         let users = self.tool == Tool::Users;
@@ -1350,5 +1371,44 @@ mod tests {
         assert!(shown.contains("PASSWORD '***'"), "{shown}");
         assert!(shown.contains("VALID UNTIL 's''ecret'"), "{shown}");
         assert!(!shown.contains("IDENTIFIED BY 's''ecret'"), "{shown}");
+    }
+
+    #[test]
+    fn a_saved_account_is_altered_instead_of_created_again() {
+        let draft = navidog_sql::security::AccountDraft {
+            name: " ada ".into(),
+            host: "%".into(),
+            password: "secret".into(),
+            plugin: "caching_sha2_password".into(),
+            ..navidog_sql::security::AccountDraft::default()
+        };
+        let saved = super::saved_account(draft);
+        assert!(saved.password.is_empty());
+        assert_eq!(saved.previous_name.as_deref(), Some("ada"));
+        assert_eq!(saved.previous_host.as_deref(), Some("%"));
+        assert_eq!(
+            saved.previous_plugin.as_deref(),
+            Some("caching_sha2_password")
+        );
+    }
+
+    #[test]
+    fn a_loaded_postgres_role_keeps_nologin_and_superuser() {
+        let row = [
+            Some("f".into()),
+            Some("t".into()),
+            Some("f".into()),
+            Some("f".into()),
+            Some("t".into()),
+            Some("f".into()),
+            Some("-1".into()),
+            Some(String::new()),
+        ];
+        let fill = super::postgres_profile("app".into(), String::new(), &row);
+        let attrs = fill.postgres.expect("role attributes");
+        assert!(!attrs.login);
+        assert!(attrs.superuser);
+        assert!(attrs.inherit);
+        assert!(attrs.connection_limit.is_empty());
     }
 }

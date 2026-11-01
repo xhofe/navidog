@@ -1270,6 +1270,11 @@ fn mysql_identified(dialect: &dyn Dialect, draft: &AccountDraft) -> Result<Strin
         Some(previous) => previous != plugin && !plugin.is_empty(),
         None => !plugin.is_empty() && draft.previous_name.is_none(),
     };
+    // `IDENTIFIED WITH plugin` and no password replaces the hash. An existing
+    // account has to supply a new password; a new account may omit it.
+    if changed && draft.previous_name.is_some() {
+        return Err("Enter a password to change the authentication plugin.".into());
+    }
     if changed {
         Ok(format!(" IDENTIFIED WITH {plugin}"))
     } else {
@@ -1331,6 +1336,16 @@ pub struct UserLoadSql {
     pub tables: Option<String>,
     pub defaults: String,
     pub members: String,
+}
+
+/// One row of PostgreSQL role attributes for the designer.
+pub fn role_profile_sql(dialect: &dyn Dialect, name: &str) -> Result<String, String> {
+    let name = dialect.string_literal(account_name(name)?);
+    Ok(format!(
+        "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolinherit, \
+         rolreplication, rolconnlimit, COALESCE(rolvaliduntil::text, '') \
+         FROM pg_roles WHERE rolname = {name}"
+    ))
 }
 
 pub fn user_load_sql(

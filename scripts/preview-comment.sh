@@ -19,7 +19,8 @@ set -euo pipefail
 
 marker="<!-- navidog-preview -->"
 # ponytail: values are space-separated and unescaped. Run URLs, ids, SHAs, and
-# the artifact name have no spaces; if a field ever can, switch this to JSON.
+# the artifact name have no spaces; a record that fails the charset check is
+# dropped. If a field ever needs spaces, switch this to JSON.
 success_prefix="<!-- navidog-preview-success "
 
 PREV_RUN_URL=""
@@ -105,6 +106,11 @@ parse_marker_line() {
       sha256) PREV_SHA256="$value" ;;
     esac
   done
+  [[ "$PREV_RUN_URL" =~ ^https://[A-Za-z0-9./_-]+$ ]] || { clear_previous; return 1; }
+  [[ "$PREV_RUN_ID" =~ ^[0-9]+$ ]] || { clear_previous; return 1; }
+  [[ "$PREV_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { clear_previous; return 1; }
+  [[ "$PREV_ARTIFACT" =~ ^[A-Za-z0-9._-]+$ ]] || { clear_previous; return 1; }
+  [[ "$PREV_SHA256" =~ ^[0-9a-f]+$ ]] || { clear_previous; return 1; }
   have_previous
 }
 
@@ -196,7 +202,7 @@ find_comment_id() {
   local repo="${GITHUB_REPOSITORY:?}"
   local pr="${PR_NUMBER:?}"
   gh api --paginate "repos/${repo}/issues/${pr}/comments" \
-    --jq ".[] | select((.body // \"\") | startswith(\"${marker}\")) | .id" \
+    --jq ".[] | select(.user.login == \"github-actions[bot]\" and ((.body // \"\") | startswith(\"${marker}\"))) | .id" \
     | tail -n 1
 }
 
@@ -322,6 +328,13 @@ if [ "${1:-}" = "--check" ]; then
     exit 1
   fi
   [ -z "$PREV_RUN_ID" ]
+
+  poison='<!-- navidog-preview-success run_url=https://github.com/example/navidog/actions/runs/42 run_id=42 head_sha=abcdef0123456789abcdef0123456789abcdef01 artifact=ok;rm sha256=cafebabe -->'
+  if load_success_from_body "$poison"; then
+    echo "poisoned artifact was accepted" >&2
+    exit 1
+  fi
+  [ -z "$PREV_ARTIFACT" ]
   echo "ok"
   exit 0
 fi
