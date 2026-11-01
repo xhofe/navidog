@@ -707,3 +707,11 @@ SELECT ... FROM pg_inherits i ... WHERE i.inhrelid = c.oid
 对象设计器保存后用编辑器正文当冲突基线的那条，代码已经改成比较 `server_ddl`（`9dccbb6`、`33a7255`），本轮不再改。`PARTITION BY` 子串切分仍按上一轮推迟。页签键盘导航对方已接受。
 
 第 7.6 节写的「已有账号编辑仍未做」已被 `8ca59f7` 的用户列表和设计器取代。实库创建账号本轮仍未跑。
+
+### 7.9 `7b46532` 之后的评论
+
+| 评论 | 处理 |
+| --- | --- |
+| 预览生成后又改了表单，执行的仍是旧 SQL，成功后却把当前表单记成已保存，下一次预览会漏掉没执行的修改 | 生成预览时记下那份草稿、权限和密码。成功后只采用这份快照。之后改过的 SSL 或权限仍标脏，密码只有和预览里的一致才清空。`a_later_edit_stays_dirty_after_the_previewed_account_is_saved`、`security_statements_cover_each_product` |
+
+`PARTITION BY` 子串切分仍按上一轮推迟。

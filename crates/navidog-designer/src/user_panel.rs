@@ -254,12 +254,15 @@ impl ToolPanel {
     }
 
     fn adopt_saved(&mut self, cx: &mut Context<Self>) {
-        let (grants, members) = self.current_grants();
-        self.loaded_grants = grants;
-        self.loaded_members = members;
+        let Some(snapshot) = self.account_preview.take() else {
+            return;
+        };
+        let clear_password = Self::text(&self.password, cx).trim() == snapshot.password;
+        self.loaded_grants = snapshot.grants;
+        self.loaded_members = snapshot.members;
         self.grants_touched = false;
-        self.loaded_draft = saved_account(self.account_draft(cx));
-        self.clear_password = true;
+        self.loaded_draft = snapshot.account;
+        self.clear_password = clear_password;
     }
 
     fn apply_detail(&mut self, sets: Vec<ResultSet>, cx: &mut Context<Self>) {

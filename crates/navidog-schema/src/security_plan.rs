@@ -124,6 +124,12 @@ mod tests {
         assert!(again.contains("ALTER USER"), "{again}");
         assert!(!again.contains("CREATE USER"), "{again}");
         assert!(!again.contains("IDENTIFIED"), "{again}");
+        user.previous_ssl = Some("ANY".into());
+        user.ssl_type = "NONE".into();
+        let ssl = security::account_statements(&mysql, mysql.definition_family(), &user)
+            .unwrap()
+            .join("\n");
+        assert!(ssl.contains("REQUIRE NONE"), "{ssl}");
         let profile = security::role_profile_sql(&postgres, "ada").unwrap();
         assert!(profile.contains("rolcanlogin"), "{profile}");
         assert!(profile.contains("pg_roles"), "{profile}");

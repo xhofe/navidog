@@ -149,6 +149,14 @@ struct Saved {
     target: Option<String>,
 }
 
+/// The account state that the current preview will execute.
+struct AccountPreview {
+    account: AccountDraft,
+    grants: GrantSet,
+    members: BTreeSet<(String, String)>,
+    password: String,
+}
+
 pub struct ToolPanel {
     scope: Scope,
     tool: Tool,
@@ -160,6 +168,8 @@ pub struct ToolPanel {
     error: Option<String>,
     output: String,
     preview: Vec<String>,
+    /// Draft and grants that produced `preview`. Success adopts this, not the form.
+    account_preview: Option<AccountPreview>,
     name: Entity<InputState>,
     host: Entity<InputState>,
     password: Entity<InputState>,
@@ -278,6 +288,7 @@ impl ToolPanel {
             error: None,
             output: String::new(),
             preview: Vec::new(),
+            account_preview: None,
             name: input("", false, window, cx),
             host: input("%", false, window, cx),
             password: input("", true, window, cx),
@@ -392,6 +403,7 @@ impl ToolPanel {
         let confirm = Self::text(&self.confirm, cx);
         if !confirm.is_empty() && confirm != password {
             self.preview.clear();
+            self.account_preview = None;
             self.error = Some(t!("designer.tool_password_mismatch").to_string());
             cx.notify();
             return;
@@ -441,10 +453,17 @@ impl ToolPanel {
                 });
                 self.output.clear();
                 self.preview = sql;
+                self.account_preview = Some(AccountPreview {
+                    account: saved_account(draft),
+                    grants,
+                    members,
+                    password: password.trim().to_string(),
+                });
                 self.error = None;
             }
             Err(error) => {
                 self.preview.clear();
+                self.account_preview = None;
                 self.error = Some(error);
             }
         }
@@ -1389,6 +1408,34 @@ mod tests {
         assert_eq!(
             saved.previous_plugin.as_deref(),
             Some("caching_sha2_password")
+        );
+    }
+
+    #[test]
+    fn a_later_edit_stays_dirty_after_the_previewed_account_is_saved() {
+        let previewed = navidog_sql::security::AccountDraft {
+            name: "ada".into(),
+            host: "%".into(),
+            password: "secret".into(),
+            ssl_type: "ANY".into(),
+            ..navidog_sql::security::AccountDraft::default()
+        };
+        let baseline = super::saved_account(previewed);
+        let moved = navidog_sql::security::AccountDraft {
+            name: "ada".into(),
+            host: "%".into(),
+            ssl_type: "NONE".into(),
+            ..navidog_sql::security::AccountDraft::default()
+        };
+        assert_eq!(baseline.ssl_type, "ANY");
+        assert_eq!(baseline.previous_ssl.as_deref(), Some("ANY"));
+        assert_ne!(
+            super::comparable(moved.clone()),
+            super::comparable(baseline)
+        );
+        assert_eq!(
+            super::comparable(super::saved_account(moved.clone())),
+            super::comparable(moved)
         );
     }
 
