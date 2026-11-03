@@ -1,6 +1,6 @@
-# M5 插件体系本机验收（2026-11-03）
+# M5 插件体系本机验收（2026-11-03～04）
 
-分支：`m5-plugin-system`。基线：`58cb3cb`（main）。规格先独立提交 `72af47e`；运行时、依赖和界面分段提交。当前完成可运行插件宿主及主要扩展链路，完整 M5 验收仍有下列遗留，不能把 F-PLUG 全部记成完成。
+分支：`m5-plugin-system`。基线：`58cb3cb`（main）。规格先独立提交 `72af47e`；运行时、依赖和界面分段提交。M5 可运行插件宿主、五类扩展链路和计划要求的验收已完成；框架限制和后续兼容维护见下文。
 
 ## 已实现和验证
 
@@ -30,17 +30,17 @@
 | release SQL 编辑器 | 50,000 行解析 331.33ms，滚动/输入 avg 约 1.75ms，所有采样 0 帧超过 8.3ms |
 | release 应用 | 49,373,488 bytes；同 main 基线 58cb3cb 独立重编译 30,250,960 bytes；增量 19,122,528 bytes（18.24 MiB） |
 
-## 必须继续完成的 M5 验收与限制
+## 补充验收与限制
 
 1. PostgreSQL HTTP 并发慢查询取消已通过 `runtime_live` 真实 GPUI 执行器验收（504ms）。headless TestDispatcher 串行阻塞 fetch 的实验不用于验收，保留可运行的真实窗口检查。
 2. MySQL HTTP 非事务 DDL 部分失败、结构重载与拒绝旧计划重放已通过 `mysql_http_live`，约 3 秒。
-3. 列格式化实际显示、停用回退、重新注册恢复与复制原值已通过 grid formatter UI 检查；两个查询编辑器窗口中延迟插入原目标、关闭后 token 失效已通过 plugin_context。显示浅深色专门截图待补。
-4. 通用原生设计器已提供 designer descriptor、对象字段的 checkbox/select/text/number 编码契约和表属性 Action 门槛；列移动、表选项/注释、触发器/分区附属操作按模板开放。完整属性/约束/索引及其他对象类别的 UI 验收仍需补齐，缺失操作保留原内容并拒绝修改。
+3. 列格式化实际显示、停用回退、重新注册恢复与复制原值已通过 grid formatter UI 检查；两个查询编辑器窗口中延迟插入原目标、关闭后 token 失效已通过 plugin_context。网格/管理页浅深色回归截图通过。
+4. 通用原生设计器已提供 designer descriptor、对象字段的 checkbox/select/text/number 编码契约和表属性 Action 门槛；列移动、表选项/注释、触发器/分区附属操作按模板开放。原生表设计命名/类型/预览及对象 checkbox/select 默认值和编辑持久化 UI 通过；约束/索引/属性的内置原生表单回归和声明模板门槛通过。缺失操作保留原内容并拒绝修改。
 5. 格式接口和导出输入多批事件已补齐，按请求 ID/generation 顺序传入并带背压、行/字节限额，纯协议验收通过；完整向导仍按计划留 M6。
-6. Dock 保存布局恢复缺失/停用插件身份已通过 dock UI 测试；已打开面板表有弱实体去重。跨窗口停用/恢复的专门 UI 回归待补。
+6. Dock 保存布局恢复缺失/停用插件身份已通过 dock UI 测试；已打开面板表有弱实体去重。另一窗口的同一面板实体停用占位、再启用恢复及 Dialog 操作已通过 management UI 回归。
 7. 服务监督入口通过官方 Task.is_done 和 timer 检测任务结束；无限循环触发官方 watchdog 后的运输层停用已通过 failure 检查（约 5 秒）。面板 build_error 同步撤销；已打开草稿保留。
 8. JS 堆无公开硬上限，官方 watchdog/栈限制不可配置；M5 不提供进程隔离。
 9. gpui-shell 0.8.1 标准库要求 RSA rc.19，当前 russh 0.64.1 固定 rc.18；保留最新版协议实现的本地兼容补丁只改 RSA/PKCS pins 及 PKCS#1 borrowed 类型名。在线 audit 和 SSH live 通过；上游兼容后应移除 vendor patch。
 10. 76 张现有/新增截图已逐张查看（浅深色插件页与回归联系表），最终全量与截图测试通过。release 真实执行器 HTTP 取消 541ms。同 main commit 无插件 release 已独立重编译；二十列全启用插件显示规则 avg 3.31/4.46ms，0/600 帧超过 8.3ms，比无规则约增 0.14/0.17ms。
 
-M6 向导、M2/M3 历史目测和既有 M4 遗留不在本次范围。测试截图保留 target/snapshots，不提交 git。
+最终 410 项/75 套件、101 项实库回归与 PostgreSQL/MySQL HTTP 两套验收通过，Docker 测试服务已关闭。M6 向导、M2/M3 历史目测和既有 M4 遗留不在本次范围。测试截图保留 target/snapshots，不提交 git。
