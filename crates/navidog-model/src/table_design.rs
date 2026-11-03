@@ -30,6 +30,8 @@ pub struct TableDesign {
     pub indexes: Vec<String>,
     pub options: String,
     #[serde(default)]
+    pub option_fields: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
     pub comment: String,
     #[serde(default)]
     pub owner: String,

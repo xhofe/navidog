@@ -31,6 +31,34 @@ pub(super) fn plan(
         ])
     };
     after.validate(d)?;
+    if let Some(descriptor) = d.designer_descriptor() {
+        for (key, value) in &after.option_fields {
+            let field = descriptor
+                .options
+                .get(key)
+                .ok_or_else(|| DbError::msg("Unknown table option field."))?;
+            match &field.control {
+                navidog_sql::declared::FieldControl::Number => {
+                    value
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|value| value.is_finite())
+                        .ok_or_else(|| DbError::msg("Option needs a finite number."))?;
+                }
+                navidog_sql::declared::FieldControl::Checkbox
+                    if !["true", "false"].contains(&value.as_str()) =>
+                {
+                    return Err(DbError::msg("Option needs true or false."));
+                }
+                navidog_sql::declared::FieldControl::Select(choices)
+                    if !choices.contains(value) =>
+                {
+                    return Err(DbError::msg("Unknown option choice."));
+                }
+                _ => {}
+            }
+        }
+    }
     let Some(before) = before else {
         let mut definition = after
             .columns
@@ -124,7 +152,7 @@ pub(super) fn plan(
     for (operation, changed, fragment) in [
         (
             "table_options",
-            old.options != after.options,
+            old.options != after.options || old.option_fields != after.option_fields,
             after.options.clone(),
         ),
         (
@@ -141,6 +169,12 @@ pub(super) fn plan(
         if changed {
             let mut parameters = values("", &fragment);
             parameters.insert("value".into(), fragment.clone());
+            parameters.extend(
+                after
+                    .option_fields
+                    .iter()
+                    .map(|(key, value)| (format!("field.{key}"), value.clone())),
+            );
             out.push(render(operation, parameters)?);
         }
     }

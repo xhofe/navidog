@@ -2,14 +2,30 @@ use super::*;
 use gpui_kit::component::checkbox::Checkbox;
 use navidog_schema::table_design::{edit_table_option, table_option};
 
-pub(super) fn keys(d: &dyn Dialect) -> &[&str] {
-    d.table_option_keys()
+pub(super) fn keys(d: &dyn Dialect) -> Vec<&str> {
+    if let Some(descriptor) = d.designer_descriptor() {
+        descriptor.options.keys().map(String::as_str).collect()
+    } else {
+        d.table_option_keys().to_vec()
+    }
 }
 impl TableDesigner {
     pub(super) fn sync_table_options(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.syncing = true;
         for (key, input) in &self.table_option_inputs {
-            let value = if key == "owner" {
+            let value = if let Some(descriptor) = self.dialect.designer_descriptor() {
+                self.draft
+                    .option_fields
+                    .get(key)
+                    .cloned()
+                    .or_else(|| {
+                        descriptor
+                            .options
+                            .get(key)
+                            .map(|field| field.default.clone())
+                    })
+                    .unwrap_or_default()
+            } else if key == "owner" {
                 self.draft.owner.clone()
             } else if key == "table_comment" && self.dialect.features().separate_comments {
                 self.draft.comment.clone()
@@ -29,7 +45,18 @@ impl TableDesigner {
         if self.busy || !self.loaded {
             return;
         }
-        let key = keys(self.dialect.as_ref())[ix];
+        let keys = keys(self.dialect.as_ref());
+        let key = keys[ix];
+        if let Some(descriptor) = self.dialect.designer_descriptor() {
+            let value = self.table_option_inputs[key].read(cx).value().to_string();
+            if !descriptor.options.contains_key(key) {
+                return;
+            }
+            self.draft.option_fields.insert(key.into(), value);
+            self.preview = None;
+            cx.notify();
+            return;
+        }
         let value = self.table_option_inputs[key].read(cx).value().to_string();
         let result = if key == "table_comment" && self.dialect.features().separate_comments {
             if value.contains('\0') {
@@ -100,6 +127,55 @@ impl TableDesigner {
     }
     pub(super) fn render_table_options(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let disabled = self.busy || !self.loaded;
+        if let Some(descriptor) = self.dialect.designer_descriptor() {
+            return v_flex()
+                .id("designer-options-form")
+                .size_full()
+                .overflow_y_scroll()
+                .p_3()
+                .gap_2()
+                .children(
+                    descriptor
+                        .options
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, (key, field))| {
+                            let input = self.table_option_inputs.get(key).unwrap().clone();
+                            let control = match &field.control {
+                                navidog_sql::declared::FieldControl::Checkbox => {
+                                    let checked = input.read(cx).value().as_ref() == "true";
+                                    Checkbox::new(SharedString::from(format!(
+                                        "designer-option-{key}"
+                                    )))
+                                    .checked(checked)
+                                    .disabled(disabled)
+                                    .on_change(move |next, window, cx| {
+                                        input.update(cx, |input, cx| {
+                                            input.set_value(next.to_string(), window, cx)
+                                        })
+                                    })
+                                    .into_any_element()
+                                }
+                                navidog_sql::declared::FieldControl::Select(choices) => h_flex()
+                                    .child(Input::new(&input).small().disabled(disabled))
+                                    .child(super::view::choices(
+                                        cx.entity().downgrade(),
+                                        100 + ix,
+                                        choices.clone(),
+                                        disabled,
+                                    ))
+                                    .into_any_element(),
+                                _ => Input::new(&input)
+                                    .id(SharedString::from(format!("designer-option-{key}")))
+                                    .small()
+                                    .disabled(disabled)
+                                    .into_any_element(),
+                            };
+                            FormRow::new(field.label.clone(), control)
+                        }),
+                )
+                .into_any_element();
+        }
         v_flex()
             .id("designer-options-form")
             .size_full()
@@ -210,5 +286,6 @@ impl TableDesigner {
                         cx.listener(|this, _, w, cx| this.switch_page(Page::Advanced, w, cx)),
                     ),
             )
+            .into_any_element()
     }
 }

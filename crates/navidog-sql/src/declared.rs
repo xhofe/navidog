@@ -468,11 +468,22 @@ impl Dialect for DeclaredDialect {
         DialectFeatures {
             has_schemas: self.descriptor.has_schemas,
             transactional_ddl: self.descriptor.transactional_ddl,
-            supports_column_comments: false,
-            supports_virtual_generated: false,
-            supports_index_method: false,
-            supports_index_expression: false,
-            fk_reference_schema: false,
+            supports_column_comments: self.descriptor.designer.properties.contains("comment"),
+            supports_virtual_generated: self.descriptor.designer.properties.contains("storage"),
+            supports_column_charset: self.descriptor.designer.properties.contains("charset"),
+            supports_identity: self.descriptor.designer.properties.contains("identity"),
+            supports_unsigned: self.descriptor.designer.properties.contains("unsigned"),
+            supports_zerofill: self.descriptor.designer.properties.contains("zerofill"),
+            supports_on_update: self.descriptor.designer.properties.contains("on_update"),
+            supports_partitions: self.descriptor.templates.contains_key("partition"),
+            supports_index_method: !self.descriptor.designer.index_methods.is_empty(),
+            supports_index_expression: self
+                .descriptor
+                .designer
+                .constraints
+                .contains("index_expression"),
+            supports_exclude: self.descriptor.designer.constraints.contains("exclude"),
+            fk_reference_schema: self.descriptor.has_schemas,
             ..Default::default()
         }
     }

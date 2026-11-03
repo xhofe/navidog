@@ -835,7 +835,8 @@ impl TableDesigner {
         }
         if action.target >= 100 {
             let ix = action.target - 100;
-            let Some(key) = super::options::keys(self.dialect.as_ref()).get(ix) else {
+            let keys = super::options::keys(self.dialect.as_ref());
+            let Some(key) = keys.get(ix) else {
                 return;
             };
             let Some(input) = self.table_option_inputs.get(*key).cloned() else {
