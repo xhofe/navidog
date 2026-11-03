@@ -1,6 +1,6 @@
 # 插件 API
 
-navidog 的插件是 [gpui-shell](https://gpui-kit.com/zh-CN/shell) 应用：一个目录，里面有 JavaScript 源码、`gpui-shell.json` 和 navidog 自己的 `navidog.json`。本文定义注册表、插件目录结构、授权、HostModule `navidog` 和 JS 驱动协议。实现安排在 M5，注册表在 M1 就建立（决策见 [00-overview.md](00-overview.md#3-决策记录)）。
+navidog 的插件是 [gpui-shell](https://gpui-kit.com/zh-CN/shell) 应用：一个目录，里面有 JavaScript 源码、`gpui-shell.json` 和 navidog 自己的 `navidog.json`。本文定义注册表、插件目录结构、授权、HostModule `navidog` 和 JS 驱动协议。M5 实现按本文第 11～16 节的 API v1 契约执行；注册表在 M1 就建立（决策见 [00-overview.md](00-overview.md#3-决策记录)）。
 
 ## 1. 设计约束（来自 gpui-shell）
 
@@ -11,7 +11,7 @@ navidog 的插件是 [gpui-shell](https://gpui-kit.com/zh-CN/shell) 应用：一
 | HostModule 边界上只能传纯数据（null、布尔、数字、字符串、数组、对象），宿主拿不到脚本函数的句柄。 | 插件不能把回调函数注册给宿主。 |
 | host function 禁止回调进脚本引擎。 | 宿主要通知插件（命令被触发、驱动请求等），只能由插件拉取：`await next_event()`。 |
 | 每个插件有独立的 `Policy`，包含自己的 capabilities 和 HostModule 注册表（`Policy::with_host_module`）。 | navidog 自有的能力（读取连接列表、执行 SQL 等）按插件分别注册：没有授权的函数不会出现在该插件的 `navidog` 模块里。 |
-| 脚本 View 需要挂在 `ShellRoot` 之下，`window.open_dialog` 等调用才能生效。 | 插件面板在 Dock Panel 内部包一层 `ShellRoot`，M5 需要先验证这样做能否与宿主的 `Root` 共存。 |
+| 原始 Shell 浮层依赖独立 `ShellRoot`；官方组件浮层使用窗口 Base Root。 | 保留 navidog 的窗口 Root，使用官方 `gpui-component` 的 Dialog、Sheet、Tooltip、Popover；原始 Shell 浮层不支持，通知走 `navidog.notify`。 |
 
 ## 2. 注册表（`navidog-app-state`，M1）
 
@@ -213,7 +213,7 @@ type Reply = { ok: true; data?: unknown } | { ok: false; error: string; code?: s
 
 ## 8. 插件面板
 
-- `navidog.json` 中的每个面板，宿主用 `runtime.load_app(plugin_dir, entry)` 加载，再 `instantiate` 成 View 对象，包装成 `ScriptView`，放进实现了 `gpui-component` `Panel` 的 `PluginPanel` 中，然后按 `placement`（left、right、bottom、center）和 `size` 加入 `DockArea`。
+- `navidog.json` 中的每个面板，宿主用公开 `runtime.load_application(plugin_dir, entry)` 和 `mount_application` 创建 `ScriptView`，放进实现了 `gpui-component` `Panel` 的 `PluginPanel` 中，然后按 `placement`（left、right、bottom、center）和 `size` 加入 `DockArea`。
 - 面板标识为 `plugin:<插件 id>/<面板 id>`，用于 Dock 布局的持久化。插件未加载时，布局中对应的位置显示为占位面板。
 - 宿主状态（连接列表、主题、语言）发生变化时，宿主调用 `view.refresh(cx)`，让脚本重新执行 `render`。
 
@@ -223,11 +223,99 @@ type Reply = { ok: true; data?: unknown } | { ok: false; error: string; code?: s
 2. **校验**：检查 `api` 版本、id 格式、`shell-version`，以及 `navidog.json` 的 schema。
 3. **授权**：首次启用时弹出授权对话框，之后读取 `plugins.json`。
 4. **加载**：为插件构造 `Policy`（capabilities 加 `navidog` HostModule），加载服务入口，注册 manifest 中声明的命令、格式、格式化器、驱动和面板。
-5. **停用或卸载**：从所有注册表移除该插件的条目（`unregister_source`），关闭它的面板，结束事件队列。
-6. **开发模式**：debug 构建中对插件目录调用 `runtime.watch`，文件变化时热重载。
+5. **停用或卸载**：从所有注册表移除该插件的条目（`unregister_source`），撤销贡献并把已打开面板原位替换为占位，结束事件队列、取消请求和断开插件会话；保留连接配置与草稿。
+6. **开发模式**：debug 构建中监听插件目录，变化后重新校验、检查授权、清理并重新加载；不得直接绕过授权替换运行代码。
 
 ## 10. 待 M5 验证的风险
 
 - 插件面板内包一层 `ShellRoot` 能否与宿主的 `Root` 共存，以及对话框是否只覆盖在面板范围内。
 - 服务入口的 View 需要一个活的 `Window` 才能实例化：确认在主窗口中实例化但不渲染时，它的事件循环是否正常运行。
 - QuickJS 运行时会让二进制增加约 13.5 MiB：确认 release 构建体积可以接受。
+
+
+## 11. M5 API v1 与发布源码契约
+
+第 11～16 节是 M5 的完整契约；与前述概念示例冲突时以本节为准。框架依据 `gpui-shell` / `gpui-kit` **0.8.1 发布源码**，不是最新开发分支。`gpui-kit` 升至 0.8.1；直接依赖 `gpui-shell` 0.8.1，关闭默认特性，只启用 `quickjs`、`components`、`gpui-fast`，不覆盖 `gpui-pre-*`。
+
+每个启用插件一个 `ShellRuntime::new_isolated_with_components`。服务入口挂载后保留实体但不渲染；每个面板入口是该 VM 中的独立应用，使用相同授权和宿主服务。只用官方 `PluginManifest::read` / `parse` 校验 Shell manifest，发现阶段不读执行源码、不解析依赖、不写类型声明。Shell `shell-version` 是最低版本字符串，官方解析器检查兼容性；未知字段拒绝。面板入口必须位于插件目录内。
+
+加载与挂载期间用同步 guard 安装 `Policy`，包括 `with_application`、`with_capabilities`、`with_data_dir`、按授权注册的 HostModule。guard 禁止重入、不 await、不推进渲染帧，正常返回或失败均恢复空 Policy。每个 View 冻结自己的 grant；代码中不得在宿主函数里回调 VM。
+
+JS 堆没有公开硬上限，watchdog 与栈限制不可配置。M5 用独立 VM 和宿主请求限额，不增加进程隔离。运行时终止后必须由用户主动重新加载。原始 Shell `window.open_dialog` / `open_sheet` / toast 不支持；作者用官方组件目录的 Dialog、Sheet、Tooltip、Popover，通知用 `navidog.notify`，错误提示给出替代接口。
+
+## 12. 授权、限额和管理界面（F-PLUG-001、002、008）
+
+`plugins.json` 是版本化配置，保存插件 ID、启用状态、已确认能力申请指纹、实际逐项授权、运行限额。代码更新沿用授权；任何新增或扩大能力申请先停用，原授权作为重新确认的预选项。能力减少可继续运行但不能保留已删除 grant。未见过的插件默认停用。文件与网络 grant 只从已校验的申请中逐项选取，不接受插件提交的任意授权对象。持久化成功后再修改运行状态。
+
+| 限额 | 默认 | 校验 |
+| --- | ---: | --- |
+| 通用请求超时 | 30 秒 | 有限正数 |
+| 事件队列 | 256 项 | 正整数 |
+| 在途请求 | 64 项 | 1～1,024；0.8.1 官方 runtime 任务上限为 1,024 |
+| 单批数据 | 1,000 行 / 1 MiB | 正整数 |
+| 单请求累计结果 | 100,000 行 / 64 MiB | 正整数，不能小于单批限额 |
+
+connect 优先使用连接超时；执行和目录请求优先使用读取超时，缺省用插件超时。超时、取消、超限失败都发送 cancel，之后拒绝任何结果。停止、撤权、重新加载、运行失败：先推进 generation，再撤销所有 source 贡献，失败全部在途请求、结束事件拉取、断开会话。保存的连接与未保存草稿不删除。Dock 面板原位显示“插件已停用”或错误原因，重新启用后恢复同一面板身份。
+
+偏好设置新增“插件”页，沿用现有窗口尺寸、页边距、控件和行高 token。页内左侧列表、右侧详情使用 `min_w_0`；名称、版本、路径单行截断并悬停全文。列表呈现名称、版本和状态；详情展示失败原因与启用/停用、授权…、重新加载。授权对话框独立复选每项系统/navidog 能力，支持部分授权；Escape 关闭且恢复焦点。高级区展开后编辑六项限额，错误在对应项附近展示，“保存并重新加载”提交。无插件时说明安装目录并提供重新扫描。debug 监听同一生命周期，不自动重试运行时终止。
+
+## 13. 贡献、上下文和宿主接口（F-PLUG-003、004、007）
+
+统一注册表保留声明顺序，每项 `Source::Plugin(id)`；键是 `<plugin>/<local-id>`。补齐格式、格式化器和面板注册表，驱动注册表仍在 session。注册失败不能留下部分贡献。
+
+命令位置仅允许 `tools.menu`、`main.toolbar`、`objects.context`、`grid.context`、`editor.context`。一个携带命令 ID 的 `PluginCommand` Action 供所有位置和快捷键共用；标题、图标、快捷键、可用条件共享描述。可用条件只允许已声明的宿主状态，如打开连接、选中对象、网格、编辑器，未知位置或条件拒绝。动态图标路径由拥有数据的接口返回，不泄漏内存。
+
+上下文 token 不透明，绑定触发时窗口、面板、target generation、插件 generation。异步请求不得改为“当前焦点”；关闭目标、移动失效目标、插件重载后返回过期上下文错误。跨边界仅纯数据。API v1：
+
+```ts
+api_version(): number;
+locale(): string;
+next_event(): Promise<Event>;
+respond(request_id: string, generation: number, reply: Reply): void;
+respond_chunk(request_id: string, generation: number, chunk: ResultChunk): void;
+notify(context: string, level: "info" | "success" | "warning" | "error", message: string): void;
+list_connections(): ConnectionInfo[]; // connections.read；永不含密码
+execute(context: string, connection_id: string, database: string | null, sql: string): Promise<ResultSet[]>;
+grid_selection(context: string): ResultSet | null;
+insert_text(context: string, text: string): void;
+import_rows(context: string, format_id: string, input: string): Promise<ResultSet[]>;
+export_rows(context: string, format_id: string, rows: ResultSet): Promise<string>;
+```
+
+缺权函数不导出，显式失败。SQL 仅针对已打开连接，经 `Sessions::run_operation_rel` 的独立操作会话执行一次后关闭，不进入查询编辑器事务。历史记录可选 `plugin_source`，旧记录兼容，每次 SQL 只记录一次。
+
+请求拥有唯一 ID、plugin generation、操作、不可变上下文及可选会话 token。chunk 包含 result_set（从 0）、sequence（从 0）、columns（首批）、rows、end、affected_rows、notices；最终 reply 收尾。空结果仍显式传 columns/end。下一结果集只能在上一结果 end 后开始；拒绝重复、过期、乱序、重复列、列数不符、未结束结果的最终响应和无请求响应。数值超安全整数用字符串，二进制用显式 base64 类型，保留 origin 和 notices，affected rows 用十进制字符串。取消后不可回传结果。格式扩展通过相同请求/分批协议调用，M6 再提供完整向导。
+
+## 14. 格式化器（F-PLUG-005）
+
+Rust 执行六类声明式显示规则：时间戳（秒/毫秒）、JSON、枚举映射、数字（小数与分组）、模板（只允许 `{value}`）、token 颜色。match 按类型、列名正则、值正则取交集；无匹配不改显示。拒绝无效正则、未知颜色 token、无效时间格式和小数位。用户在列菜单选择，候选按列匹配过滤；不修改原数据、复制、写入与导出值。表查看器选择按连接/对象/列保存；查询结果只活到选项卡关闭。插件停用显示原值，重新可用时恢复原选择。
+
+## 15. JS 驱动与原生设计器（F-PLUG-006）
+
+`JsDriver` / `JsSession` 实现 Driver、Session、Relational 所有必需目录方法，包含 databases、schemas、objects、DDL、columns、children、foreign keys、outline。connect 返回 opaque session token、缓存版本、可选数据库会话 ID；凭据只进入该驱动的 connect 请求。取消可跨线程发出事件，卸载失败所有会话请求。
+
+声明式 dialect 包含词法、引用、字面量、命名空间、对象类别、系统对象、关键词/函数、分页、事务与 SQL 操作模板。所有动态列表拥有数据或借用 self；不使用内存泄漏。新能力门槛同时在 UI、Action、网格提交、schema 执行检查。网格写入要求显式 transaction 与 savepoint 契约；缺少时禁用生成写入，普通 SQL 保留。解释计划走声明模板与通用结果显示。
+
+表草稿/快照纯数据放 model，schema re-export。Relational 可选结构化 table/object snapshot 包含完整结构、未知片段、附属对象和稳定 revision。JS 读取，Rust 规划。SQL crate 持有 designer descriptor，schema 通用模板规划器，designer 复用原生表单。类型/属性/约束/索引/选项/注释/触发器/分区按声明开放；未声明部分保留原文并禁止修改。
+
+通用迁移仅用 ALTER 与显式模板，覆盖 create、列增删改、约束、索引及声明的附属操作。未声明移动模板不允许重排，不使用 PostgreSQL/SQLite 的重建路径。对象类别声明字段、控件、默认值、编码与 create/update 模板；缺少类别或更新能力则禁用。
+
+模板是有限宿主参数：identifier / literal 由 Rust 转义；fragment 用 navidog-sql 唯一扫描器校验；未知参数加载时拒绝。预览 plan 冻结 baseline revision、草稿版本、插件 generation 和精确 SQL。执行前再次读结构并比 revision，草稿/插件变化使计划失效；执行预览语句一次。原子 DDL 用声明事务/锁且失败回滚；非事务 DDL 部分失败展示已完成步骤和可能变化，保留草稿，重新加载后再规划；任意 SQL 不自动重放。
+
+## 16. 交付与验收
+
+交付 API v1 `.d.ts`、manifest/schema、安装/调试/兼容说明及五类可安装示例。HTTP PostgreSQL 示例连接本地测试服务后访问真实数据库；MySQL 夹具覆盖非事务 DDL 部分失败和重新加载恢复。服务仅用于示例与测试。
+
+- [ ] 官方 manifest、加载、独立 VM 与同步 Policy guard；服务不渲染仍收事件
+- [ ] 默认停用、部分授权、授权扩大停用、限额保存与重载、debug 同一流程
+- [ ] 五处命令与快捷键、跨窗口上下文、关闭目标/重载后失效
+- [ ] 完整结果协议、空/多结果、来源/二进制/大整数、取消/超时/限额/过期响应
+- [ ] 独立 SQL 会话及插件日志来源；撤销全部贡献/请求/会话，保留配置和草稿
+- [ ] 格式 import/export 接口及端到端测试（向导留 M6）
+- [ ] 六类格式化、列选择/持久化/停用回退恢复
+- [ ] 全部驱动目录、补全、取消、网格写入及能力门槛
+- [ ] 通用原生表/视图设计、模板校验、预览版本、结构冲突、事务回滚/部分失败保护
+- [ ] 官方组件浮层与 Dock 占位恢复、管理页 headless/浅深色截图
+- [ ] 示例、文档、类型声明；progress §5 全部检查及 release 体积/前台性能
+
+验收证据见 [M5 验收记录](../pr/acceptance-m5.md)。未经运行的检查不得勾选或记为完成。M6 向导、M2/M3 目测与既有 M4 遗留不在 M5 范围内。
