@@ -244,11 +244,17 @@ pub fn context_menu(
             let enabled = cx
                 .active_window()
                 .is_some_and(|window| command.is_enabled(window.window_id(), cx));
-            menu = menu.menu_with_disabled(
-                command.title().to_string(),
-                !enabled,
-                Box::new(PluginCommand { id: id.clone() }),
-            );
+            let action = Box::new(PluginCommand { id: id.clone() });
+            menu = if let Some(icon) = &command.icon {
+                menu.menu_with_icon_disabled(
+                    command.title().to_string(),
+                    gpui_kit::component::Icon::default().path(icon.clone()),
+                    !enabled,
+                    action,
+                )
+            } else {
+                menu.menu_with_disabled(command.title().to_string(), !enabled, action)
+            };
         }
     }
     menu

@@ -47,8 +47,8 @@ pub fn module(
                 .into_iter()
                 .find(|w| w.window_id() == target)
                 .ok_or_else(|| HostError::new("Plugin context window has closed."))?;
-            window
-                .update(cx, |_, window, cx| {
+            cx.defer(move |cx| {
+                let _ = window.update(cx, |_, window, cx| {
                     use gpui_kit::component::{WindowExt as _, notification::Notification};
                     let notification = match level.as_str() {
                         "success" => Notification::success(message),
@@ -57,8 +57,8 @@ pub fn module(
                         _ => Notification::info(message),
                     };
                     window.push_notification(notification, cx);
-                })
-                .map_err(|e| HostError::new(e.to_string()))?;
+                });
+            });
             Ok(HostValue::Null)
         })
         .ok_or_else(|| HostError::new("Host application is unavailable."))?

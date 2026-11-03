@@ -18,6 +18,11 @@ fn discover_partial_approval_disable_and_reload_cleanup(cx: &mut TestAppContext)
     for name in ["gpui-shell.json", "navidog.json", "main.js", "panel.js"] {
         std::fs::copy(source.join(name), installed.join(name)).unwrap();
     }
+    let manifest = installed.join("navidog.json");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    value["commands"][0]["shortcut"] = "alt-cmd-9".into();
+    std::fs::write(&manifest, value.to_string()).unwrap();
     cx.update(|cx| {
         gpui_kit::init(cx);
         navidog_app_state::init(cx);
@@ -74,6 +79,17 @@ fn discover_partial_approval_disable_and_reload_cleanup(cx: &mut TestAppContext)
             5
         );
     });
+    for id in ["tools", "toolbar", "objects", "grid", "editor"] {
+        cx.update_window(handle, |_, window, cx| {
+            Plugins::global(cx).update(cx, |plugins, cx| {
+                plugins
+                    .command(&format!("com.example.commands/{id}"), window, cx)
+                    .unwrap()
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
     let (panel_window, _) = cx
         .update(|cx| {
             gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
@@ -120,6 +136,36 @@ fn discover_partial_approval_disable_and_reload_cleanup(cx: &mut TestAppContext)
                 .commands
                 .len(),
             5
+        )
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("plugin-limits", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("plugin-limit-2", cx);
+        window.press("secondary-a", cx);
+        window.input("32", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("plugin-save-limits", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert_eq!(
+            Plugins::global(cx)
+                .read(cx)
+                .approval("com.example.commands")
+                .limits
+                .requests,
+            32
         )
     });
     let manifest = installed.join("navidog.json");
@@ -172,5 +218,14 @@ fn discover_partial_approval_disable_and_reload_cleanup(cx: &mut TestAppContext)
                 .panel("com.example.commands/help")
                 .is_none()
         )
+    });
+    cx.read(|cx| {
+        assert!(!cx.key_bindings().borrow().bindings().any(|binding| {
+            binding
+                .action()
+                .as_any()
+                .downcast_ref::<navidog_app_state::actions::PluginCommand>()
+                .is_some_and(|action| action.id.starts_with("com.example.commands/"))
+        }))
     });
 }

@@ -105,6 +105,30 @@ fn postgres_http_plugin_connects_catalogs_and_multi_results(cx: &mut TestAppCont
         );
         let saved = plan.execute(rel, &scope, &draft).await?;
         assert!(saved.design.columns.iter().any(|c| c.name == "name"));
+        let mut changes = navidog_sql::dialect::ChangeSet::default();
+        changes.inserts.push(vec![
+            ("id".into(), navidog_sql::dialect::Written::expr("1")),
+            (
+                "name".into(),
+                navidog_sql::dialect::Written::text(Some("plugin".into())),
+            ),
+        ]);
+        let dialect = rel.dialect();
+        let statements = dialect.render_changes(&scope, "navidog_plugin_m5", &changes, true);
+        navidog_db::commit::apply(
+            rel,
+            navidog_db::commit::Commit::new(dialect, statements),
+            false,
+            false,
+        )
+        .await?;
+        assert_eq!(
+            rel.execute("SELECT name FROM public.navidog_plugin_m5 WHERE id=1")
+                .await?[0]
+                .rows[0][0]
+                .as_deref(),
+            Some("plugin")
+        );
         let mut view = navidog_sql::definition::DefinitionDraft::new(
             navidog_sql::definition::DefinitionKind::View,
         );

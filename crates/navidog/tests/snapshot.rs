@@ -837,6 +837,17 @@ mod macos {
         shot_of(&mut cx, prefs, "plugins-approval-light.png");
         cx.update_window(prefs, |_, window, cx| window.close_dialog(cx))
             .unwrap();
+        cx.update_window(prefs, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("plugin-limits", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        shot_of(&mut cx, prefs, "plugins-limits-light.png");
+        cx.update(|cx| Theme::change(ThemeMode::Dark, None, cx));
+        shot_of(&mut cx, prefs, "plugins-limits-dark.png");
+        cx.update_window(prefs, |_, window, cx| window.close_dialog(cx))
+            .unwrap();
 
         cx.update_window(prefs, |_, window, cx| {
             window.render_frame(cx);

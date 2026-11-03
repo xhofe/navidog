@@ -166,6 +166,21 @@ impl Plugins {
                 sessions.close_for_reopen(&connection, cx)
             });
         }
+        let bindings: Vec<_> = cx
+            .key_bindings()
+            .borrow()
+            .bindings()
+            .filter(|binding| {
+                binding
+                    .action()
+                    .as_any()
+                    .downcast_ref::<navidog_app_state::actions::PluginCommand>()
+                    .is_none_or(|action| !action.id.starts_with(&format!("{id}/")))
+            })
+            .cloned()
+            .collect();
+        cx.clear_key_bindings();
+        cx.bind_keys(bindings);
         let source = Source::Plugin(id.to_string().into());
         cx.global_mut::<Contributions>().remove(&source);
         cx.global_mut::<navidog_app_state::registry::CommandRegistry>()

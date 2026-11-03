@@ -77,12 +77,17 @@ impl Render for LimitsView {
             t!("plugin.result_rows"),
             t!("plugin.result_bytes"),
         ];
-        let mut content = v_flex().gap_2().children(
-            labels
-                .into_iter()
-                .zip(&self.inputs)
-                .map(|(label, input)| FormRow::new(label.to_string(), Input::new(input))),
-        );
+        let mut content =
+            v_flex()
+                .gap_2()
+                .children(labels.into_iter().zip(&self.inputs).enumerate().map(
+                    |(ix, (label, input))| {
+                        FormRow::new(
+                            label.to_string(),
+                            Input::new(input).id(format!("plugin-limit-{ix}")),
+                        )
+                    },
+                ));
         if let Some(error) = &self.error {
             content = content.child(error.clone());
         }
