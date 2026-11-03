@@ -881,6 +881,13 @@ impl TableDesigner {
         cx.notify();
     }
     fn move_field(&mut self, up: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .dialect
+            .designer_templates()
+            .is_some_and(|templates| !templates.contains_key("move_column"))
+        {
+            return;
+        }
         if self.page != Page::Fields {
             return;
         }

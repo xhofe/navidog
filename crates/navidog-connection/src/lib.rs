@@ -39,7 +39,8 @@ pub fn init(cx: &mut App) {
             title: "conn.new_connection".into(),
             icon: Some("icons/plug.svg".into()),
             shortcut: None,
-            action: || Box::new(NewConnection),
+            action: std::rc::Rc::new(|| Box::new(NewConnection)),
+            locations: Vec::new(),
             enabled: None,
         },
     );

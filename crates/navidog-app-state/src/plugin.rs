@@ -45,7 +45,7 @@ impl CommandContribution {
                 .read(cx)
                 .selection()
                 .connection_id()
-                .is_some(),
+                .is_some_and(|id| cx.global::<Contributions>().open_connections.contains(id)),
             Some(_) => false,
             None => true,
         }
@@ -64,6 +64,7 @@ pub struct Contributions {
     pub formats: Registry<Value>,
     pub formatters: Registry<Value>,
     pub panels: Registry<Value>,
+    pub open_connections: std::collections::HashSet<String>,
 }
 impl Global for Contributions {}
 impl Contributions {
@@ -240,8 +241,12 @@ pub fn context_menu(
 ) -> gpui_kit::component::native_menu::NativeMenu {
     if let Some(contributions) = cx.try_global::<Contributions>() {
         for (id, command) in contributions.commands_at(location) {
-            menu = menu.menu(
+            let enabled = cx
+                .active_window()
+                .is_some_and(|window| command.is_enabled(window.window_id(), cx));
+            menu = menu.menu_with_disabled(
                 command.title().to_string(),
+                !enabled,
                 Box::new(PluginCommand { id: id.clone() }),
             );
         }

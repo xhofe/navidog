@@ -1,0 +1,24 @@
+{
+  "id": "com.example.http-mysql",
+  "name": "HTTP MySQL example",
+  "version": "1.0.0",
+  "shell-version": "0.8.1",
+  "entry": "main.js",
+  "capabilities": {
+    "network": {
+      "http": [
+        {
+          "host": "127.0.0.1",
+          "scheme": "http",
+          "port": 18123,
+          "methods": [
+            "POST"
+          ],
+          "paths": [
+            "/request"
+          ]
+        }
+      ]
+    }
+  }
+}

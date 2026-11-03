@@ -55,20 +55,6 @@
               "column": "identifier"
             }
           },
-          "create_view": {
-            "sql": "CREATE VIEW ${table} AS ${body}",
-            "parameters": {
-              "table": "fragment",
-              "body": "fragment"
-            }
-          },
-          "update_view": {
-            "sql": "CREATE OR REPLACE VIEW ${table} AS ${body}",
-            "parameters": {
-              "table": "fragment",
-              "body": "fragment"
-            }
-          },
           "lock_table": {
             "sql": "LOCK TABLE ${table} IN ACCESS EXCLUSIVE MODE",
             "parameters": {
@@ -90,7 +76,42 @@
             "synonyms": [],
             "args": "none"
           }
-        ]
+        ],
+        "designer": {
+          "properties": [
+            "type",
+            "length",
+            "scale",
+            "not_null",
+            "default",
+            "primary_key"
+          ],
+          "constraints": [
+            "primary",
+            "foreign_key",
+            "unique",
+            "check"
+          ]
+        },
+        "objects": {
+          "view": {
+            "fields": {},
+            "create": {
+              "sql": "CREATE VIEW ${table} AS ${body}",
+              "parameters": {
+                "table": "fragment",
+                "body": "fragment"
+              }
+            },
+            "update": {
+              "sql": "CREATE OR REPLACE VIEW ${table} AS ${body}",
+              "parameters": {
+                "table": "fragment",
+                "body": "fragment"
+              }
+            }
+          }
+        }
       }
     }
   ]

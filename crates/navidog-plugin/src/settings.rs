@@ -160,14 +160,8 @@ impl PluginsFile {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let temp = path.with_extension("json.tmp");
         let bytes = serde_json::to_vec_pretty(&candidate).map_err(|e| e.to_string())?;
-        use std::io::Write as _;
-        let mut file = std::fs::File::create(&temp).map_err(|e| e.to_string())?;
-        file.write_all(&bytes)
-            .and_then(|_| file.sync_all())
-            .map_err(|e| e.to_string())?;
-        std::fs::rename(temp, path).map_err(|e| e.to_string())?;
+        navidog_model::paths::write_atomic(path, &bytes).map_err(|e| e.to_string())?;
         *self = candidate;
         Ok(())
     }

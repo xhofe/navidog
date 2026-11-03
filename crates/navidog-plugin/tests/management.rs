@@ -157,4 +157,12 @@ fn discover_partial_approval_disable_and_reload_cleanup(cx: &mut TestAppContext)
                 .is_empty()
         )
     });
+    cx.read(|cx| {
+        assert!(
+            Plugins::global(cx)
+                .read(cx)
+                .panel("com.example.commands/help")
+                .is_none()
+        )
+    });
 }

@@ -74,7 +74,8 @@ pub struct CommandInfo {
     /// Icon asset path, for example `icons/plug.svg`
     pub icon: Option<SharedString>,
     pub shortcut: Option<SharedString>,
-    pub action: fn() -> Box<dyn Action>,
+    pub action: std::rc::Rc<dyn Fn() -> Box<dyn Action>>,
+    pub locations: Vec<SharedString>,
     /// Whether it is currently enabled (for example a database must be selected); `None` means always
     pub enabled: Option<fn(&App) -> bool>,
 }

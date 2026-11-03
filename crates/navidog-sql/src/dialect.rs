@@ -221,6 +221,16 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
     ) -> Option<&std::collections::BTreeMap<String, crate::template::SqlTemplate>> {
         None
     }
+    fn designer_descriptor(&self) -> Option<&crate::declared::DesignerDescriptor> {
+        None
+    }
+    fn object_designer(&self, _kind: &str) -> Option<&crate::declared::ObjectDesignerDescriptor> {
+        None
+    }
+    fn column_property(&self, key: &str) -> bool {
+        self.designer_descriptor()
+            .is_none_or(|descriptor| descriptor.properties.contains(key))
+    }
     fn plugin_generation(&self) -> Option<u64> {
         None
     }

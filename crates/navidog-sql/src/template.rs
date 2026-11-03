@@ -24,6 +24,9 @@ impl SqlTemplate {
         template.validate()?;
         Ok(template)
     }
+    pub fn encoding(&self, key: &str) -> Option<Encoding> {
+        self.parameters.get(key).copied()
+    }
     pub fn parameter_names(&self) -> impl Iterator<Item = &str> {
         self.parameters.keys().map(String::as_str)
     }

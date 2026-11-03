@@ -235,6 +235,18 @@ impl Bridge {
         arguments: Value,
         timeout: Option<Duration>,
     ) -> DbResult<futures::future::BoxFuture<'static, DbResult<Response>>> {
+        Ok(self.request_with_id(kind, operation, arguments, timeout)?.1)
+    }
+    pub fn request_with_id(
+        &self,
+        kind: &str,
+        operation: &str,
+        arguments: Value,
+        timeout: Option<Duration>,
+    ) -> DbResult<(
+        String,
+        futures::future::BoxFuture<'static, DbResult<Response>>,
+    )> {
         let mut state = self.0.state.lock().unwrap();
         if !state.active {
             return Err(DbError::msg("Plugin generation has ended."));
@@ -265,25 +277,72 @@ impl Bridge {
             bridge: bridge.clone(),
             id: Some(id.clone()),
         };
-        Ok(async move {
-            let mut guard = guard;
-            let result = navidog_db::runtime::spawn(async move {
-                match tokio::time::timeout(timeout, receive).await {
-                    Ok(Ok(result)) => result,
-                    Ok(Err(_)) => Err(DbError::msg("Plugin request was cancelled.")),
-                    Err(_) => Err(DbError::msg("Plugin request timed out.")),
-                }
-            })
-            .await
-            .map_err(|e| DbError::msg(e.to_string()))?;
+        let timeout_bridge = bridge.clone();
+        let timeout_id = id.clone();
+        let operation = navidog_db::runtime::spawn(async move {
+            let result = match tokio::time::timeout(timeout, receive).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err(DbError::msg("Plugin request was cancelled.")),
+                Err(_) => Err(DbError::msg("Plugin request timed out.")),
+            };
             if result.is_err() {
-                bridge.cancel(&id, "Request failed or timed out.");
+                timeout_bridge.cancel(&timeout_id, "Request failed or timed out.");
             }
-            guard.id = None;
-            drop(guard);
             result
+        });
+        let request_id = id.clone();
+        Ok((
+            request_id,
+            async move {
+                let mut guard = guard;
+                let result = operation.await.map_err(|e| DbError::msg(e.to_string()))?;
+                if result.is_err() {
+                    bridge.cancel(&id, "Request failed or timed out.");
+                }
+                guard.id = None;
+                drop(guard);
+                result
+            }
+            .boxed(),
+        ))
+    }
+    pub fn input_chunk(&self, id: &str, generation: u64, chunk: Value) -> DbResult<()> {
+        let state = self.0.state.lock().unwrap();
+        self.validate(&state, generation)?;
+        if !state.pending.contains_key(id) {
+            return Err(DbError::msg("Unknown or cancelled plugin request."));
         }
-        .boxed())
+        if serde_json::to_vec(&chunk)
+            .map_err(|e| DbError::msg(e.to_string()))?
+            .len()
+            > self.0.limits.batch_bytes
+        {
+            return Err(DbError::msg("Input batch exceeds plugin limits."));
+        }
+        self.0.sender.try_send(serde_json::json!({"kind":"export.chunk","request_id":id,"generation":generation,"chunk":chunk})).map_err(|_|DbError::msg("Plugin event queue is full."))
+    }
+    pub async fn send_input_chunk(&self, id: &str, generation: u64, chunk: Value) -> DbResult<()> {
+        {
+            let state = self.0.state.lock().unwrap();
+            self.validate(&state, generation)?;
+            if !state.pending.contains_key(id) {
+                return Err(DbError::msg("Unknown or cancelled plugin request."));
+            }
+        }
+        if serde_json::to_vec(&chunk)
+            .map_err(|error| DbError::msg(error.to_string()))?
+            .len()
+            > self.0.limits.batch_bytes
+        {
+            return Err(DbError::msg("Input batch exceeds plugin limits."));
+        }
+        let mut cancellation = self.cancellation();
+        let send=self.0.sender.send(serde_json::json!({"kind":"export.chunk","request_id":id,"generation":generation,"chunk":chunk}));
+        tokio::select! {
+            result=send=>result.map_err(|_|DbError::msg("Plugin generation ended.")),
+            _=cancellation.changed()=>Err(DbError::msg("Plugin generation ended.")),
+            _=tokio::time::sleep(Duration::from_secs_f64(self.0.limits.timeout_seconds))=>{self.cancel(id,"Input batch timed out.");Err(DbError::msg("Input batch timed out."))},
+        }
     }
     pub fn chunk(&self, id: &str, generation: u64, chunk: Chunk) -> DbResult<()> {
         let mut state = self.0.state.lock().unwrap();

@@ -84,3 +84,69 @@ impl PreviewPlan {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    struct Partial {
+        dialect: Arc<dyn Dialect>,
+        steps: Vec<String>,
+    }
+    impl Relational for Partial {
+        fn dialect(&self) -> Arc<dyn Dialect> {
+            self.dialect.clone()
+        }
+        fn execute<'a>(
+            &'a mut self,
+            sql: &'a str,
+        ) -> navidog_db::BoxFuture<'a, DbResult<Vec<navidog_db::ResultSet>>> {
+            self.steps.push(sql.into());
+            Box::pin(async move {
+                if sql == "FAIL" {
+                    Err(DbError::msg("Injected DDL failure"))
+                } else {
+                    Ok(vec![])
+                }
+            })
+        }
+        navidog_db::unsupported_catalog!();
+    }
+    #[test]
+    fn nontransactional_failure_reports_completed_steps_and_does_not_replay() {
+        let descriptor = serde_json::from_value(serde_json::json!({"id":"fixture"})).unwrap();
+        let dialect: Arc<dyn Dialect> = Arc::new(
+            navidog_sql::declared::DeclaredDialect::new(descriptor)
+                .unwrap()
+                .with_generation(3),
+        );
+        let mut draft = TableDesign::blank(dialect.as_ref());
+        draft.name = "t".into();
+        let plan = PreviewPlan::new(
+            dialect.as_ref(),
+            None,
+            draft.clone(),
+            vec![
+                "CREATE TABLE t(id integer)".into(),
+                "FAIL".into(),
+                "never".into(),
+            ],
+        );
+        let mut rel = Partial {
+            dialect,
+            steps: vec![],
+        };
+        let error = navidog_db::runtime::runtime()
+            .block_on(plan.execute(&mut rel, &Scope::new("test", "db", None), &draft))
+            .unwrap_err();
+        assert!(error.message.contains("completed 1 of 3"));
+        assert_eq!(rel.steps, vec!["CREATE TABLE t(id integer)", "FAIL"]);
+        draft.columns[0].name = "changed".into();
+        assert!(
+            navidog_db::runtime::runtime()
+                .block_on(plan.execute(&mut rel, &Scope::new("test", "db", None), &draft))
+                .is_err()
+        );
+        assert_eq!(rel.steps.len(), 2);
+    }
+}

@@ -527,11 +527,16 @@ pub fn set_menus(cx: &mut App) {
             .chain(
                 cx.global::<navidog_app_state::plugin::Contributions>()
                     .commands_at("tools.menu")
-                    .map(|(id, command)| {
-                        MenuItem::action(
-                            command.title(),
-                            navidog_app_state::plugin::PluginCommand { id: id.clone() },
-                        )
+                    .map(|(id, command)| MenuItem::Action {
+                        name: command.title(),
+                        action: Box::new(navidog_app_state::plugin::PluginCommand {
+                            id: id.clone(),
+                        }),
+                        os_action: None,
+                        checked: false,
+                        disabled: !cx
+                            .active_window()
+                            .is_some_and(|window| command.is_enabled(window.window_id(), cx)),
                     }),
             ),
         ),

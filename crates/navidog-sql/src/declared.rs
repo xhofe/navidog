@@ -8,6 +8,44 @@ use navidog_model::object::{ObjectKind, Scope};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+#[non_exhaustive]
+pub struct DesignerDescriptor {
+    pub properties: std::collections::BTreeSet<String>,
+    pub constraints: std::collections::BTreeSet<String>,
+    pub index_methods: Vec<String>,
+    pub options: std::collections::BTreeMap<String, FieldDescriptor>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct FieldDescriptor {
+    pub label: String,
+    pub control: FieldControl,
+    #[serde(default)]
+    pub default: String,
+    pub encoding: crate::template::Encoding,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldControl {
+    Text,
+    Sql,
+    Checkbox,
+    Number,
+    Select(Vec<String>),
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ObjectDesignerDescriptor {
+    #[serde(default)]
+    pub fields: std::collections::BTreeMap<String, FieldDescriptor>,
+    pub create: SqlTemplate,
+    #[serde(default)]
+    pub update: Option<SqlTemplate>,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 #[non_exhaustive]
@@ -28,6 +66,8 @@ pub struct DialectDescriptor {
     pub savepoint: Option<String>,
     pub rollback_savepoint: Option<String>,
     pub transactional_ddl: bool,
+    pub designer: DesignerDescriptor,
+    pub objects: std::collections::BTreeMap<String, ObjectDesignerDescriptor>,
     pub types: Vec<crate::ColumnType>,
     pub templates: BTreeMap<String, SqlTemplate>,
 }
@@ -50,6 +90,8 @@ impl Default for DialectDescriptor {
             savepoint: None,
             rollback_savepoint: None,
             transactional_ddl: false,
+            designer: Default::default(),
+            objects: Default::default(),
             types: Vec::new(),
             templates: BTreeMap::new(),
         }
@@ -67,7 +109,64 @@ impl DialectDescriptor {
                 "Grid writes need begin, savepoint and rollback-savepoint contracts.".into(),
             );
         }
+        for property in &self.designer.properties {
+            if ![
+                "type",
+                "length",
+                "scale",
+                "not_null",
+                "default",
+                "comment",
+                "collation",
+                "charset",
+                "auto_increment",
+                "unsigned",
+                "generated",
+                "expression",
+                "storage",
+                "primary_key",
+                "on_update",
+                "zerofill",
+                "identity",
+            ]
+            .contains(&property.as_str())
+            {
+                return Err(format!("Unknown column property: {property}"));
+            }
+        }
+        for (kind, object) in &self.objects {
+            if crate::definition::DefinitionKind::from_key(kind).is_none() {
+                return Err(format!("Unknown object designer kind: {kind}"));
+            }
+            object.create.validate()?;
+            if let Some(update) = &object.update {
+                update.validate()?;
+            }
+            for template in std::iter::once(&object.create).chain(object.update.iter()) {
+                for parameter in template
+                    .parameter_names()
+                    .filter_map(|key| key.strip_prefix("field."))
+                {
+                    let field = object
+                        .fields
+                        .get(parameter)
+                        .ok_or_else(|| format!("Undeclared object field: {parameter}"))?;
+                    if template.encoding(&format!("field.{parameter}")) != Some(field.encoding) {
+                        return Err(format!(
+                            "Field encoding disagrees with template: {parameter}"
+                        ));
+                    }
+                }
+            }
+        }
         const OPERATIONS: &[&str] = &[
+            "table_options",
+            "table_comment",
+            "partition",
+            "create_trigger",
+            "drop_trigger",
+            "create_partition_child",
+            "drop_partition_child",
             "create_table",
             "add_column",
             "drop_column",
@@ -151,6 +250,46 @@ impl Dialect for DeclaredDialect {
         if draft.raw {
             return Err("Plugin designers require structured fields.".into());
         }
+        if let Some(descriptor) = self.descriptor.objects.get(draft.kind.key()) {
+            let template = if draft.previous.is_some() {
+                descriptor
+                    .update
+                    .as_ref()
+                    .ok_or("Object updates are not declared.")?
+            } else {
+                &descriptor.create
+            };
+            let mut values = BTreeMap::from([
+                ("table".into(), self.qualified(scope, &draft.name)),
+                ("name".into(), draft.name.clone()),
+                (
+                    "old_name".into(),
+                    draft.previous.clone().unwrap_or_default(),
+                ),
+                ("body".into(), draft.body.clone()),
+            ]);
+            for (key, field) in &descriptor.fields {
+                let value = draft.options.get(key).unwrap_or(&field.default);
+                match &field.control {
+                    FieldControl::Number => {
+                        value
+                            .parse::<f64>()
+                            .ok()
+                            .filter(|n| n.is_finite())
+                            .ok_or("Field needs a finite number.")?;
+                    }
+                    FieldControl::Checkbox if !["true", "false"].contains(&value.as_str()) => {
+                        return Err("Checkbox field needs true or false.".into());
+                    }
+                    FieldControl::Select(choices) if !choices.contains(value) => {
+                        return Err("Unknown field choice.".into());
+                    }
+                    _ => {}
+                }
+                values.insert(format!("field.{key}"), value.clone());
+            }
+            return Ok(vec![template.render(self, &values)?]);
+        }
         let operation = format!(
             "{}_{}",
             if draft.previous.is_some() {
@@ -192,6 +331,12 @@ impl Dialect for DeclaredDialect {
     }
     fn rollback_savepoint_sql(&self) -> &str {
         self.descriptor.rollback_savepoint.as_deref().unwrap_or("")
+    }
+    fn designer_descriptor(&self) -> Option<&DesignerDescriptor> {
+        Some(&self.descriptor.designer)
+    }
+    fn object_designer(&self, kind: &str) -> Option<&ObjectDesignerDescriptor> {
+        self.descriptor.objects.get(kind)
     }
     fn designer_templates(&self) -> Option<&BTreeMap<String, SqlTemplate>> {
         Some(&self.descriptor.templates)

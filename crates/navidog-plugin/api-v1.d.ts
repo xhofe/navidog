@@ -2,8 +2,8 @@ declare module "navidog" {
   export type Cell = string | null;
   export interface Column { name: string; type_name: string; origin?: { schema: string; table: string; column: string } }
   export interface ResultSet { columns: Column[]; rows: Cell[][]; affected_rows?: string | null; notices?: string[] }
-  export interface ResultChunk extends ResultSet { result_set: number; sequence: number; end: boolean }
-  export interface Event { kind: "command" | "driver.request" | "import" | "export" | "cancel"; generation: number; request_id?: string; command_id?: string; context?: string; op?: string; arguments?: Record<string, unknown> }
+  export interface ResultChunk { columns?: Column[]; rows: Cell[][]; affected_rows?: string | null; notices?: string[]; result_set: number; sequence: number; end: boolean }
+  export interface Event { kind: "command" | "driver.request" | "import" | "export" | "export.chunk" | "cancel"; generation: number; request_id?: string; command_id?: string; context?: string; op?: string; arguments?: Record<string, unknown> }
   export type Reply = { ok: true; data?: unknown } | { ok: false; error: string; code?: string };
   export function api_version(): number;
   export function locale(): string;

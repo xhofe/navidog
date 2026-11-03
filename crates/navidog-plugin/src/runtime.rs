@@ -91,6 +91,10 @@ impl PluginRuntime {
             runtime,
         })
     }
+    pub fn is_panel_available(&self, id: &str, cx: &App) -> bool {
+        self.panel(id)
+            .is_some_and(|panel| panel.read(cx).build_error().is_none())
+    }
     pub fn panel(&self, id: &str) -> Option<Entity<ScriptView>> {
         self.panels
             .iter()
@@ -172,7 +176,10 @@ pub fn core_module(bridge: Bridge, locale: String) -> HostModule {
     let responses = bridge.clone();
     HostModule::new("navidog")
         .function("api_version", |_| Ok(1_u32.into()))
-        .function("locale", move |_| Ok(locale.clone().into()))
+        .function("locale", move |_| {
+            let _ = &locale;
+            Ok(rust_i18n::locale().to_string().into())
+        })
         .async_function("next_event", move |_| {
             let events = events.clone();
             Ok(async move {

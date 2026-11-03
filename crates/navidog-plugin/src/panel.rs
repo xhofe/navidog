@@ -8,6 +8,9 @@ use gpui_kit::{
 use navidog_ui::{palette, skin::truncated, tabs};
 use rust_i18n::t;
 
+#[derive(Default)]
+struct OpenPanels(std::collections::HashMap<String, WeakEntity<PluginPanel>>);
+impl gpui_kit::Global for OpenPanels {}
 pub struct PluginPanel {
     id: String,
     title: SharedString,
@@ -15,6 +18,11 @@ pub struct PluginPanel {
 }
 impl PluginPanel {
     pub fn new(id: String, title: SharedString, cx: &mut Context<Self>) -> Self {
+        if !cx.has_global::<OpenPanels>() {
+            cx.set_global(OpenPanels::default());
+        }
+        let panel = cx.entity().downgrade();
+        cx.global_mut::<OpenPanels>().0.insert(id.clone(), panel);
         cx.observe(&Plugins::global(cx), |_, _, cx| cx.notify())
             .detach();
         Self {
@@ -22,6 +30,9 @@ impl PluginPanel {
             title,
             focus: cx.focus_handle().tab_stop(true),
         }
+    }
+    pub fn open(id: &str, cx: &App) -> Option<gpui_kit::Entity<Self>> {
+        cx.try_global::<OpenPanels>()?.0.get(id)?.upgrade()
     }
 }
 impl EventEmitter<PanelEvent> for PluginPanel {}

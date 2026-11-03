@@ -79,6 +79,7 @@ pub struct ObjectDesigner {
     page: Page,
     preview: Option<Vec<String>>,
     preview_generation: Option<u64>,
+    preview_draft: Option<DefinitionDraft>,
     error: Option<String>,
     busy: bool,
     close_approved: bool,
@@ -138,7 +139,9 @@ impl ObjectDesigner {
         cx: &mut App,
     ) -> Entity<Self> {
         let kind = DefinitionKind::from_key(&saved.kind).unwrap_or(DefinitionKind::View);
-        let keys: Vec<String> = if let Some(templates) = dialect.designer_templates() {
+        let keys: Vec<String> = if let Some(descriptor) = dialect.object_designer(kind.key()) {
+            descriptor.fields.keys().cloned().collect()
+        } else if let Some(templates) = dialect.designer_templates() {
             templates
                 .get(&format!(
                     "{}_{}",
@@ -174,7 +177,17 @@ impl ObjectDesigner {
             let options = keys
                 .iter()
                 .map(|key| {
-                    let value = saved.options.get(key).cloned().unwrap_or_default();
+                    let value = saved
+                        .options
+                        .get(key)
+                        .cloned()
+                        .or_else(|| {
+                            dialect
+                                .object_designer(kind.key())
+                                .and_then(|descriptor| descriptor.fields.get(key))
+                                .map(|field| field.default.clone())
+                        })
+                        .unwrap_or_default();
                     let input = cx.new(|cx| InputState::new(window, cx).default_value(value));
                     (key.clone(), input)
                 })
@@ -198,6 +211,7 @@ impl ObjectDesigner {
                 page: Page::Definition,
                 preview: None,
                 preview_generation: None,
+                preview_draft: None,
                 error: None,
                 busy: false,
                 close_approved: false,
@@ -253,6 +267,7 @@ impl ObjectDesigner {
                 self.sql.update(cx, |s, cx| s.set_value(text, window, cx));
                 self.preview = Some(sql);
                 self.preview_generation = self.dialect.plugin_generation();
+                self.preview_draft = Some(self.draft(cx));
                 self.page = Page::Preview;
                 self.error = None;
             }
@@ -275,6 +290,14 @@ impl ObjectDesigner {
             cx.notify();
             return;
         }
+        let draft = self.draft(cx);
+        if self.preview_draft.as_ref() != Some(&draft) {
+            self.preview = None;
+            self.error = Some("Draft changed; generate a new preview.".into());
+            self.busy = false;
+            cx.notify();
+            return;
+        }
         let Some(job) = Sessions::global(cx)
             .read(cx)
             .new_session(&self.scope.connection, Some(&self.scope.database))
@@ -286,7 +309,6 @@ impl ObjectDesigner {
         self.busy = true;
         self.error = None;
         let scope = self.scope.clone();
-        let draft = self.draft(cx);
         let preview = self.preview.clone().unwrap_or_default();
         let generation = self.preview_generation;
         self.task = Some(cx.spawn_in(window, async move |this, cx| {
@@ -670,6 +692,19 @@ impl Render for ObjectDesigner {
             .track_focus(&self.focus)
             .size_full()
             .bg(p.window_bg)
+            .on_action(cx.listener(|this, action: &ChooseObjectField, window, cx| {
+                if let Some((_, input)) = this
+                    .options
+                    .iter()
+                    .find(|(key, _)| key == action.key.as_ref())
+                {
+                    input.update(cx, |state, cx| {
+                        state.set_value(action.value.clone(), window, cx)
+                    });
+                    this.preview = None;
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(|this, _: &Save, window, cx| this.show_preview(window, cx)))
             .child(
                 h_flex()
@@ -759,7 +794,7 @@ impl Render for ObjectDesigner {
             })
             .child(div().flex_1().min_h_0().w_full().child(match self.page {
                 Page::Preview => Editor::new(&self.sql).size_full().into_any_element(),
-                Page::Options => self.render_options(disabled),
+                Page::Options => self.render_options(disabled, cx),
                 Page::Definition => self.render_definition(disabled),
             }))
     }
@@ -793,7 +828,7 @@ impl ObjectDesigner {
             .into_any_element()
     }
 
-    fn render_options(&self, disabled: bool) -> gpui_kit::AnyElement {
+    fn render_options(&self, disabled: bool, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         v_flex()
             .id("object-options")
             .size_full()
@@ -801,18 +836,64 @@ impl ObjectDesigner {
             .gap_2()
             .overflow_y_scroll()
             .children(self.options.iter().map(|(key, input)| {
-                FormRow::new(
-                    if self.dialect.designer_templates().is_some() {
-                        key.clone()
-                    } else {
-                        t!(format!("designer.opt_{key}")).to_string()
-                    },
-                    Input::new(input)
+                let descriptor = self
+                    .dialect
+                    .object_designer(self.kind.key())
+                    .and_then(|descriptor| descriptor.fields.get(key));
+                let label = descriptor
+                    .map(|field| field.label.clone())
+                    .unwrap_or_else(|| {
+                        if self.dialect.designer_templates().is_some() {
+                            key.clone()
+                        } else {
+                            t!(format!("designer.opt_{key}")).to_string()
+                        }
+                    });
+                let control = match descriptor.map(|field| &field.control) {
+                    Some(navidog_sql::declared::FieldControl::Checkbox) => {
+                        let state = input.clone();
+                        let checked = state.read(cx).value().as_ref() == "true";
+                        gpui_kit::component::checkbox::Checkbox::new(SharedString::from(format!(
+                            "object-field-{key}"
+                        )))
+                        .checked(checked)
+                        .disabled(disabled)
+                        .on_change(move |next, window, cx| {
+                            state.update(cx, |state, cx| {
+                                state.set_value(next.to_string(), window, cx)
+                            })
+                        })
+                        .into_any_element()
+                    }
+                    Some(navidog_sql::declared::FieldControl::Select(choices)) => {
+                        let current = input.read(cx).value().to_string();
+                        let choices = choices.clone();
+                        let key = key.clone();
+                        Button::new(SharedString::from(format!("object-field-{key}")))
+                            .label(current)
+                            .disabled(disabled)
+                            .on_click(move |_, window, cx| {
+                                let mut menu = gpui_kit::component::native_menu::NativeMenu::new();
+                                for choice in &choices {
+                                    menu = menu.menu(
+                                        choice.clone(),
+                                        Box::new(ChooseObjectField {
+                                            key: key.clone().into(),
+                                            value: choice.clone().into(),
+                                        }),
+                                    );
+                                }
+                                menu.show(window.mouse_position(), window, cx)
+                            })
+                            .into_any_element()
+                    }
+                    _ => Input::new(input)
                         .id(SharedString::from(format!("object-opt-{key}")))
                         .small()
-                        .disabled(disabled),
-                )
-                .hug_label()
+                        .disabled(disabled)
+                        .into_any_element(),
+                };
+                FormRow::new(label, control).hug_label()
             }))
             .into_any_element()
     }
@@ -888,4 +969,11 @@ pub(crate) fn init(cx: &mut App) {
         };
         panel_handle(ObjectDesigner::restore(saved, dialect, window, cx))
     });
+}
+
+#[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
+#[action(namespace=designer,no_json)]
+struct ChooseObjectField {
+    key: SharedString,
+    value: SharedString,
 }

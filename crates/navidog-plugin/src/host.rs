@@ -173,7 +173,7 @@ pub fn module(
             let context = args.string(0)?.to_owned();
             let format = args.string(1)?.to_owned();
             let input = crate::runtime::json_value(args.value(2)?)?;
-            let operation = gpui_shell::with_current_app(|cx| {
+            gpui_shell::with_current_app(|cx| {
                 ContextBridge::window(cx, &context, &plugin, generation).map_err(HostError::new)?;
                 let key = format!("{plugin}/{format}");
                 let formats = &cx
@@ -185,19 +185,28 @@ pub fn module(
                 if descriptor[if import { "import" } else { "export" }].as_bool() != Some(true) {
                     return Err(HostError::new("Format does not support this operation."));
                 }
-                bridge
-                    .request(
-                        if import { "import" } else { "export" },
-                        &format,
-                        serde_json::json!({"context":context,"input":input}),
-                        None,
-                    )
-                    .map_err(|e| HostError::new(e.to_string()))
+                Ok(())
             })
             .ok_or_else(|| HostError::new("Host application is unavailable."))??;
+            let bridge = bridge.clone();
             Ok(async move {
-                let response = operation.await.map_err(|e| HostError::new(e.to_string()))?;
-                if import {Ok(host_value(Value::Array(response.into_sets().into_iter().map(|set|serde_json::json!({"columns":set.columns.into_iter().map(|column|serde_json::json!({"name":column.name,"type_name":column.type_name})).collect::<Vec<_>>(),"rows":set.rows,"notices":set.notices,"affected_rows":set.affected_rows.map(|n|n.to_string())})).collect())))} else {Ok(host_value(response.value().clone()))}
+                if import {
+                    let input = input
+                        .as_str()
+                        .ok_or_else(|| HostError::new("Import input must be text."))?
+                        .to_owned();
+                    let sets = crate::format::import_rows(&bridge, &format, &context, input)
+                        .await
+                        .map_err(|error| HostError::new(error.to_string()))?;
+                    Ok(host_value(Value::Array(
+                        sets.into_iter().map(result_json).collect(),
+                    )))
+                } else {
+                    crate::format::export_rows(&bridge, &format, &context, input)
+                        .await
+                        .map(HostValue::Str)
+                        .map_err(|error| HostError::new(error.to_string()))
+                }
             })
         });
     }

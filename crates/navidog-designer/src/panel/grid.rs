@@ -74,7 +74,17 @@ impl TableDelegate for DesignerGrid {
             .when(self.selected == Some(row), |d| d.bg(p.row_selected));
         if self.fields && (4..=6).contains(&col) {
             let owner = self.owner.clone();
-            let disabled = self.disabled;
+            let key = match col {
+                4 => "not_null",
+                5 => "primary_key",
+                6 => "auto_increment",
+                _ => "",
+            };
+            let disabled = self.disabled
+                || self
+                    .owner
+                    .read_with(cx, |this, _| !this.dialect.column_property(key))
+                    .unwrap_or(true);
             return cell
                 .justify_center()
                 .child(

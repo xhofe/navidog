@@ -273,6 +273,20 @@ impl TableDesigner {
             return;
         }
         if self.page == Page::Fields {
+            let key = match col {
+                0 => "name",
+                1 => "type",
+                2 => "length",
+                3 => "scale",
+                4 => "not_null",
+                5 => "primary_key",
+                6 => "auto_increment",
+                7 => "comment",
+                _ => "",
+            };
+            if key != "name" && !self.dialect.column_property(key) {
+                return;
+            }
             let Some(id) = self.draft.columns.get(row).map(|c| c.id) else {
                 return;
             };
@@ -316,6 +330,9 @@ impl TableDesigner {
         cx: &mut Context<Self>,
     ) {
         if self.busy || !self.loaded {
+            return;
+        }
+        if !self.dialect.column_property(property_key(PROPERTIES[ix])) {
             return;
         }
         let value = self.properties[ix].value(cx);
@@ -512,6 +529,9 @@ impl TableDesigner {
         }
 
         if self.busy || !self.loaded {
+            return;
+        }
+        if !self.dialect.column_property(property_key(property)) {
             return;
         }
         if property == ColumnProperty::AutoIncrement
@@ -870,5 +890,27 @@ impl TableDesigner {
             self.syncing = false;
             self.entry_changed(ix, window, cx);
         }
+    }
+}
+
+fn property_key(property: ColumnProperty) -> &'static str {
+    match property {
+        ColumnProperty::Type => "type",
+        ColumnProperty::Length => "length",
+        ColumnProperty::Scale => "scale",
+        ColumnProperty::NotNull => "not_null",
+        ColumnProperty::Comment => "comment",
+        ColumnProperty::Default => "default",
+        ColumnProperty::Collation => "collation",
+        ColumnProperty::Charset => "charset",
+        ColumnProperty::AutoIncrement => "auto_increment",
+        ColumnProperty::Unsigned => "unsigned",
+        ColumnProperty::Generated => "generated",
+        ColumnProperty::GeneratedExpression => "expression",
+        ColumnProperty::GeneratedStorage => "storage",
+        ColumnProperty::PrimaryKey => "primary_key",
+        ColumnProperty::OnUpdate => "on_update",
+        ColumnProperty::Zerofill => "zerofill",
+        ColumnProperty::Identity => "identity",
     }
 }

@@ -168,6 +168,8 @@ impl Plugins {
         }
         let source = Source::Plugin(id.to_string().into());
         cx.global_mut::<Contributions>().remove(&source);
+        cx.global_mut::<navidog_app_state::registry::CommandRegistry>()
+            .unregister_source(&source);
         cx.global_mut::<navidog_session::DriverRegistry>()
             .0
             .unregister_source(&source);
@@ -325,6 +327,29 @@ impl Plugins {
                 cx.bind_keys([key]);
             }
         }
+        for command in &plugin.extensions().commands {
+            let id: gpui_kit::SharedString =
+                format!("{}/{}", plugin.shell().id(), command.id).into();
+            let action_id = id.clone();
+            cx.global_mut::<navidog_app_state::registry::CommandRegistry>()
+                .register(
+                    id,
+                    source.clone(),
+                    navidog_app_state::registry::CommandInfo {
+                        title: command.title.clone().into(),
+                        icon: command.icon.clone().map(Into::into),
+                        shortcut: command.shortcut.clone().map(Into::into),
+                        action: std::rc::Rc::new(move || {
+                            Box::new(navidog_app_state::plugin::PluginCommand {
+                                id: action_id.clone(),
+                            })
+                        }),
+                        locations: vec![command.menu.clone().into()],
+                        enabled: None,
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+        }
         let contributions = cx.global_mut::<Contributions>();
         for command in &plugin.extensions().commands {
             contributions
@@ -458,9 +483,29 @@ impl Drop for Plugins {
 pub fn init(cx: &mut App) {
     gpui_shell::init(cx);
     crate::panel::init(cx);
+    cx.observe_global::<navidog_app_state::settings::Settings>(|cx| {
+        let plugins = Plugins::global(cx);
+        plugins.update(cx, |plugins, cx| {
+            for installation in &plugins.installations {
+                if let Some(runtime) = &installation.runtime {
+                    runtime.refresh(cx);
+                }
+            }
+        });
+    })
+    .detach();
     let root = navidog_model::paths::config_dir().join("plugins");
     let plugins = cx.new(|_| Plugins::new(root));
     cx.set_global(GlobalPlugins(plugins.clone()));
+    let sessions = navidog_session::sessions::Sessions::global(cx);
+    plugins.update(cx, |_, cx| {
+        cx.subscribe(&sessions, |_, sessions, _, cx| {
+            let ids = sessions.read(cx).open_ids().cloned().collect();
+            cx.global_mut::<Contributions>().open_connections = ids;
+            cx.refresh_windows();
+        })
+        .detach()
+    });
     plugins.update(cx, |p, cx| {
         p.scan(cx);
         {

@@ -9,7 +9,7 @@ use gpui_kit::component::dock::{
     PanelId, PanelInfo, panel_handle,
 };
 use gpui_kit::component::status_bar::StatusBar;
-use gpui_kit::component::{TitleBar, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, TitleBar, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -710,7 +710,7 @@ impl MainWindow {
         });
     }
 
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
         let registry = cx.global::<CommandRegistry>();
         let mut items: Vec<_> = TOOLBAR
@@ -727,7 +727,7 @@ impl MainWindow {
                 let action = command
                     .and_then(|c| registry.get(c))
                     .filter(|info| info.is_enabled(cx))
-                    .map(|info| info.action);
+                    .map(|info| info.action.clone());
                 let item = ToolbarItem::new(*id, lucide(icon), t!(*label).to_string())
                     .disabled(action.is_none());
                 let item = match tokens::icon_color(icon, cx) {
@@ -746,6 +746,7 @@ impl MainWindow {
                 items.push(
                     gpui_kit::component::button::Button::new(id.clone())
                         .label(command.title())
+                        .disabled(!command.is_enabled(window.window_handle().window_id(), cx))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(Box::new(action.clone()), cx)
                         })
@@ -1174,7 +1175,7 @@ impl Render for MainWindow {
             ),
         )
         .when(self.state.show_toolbar, |r| {
-            r.child(self.render_toolbar(cx))
+            r.child(self.render_toolbar(window, cx))
         })
         .child(div().flex_1().min_h_0().child(self.dock.clone()))
         .when(self.state.show_status_bar, |r| {
@@ -1200,7 +1201,9 @@ impl MainWindow {
             .map(|(id, _, value)| (id.to_string(), value.clone()))
             .collect();
         for (id, value) in descriptors {
-            if self.plugin_panels.contains_key(&id) {
+            if self.plugin_panels.contains_key(&id)
+                || navidog_plugin::panel::PluginPanel::open(&id, cx).is_some()
+            {
                 continue;
             }
             // Persisted panels are restored by the Dock builder. Avoid duplicate live identity.

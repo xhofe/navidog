@@ -53,17 +53,56 @@ pub(super) fn plan(
             "Rename the table before editing its structure.",
         ));
     }
-    if old.options != after.options
-        || old.owner != after.owner
-        || old.comment != after.comment
-        || old.unlogged != after.unlogged
-        || old.partition != after.partition
-        || old.partition_children != after.partition_children
-        || old.triggers != after.triggers
-    {
+    if old.owner != after.owner || old.unlogged != after.unlogged {
         return Err(DbError::msg(
-            "This driver has not declared these table property operations; original content is preserved.",
+            "Owner and persistence edits are not declared.",
         ));
+    }
+    for column in &after.columns {
+        if let Some(original) = column
+            .original
+            .as_ref()
+            .and_then(|name| old.columns.iter().find(|column| &column.name == name))
+        {
+            let before = column_properties(&original.definition, d);
+            let next = column_properties(&column.definition, d);
+            let checks = [
+                ("type", before.data_type != next.data_type),
+                ("length", before.length != next.length),
+                ("scale", before.scale != next.scale),
+                ("not_null", before.not_null != next.not_null),
+                ("default", before.default != next.default),
+                (
+                    "comment",
+                    before.comment != next.comment || original.comment != column.comment,
+                ),
+                ("charset", before.charset != next.charset),
+                ("collation", before.collation != next.collation),
+                ("identity", before.identity != next.identity),
+                ("on_update", before.on_update != next.on_update),
+                ("unsigned", before.unsigned != next.unsigned),
+                (
+                    "auto_increment",
+                    before.auto_increment != next.auto_increment,
+                ),
+                (
+                    "expression",
+                    before.generated_expression != next.generated_expression,
+                ),
+                (
+                    "storage",
+                    before.generated_storage != next.generated_storage,
+                ),
+            ];
+            if checks
+                .iter()
+                .any(|(key, changed)| *changed && !d.column_property(key))
+            {
+                return Err(DbError::msg(
+                    "An undeclared column property changed; the original definition is preserved.",
+                ));
+            }
+        }
     }
     let originals: Vec<_> = after
         .columns
@@ -76,12 +115,71 @@ pub(super) fn plan(
         .filter(|c| originals.contains(&&c.name))
         .map(|c| &c.name)
         .collect();
-    if originals != original_order {
+    if originals != original_order && !templates.contains_key("move_column") {
         return Err(DbError::msg(
             "Column reordering requires an explicit move-column template.",
         ));
     }
     let mut out = Vec::new();
+    for (operation, changed, fragment) in [
+        (
+            "table_options",
+            old.options != after.options,
+            after.options.clone(),
+        ),
+        (
+            "table_comment",
+            old.comment != after.comment,
+            after.comment.clone(),
+        ),
+        (
+            "partition",
+            old.partition != after.partition,
+            after.partition.clone(),
+        ),
+    ] {
+        if changed {
+            let mut parameters = values("", &fragment);
+            parameters.insert("value".into(), fragment.clone());
+            out.push(render(operation, parameters)?);
+        }
+    }
+    for (operation, before, after) in [
+        (
+            "trigger",
+            old.triggers
+                .clone()
+                .unwrap_or_else(|| before.triggers.clone()),
+            after
+                .triggers
+                .clone()
+                .unwrap_or_else(|| before.triggers.clone()),
+        ),
+        (
+            "partition_child",
+            old.partition_children.clone(),
+            after.partition_children.clone(),
+        ),
+    ] {
+        for definition in before
+            .iter()
+            .filter(|definition| !after.contains(definition))
+        {
+            out.push(render(
+                &format!("drop_{operation}"),
+                values("", definition),
+            )?);
+        }
+        for definition in after
+            .iter()
+            .filter(|definition| !before.contains(definition))
+        {
+            out.push(render(
+                &format!("create_{operation}"),
+                values("", definition),
+            )?);
+        }
+    }
     for constraint in old
         .constraints
         .iter()
@@ -127,6 +225,13 @@ pub(super) fn plan(
     }
     for index in after.indexes.iter().filter(|i| !old.indexes.contains(i)) {
         out.push(render("create_index", values("", index))?);
+    }
+    if originals != original_order {
+        for (position, column) in after.columns.iter().enumerate() {
+            let mut parameters = values(&column.name, "");
+            parameters.insert("position".into(), position.to_string());
+            out.push(render("move_column", parameters)?);
+        }
     }
     Ok(out)
 }

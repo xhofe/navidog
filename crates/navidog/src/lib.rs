@@ -151,7 +151,8 @@ fn register_commands(cx: &mut App) {
             title: "toolbar.new_query".into(),
             icon: Some("icons/square-terminal.svg".into()),
             shortcut: Some("cmd-y".into()),
-            action: || Box::new(navidog_app_state::actions::NewQuery),
+            action: std::rc::Rc::new(|| Box::new(navidog_app_state::actions::NewQuery)),
+            locations: Vec::new(),
             enabled: None,
         },
     );

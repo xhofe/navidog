@@ -419,6 +419,30 @@ impl ResultGrid {
         });
     }
 
+    pub fn formatted_text(&self, row: usize, column: usize, cx: &App) -> String {
+        let delegate = self.table.read(cx).delegate();
+        let Some(column_info) = delegate.model.columns.get(column) else {
+            return String::new();
+        };
+        let Some(Some(value)) = delegate.model.value(row, column) else {
+            return String::new();
+        };
+        delegate
+            .formatters
+            .get(column_info.name.as_ref())
+            .and_then(|id| {
+                cx.try_global::<navidog_app_state::plugin::Contributions>()?
+                    .formatters
+                    .get(id)
+            })
+            .and_then(|value| {
+                serde_json::from_value::<navidog_model::cell_formatter::Formatter>(value.clone())
+                    .ok()
+            })
+            .and_then(|formatter| formatter.apply(&column_info.name, &column_info.type_name, value))
+            .map(|display| display.text().to_owned())
+            .unwrap_or_else(|| value.to_string())
+    }
     pub fn model<'a>(&self, cx: &'a App) -> &'a GridModel {
         &self.table.read(cx).delegate().model
     }
