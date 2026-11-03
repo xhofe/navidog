@@ -50,7 +50,13 @@ pub fn module(
             window
                 .update(cx, |_, window, cx| {
                     use gpui_kit::component::{WindowExt as _, notification::Notification};
-                    window.push_notification(Notification::new().message(message), cx);
+                    let notification = match level.as_str() {
+                        "success" => Notification::success(message),
+                        "warning" => Notification::warning(message),
+                        "error" => Notification::error(message),
+                        _ => Notification::info(message),
+                    };
+                    window.push_notification(notification, cx);
                 })
                 .map_err(|e| HostError::new(e.to_string()))?;
             Ok(HostValue::Null)

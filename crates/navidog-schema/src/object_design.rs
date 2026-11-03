@@ -32,6 +32,24 @@ pub async fn apply_statements(
     statements: &[String],
 ) -> DbResult<()> {
     let d = r.dialect();
+    if let (Some(revision), Some(previous), Some(kind)) =
+        (&draft.revision, &draft.previous, draft.kind.catalog_kind())
+    {
+        let current = r
+            .object_snapshot(scope, kind, previous)
+            .await?
+            .ok_or_else(|| DbError::msg("Structured object snapshot unavailable."))?;
+        if &current.revision != revision {
+            return Err(DbError::msg(
+                "Object revision changed; reload before planning.",
+            ));
+        }
+        if !draft.unknown.is_empty() {
+            return Err(DbError::msg(
+                "Object contains unknown fragments; this update cannot safely replace them.",
+            ));
+        }
+    }
     // Compare the last server DDL, not the editor body. A structured body is `SELECT …`
     // while `object_ddl` returns `CREATE …`.
     if let (Some(prev), Some(kind)) = (draft.previous.as_deref(), draft.kind.catalog_kind())
@@ -112,6 +130,8 @@ mod tests {
             raw: false,
             loaded: String::new(),
             server_ddl: String::new(),
+            revision: None,
+            unknown: Vec::new(),
             options: BTreeMap::new(),
         }
     }

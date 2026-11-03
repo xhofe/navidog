@@ -59,3 +59,13 @@ navidog 是用 gpui-kit 复刻 Navicat Premium 17（macOS）的数据库管理�
 | 参考资料 | 由 `cargo xtask` 和 `tools/*.swift` 从本机 Navicat 导出、存放在 gitignore 的 `reference/` 目录中的本地资料，禁止提交。 |
 | 功能编号 | `F-<领域>-<序号>`，例如 `F-CONN-001`，定义在 [功能清单](docs/design/01-feature-inventory.md)。 |
 | 第一方插件 | 用 Rust 写、通过同一套注册表注册的内置功能。JS 插件与它走相同的扩展点。 |
+
+
+## 插件
+
+| 术语 | 含义 |
+| --- | --- |
+| 插件代际 | plugin generation；每次停用或重新加载推进，旧请求、上下文和预览明确失效。 |
+| 上下文令牌 | context token；不透明字符串，绑定命令触发时的窗口、面板及插件代际。 |
+| 设计器描述 | designer descriptor；驱动声明原生表单属性、字段控件、默认值、编码与有限 SQL 模板。 |
+| 结构化快照 | structured snapshot；驱动读取的完整结构、未知片段、附属对象与稳定 revision，供 Rust 规划和并发检查。 |

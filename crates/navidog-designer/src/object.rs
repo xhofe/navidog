@@ -58,6 +58,10 @@ struct Saved {
     #[serde(default)]
     server_ddl: String,
     #[serde(default)]
+    revision: Option<String>,
+    #[serde(default)]
+    unknown: Vec<String>,
+    #[serde(default)]
     options: BTreeMap<String, String>,
 }
 
@@ -76,6 +80,8 @@ pub struct ObjectDesigner {
     raw: bool,
     loaded: String,
     server_ddl: String,
+    revision: Option<String>,
+    unknown: Vec<String>,
     page: Page,
     preview: Option<Vec<String>>,
     preview_generation: Option<u64>,
@@ -121,6 +127,8 @@ impl ObjectDesigner {
             raw: false,
             loaded: String::new(),
             server_ddl: String::new(),
+            revision: None,
+            unknown: Vec::new(),
             options: BTreeMap::new(),
         };
         let entity = Self::restore(saved, dialect, window, cx);
@@ -208,6 +216,8 @@ impl ObjectDesigner {
                 raw: saved.raw,
                 loaded: saved.loaded,
                 server_ddl: saved.server_ddl,
+                revision: saved.revision,
+                unknown: saved.unknown,
                 page: Page::Definition,
                 preview: None,
                 preview_generation: None,
@@ -228,6 +238,8 @@ impl ObjectDesigner {
         draft.raw = self.raw;
         draft.loaded = self.loaded.clone();
         draft.server_ddl = self.server_ddl.clone();
+        draft.revision = self.revision.clone();
+        draft.unknown = self.unknown.clone();
         if !self.raw {
             for (key, input) in &self.options {
                 let value = input.read(cx).value().trim().to_string();
@@ -413,6 +425,7 @@ impl ObjectDesigner {
                         this.server_ddl = ddl.clone();
                         if replace_body {
                             if let Some(snapshot)=snapshot {
+                                this.revision=Some(snapshot.revision.clone());this.unknown=snapshot.unknown.clone();
                                 this.loaded=snapshot.body.clone();this.raw=false;
                                 this.body.update(cx,|s,cx|s.set_value(snapshot.body,window,cx));
                                 for (key,input) in &this.options {let value=snapshot.fields.get(key).cloned().unwrap_or_default();input.update(cx,|s,cx|s.set_value(value,window,cx));}
@@ -591,6 +604,8 @@ impl BasePanel for ObjectDesigner {
             raw: self.raw,
             loaded: self.loaded.clone(),
             server_ddl: self.server_ddl.clone(),
+            revision: self.revision.clone(),
+            unknown: self.unknown.clone(),
             options: self
                 .options
                 .iter()

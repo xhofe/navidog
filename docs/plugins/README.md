@@ -2,7 +2,7 @@
 
 插件放在 navidog 配置目录的 `plugins/<反向域名 id>/`，包含官方 `gpui-shell.json`、`navidog.json` 和 JS 入口。偏好设置 → 插件 → 重新扫描，首次启用逐项授权。扫描不运行代码，新安装默认停用；取消任一能力后对应函数不导出，作者应使用 `import * as host from "navidog"` 并检查需要的函数，避免部分授权导致静态 import 失败。
 
-基于 gpui-shell / gpui-kit **0.8.1**。完整宿主类型见 [`api-v1.d.ts`](../../crates/navidog-plugin/api-v1.d.ts)，协议规格见 [`03-plugin-api.md`](../design/03-plugin-api.md)。Shell manifest 的未知字段拒绝；navidog 扩展写在独立 manifest。Shell `shell-version` 是最低语义版本，当前宿主固定 0.8.1。
+基于 gpui-shell / gpui-kit **0.8.1**。完整宿主类型见 [`api-v1.d.ts`](../../crates/navidog-plugin/api-v1.d.ts)，manifest/schema 见 [`manifest.md`](manifest.md)，协议规格见 [`03-plugin-api.md`](../design/03-plugin-api.md)。Shell manifest 的未知字段拒绝；navidog 扩展写在独立 manifest。Shell `shell-version` 是最低语义版本，当前宿主固定 0.8.1。
 
 服务 `View.init` 必须首先用 `cx.spawn` 启动持久事件循环；宿主监督该任务并在任务结束或 watchdog 中断后停用。宿主写入保留的 `.navidog-service-v1.js` 监督入口，不在该文件写插件逻辑。服务 `View.init` 中启动 `cx.spawn` 事件循环，`render` 返回空元素。每个插件一个独立 QuickJS VM；Dock 面板是同一 VM 的独立入口。HostModule 只能纯数据，宿主函数不接受回调，不回调引擎。不要在事件循环中串行等待长请求阻塞 cancel，驱动操作在子任务中处理。
 

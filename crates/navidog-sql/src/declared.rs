@@ -525,6 +525,21 @@ impl Dialect for DeclaredDialect {
         }
         sql
     }
+    fn default_column_type(&self) -> &str {
+        self.descriptor
+            .types
+            .first()
+            .map(|ty| ty.name.as_ref())
+            .unwrap_or("INTEGER")
+    }
+    fn added_column_type(&self) -> &str {
+        self.descriptor
+            .types
+            .iter()
+            .find(|ty| ty.name.eq_ignore_ascii_case("text"))
+            .map(|ty| ty.name.as_ref())
+            .unwrap_or("TEXT")
+    }
     fn column_types(&self) -> &[crate::ColumnType] {
         &self.descriptor.types
     }

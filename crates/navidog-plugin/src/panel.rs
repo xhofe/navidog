@@ -77,7 +77,20 @@ impl Panel for PluginPanel {
 }
 impl Render for PluginPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = Plugins::global(cx).read(cx).panel(&self.id);
+        let plugins = Plugins::global(cx);
+        let plugins = plugins.read(cx);
+        let content = plugins.panel(&self.id);
+        let failure = self
+            .id
+            .split_once('/')
+            .and_then(|(id, _)| {
+                plugins
+                    .installations()
+                    .iter()
+                    .find(|plugin| plugin.id() == id)
+            })
+            .and_then(|plugin| plugin.failure())
+            .map(ToOwned::to_owned);
         let p = palette(cx);
         let mut view = div()
             .size_full()
@@ -89,7 +102,7 @@ impl Render for PluginPanel {
         } else {
             view = view.child(truncated(
                 "plugin-unavailable",
-                t!("plugin.unavailable").to_string(),
+                failure.unwrap_or_else(|| t!("plugin.unavailable").to_string()),
             ));
         }
         view

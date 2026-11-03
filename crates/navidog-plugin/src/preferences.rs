@@ -295,6 +295,5 @@ pub fn title() -> SharedString {
 }
 
 fn truncated(text: impl Into<SharedString>) -> impl IntoElement {
-    let text = text.into();
-    truncate_text(SharedString::from(format!("plugin-text-{text}")), text)
+    truncate_text("plugin-value", text)
 }

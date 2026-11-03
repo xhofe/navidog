@@ -87,6 +87,14 @@ fn discover_partial_approval_disable_and_reload_cleanup(cx: &mut TestAppContext)
             })
         })
         .unwrap();
+    cx.read(|cx| {
+        assert!(
+            Plugins::global(cx)
+                .read(cx)
+                .panel("com.example.commands/help")
+                .is_some()
+        )
+    });
     cx.update_window(panel_window, |_, window, cx| {
         window.render_frame(cx);
         window.click("plugin-about", cx);
