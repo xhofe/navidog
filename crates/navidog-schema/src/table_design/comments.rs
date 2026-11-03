@@ -89,9 +89,12 @@ fn is_comment(sql: &str) -> bool {
         .next()
         .is_some_and(|v| v.eq_ignore_ascii_case("COMMENT"))
 }
-impl TableDesign {
+pub trait TableComments {
+    fn migrate_comments(&mut self, scope: &Scope, d: &dyn Dialect) -> DbResult<()>;
+}
+impl TableComments for TableDesign {
     /// Converts old COMMENT statements to comment data without changing the input on failure.
-    pub fn migrate_comments(&mut self, scope: &Scope, d: &dyn Dialect) -> DbResult<()> {
+    fn migrate_comments(&mut self, scope: &Scope, d: &dyn Dialect) -> DbResult<()> {
         let mut next = self.clone();
         let mut seen = HashSet::new();
         let mut indexes = Vec::new();
@@ -215,11 +218,7 @@ mod tests {
         design.comment = "old table".into();
         design.columns[0].original = Some("id".into());
         design.columns[0].comment = "old column".into();
-        TableSnapshot {
-            design,
-            ddl: String::new(),
-            triggers: vec![],
-        }
+        TableSnapshot::new(design, String::new(), vec![])
     }
     #[test]
     fn comments_follow_column_identity_and_are_removed_without_dropping_indexes() {

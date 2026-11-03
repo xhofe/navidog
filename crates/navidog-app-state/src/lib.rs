@@ -13,6 +13,7 @@ extern crate gpui_kit as gpui;
 
 pub mod actions;
 pub mod favorites;
+pub mod plugin;
 pub mod registry;
 pub mod settings;
 pub mod snippets;
@@ -35,6 +36,7 @@ pub fn init_with_settings(cx: &mut App, settings: settings::Settings) {
     let _ = _rust_i18n_backend();
     settings::init_with(cx, settings);
     registry::init(cx);
+    plugin::init(cx);
     store::init(cx);
     favorites::init(cx);
     vgroups::init(cx);

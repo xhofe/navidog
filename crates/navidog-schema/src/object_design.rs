@@ -20,6 +20,18 @@ pub fn plan(
 /// Runs the planned statements. An object that changed since it was loaded is refused.
 pub async fn apply(r: &mut dyn Relational, scope: &Scope, draft: &DefinitionDraft) -> DbResult<()> {
     let d = r.dialect();
+    let statements = plan(d.as_ref(), scope, draft)?;
+    apply_statements(r, scope, draft, &statements).await
+}
+
+/// Apply a reviewed statement list once after checking the loaded structure.
+pub async fn apply_statements(
+    r: &mut dyn Relational,
+    scope: &Scope,
+    draft: &DefinitionDraft,
+    statements: &[String],
+) -> DbResult<()> {
+    let d = r.dialect();
     // Compare the last server DDL, not the editor body. A structured body is `SELECT …`
     // while `object_ddl` returns `CREATE …`.
     if let (Some(prev), Some(kind)) = (draft.previous.as_deref(), draft.kind.catalog_kind())
@@ -44,7 +56,6 @@ pub async fn apply(r: &mut dyn Relational, scope: &Scope, draft: &DefinitionDraf
     {
         r.execute(&sql).await?;
     }
-    let statements = plan(d.as_ref(), scope, draft)?;
     if statements.is_empty() {
         return Ok(());
     }
@@ -66,7 +77,7 @@ pub async fn apply(r: &mut dyn Relational, scope: &Scope, draft: &DefinitionDraf
         .await?;
     }
     let result: DbResult<()> = async {
-        for sql in &statements {
+        for sql in statements {
             r.execute(sql).await?;
         }
         Ok(())

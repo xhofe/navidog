@@ -347,6 +347,21 @@ impl Sessions {
         Some(operations.run(driver, params, f))
     }
 
+    pub fn run_plugin_operation_rel<T: Send + 'static>(
+        &self,
+        id: &str,
+        database: Option<&str>,
+        cancellation: tokio::sync::watch::Receiver<bool>,
+        f: impl for<'a> FnOnce(&'a mut dyn Relational) -> BoxFuture<'a, DbResult<T>> + Send + 'static,
+    ) -> Option<JoinHandle<DbResult<T>>> {
+        let (driver, params) = self.session_target(id, database)?;
+        Some(
+            self.live
+                .get(id)?
+                .operations
+                .run_cancellable(driver, params, Some(cancellation), f),
+        )
+    }
     /// Opens a separate session (table viewer, query editor); the caller holds and closes it.
     pub fn new_session(
         &self,

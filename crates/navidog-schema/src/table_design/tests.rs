@@ -15,11 +15,7 @@ fn quoted_definitions_round_trip_and_change_by_identity() {
             .unwrap()
             .contains("enum('x,y','z') DEFAULT 'x,y'")
     );
-    let before = TableSnapshot {
-        design: design.clone(),
-        ddl: sql.into(),
-        triggers: Vec::new(),
-    };
+    let before = TableSnapshot::new(design.clone(), sql.into(), Vec::new());
     let mut after = design;
     after.columns[1].name = "renamed".into();
     let plan = plan(
@@ -74,11 +70,11 @@ fn sqlite_backup_name_uses_the_date_then_a_suffix() {
 fn sqlite_rebuild_renames_the_old_table_and_leaves_it() {
     let sql = "CREATE TABLE \"test\" (\"id\" INTEGER NOT NULL, \"name\" TEXT, \"detail\" TEXT, PRIMARY KEY (\"id\"))";
     let design = super::parse::create(sql, "test", &navidog_sqlite::SqliteDialect).unwrap();
-    let before = TableSnapshot {
-        design: design.clone(),
-        ddl: sql.into(),
-        triggers: vec!["CREATE TRIGGER audit_t AFTER INSERT ON test BEGIN SELECT 1; END".into()],
-    };
+    let before = TableSnapshot::new(
+        design.clone(),
+        sql.into(),
+        vec!["CREATE TRIGGER audit_t AFTER INSERT ON test BEGIN SELECT 1; END".into()],
+    );
     let mut added = design.clone();
     added.columns.push(DesignColumn::new(9, "add_col", "TEXT"));
     added.indexes.push("CREATE INDEX ix_t ON test(name)".into());
@@ -140,14 +136,14 @@ fn sqlite_rename_with_a_trigger_edit_keeps_the_other_trigger() {
     let sql = "CREATE TABLE \"t\" (\"id\" INTEGER NOT NULL, \"name\" TEXT, PRIMARY KEY (\"id\"))";
     let design = super::parse::create(sql, "t", &dialect).unwrap();
     let watch = "CREATE TRIGGER watch AFTER UPDATE OF name ON t BEGIN SELECT 1; END";
-    let before = TableSnapshot {
-        design: design.clone(),
-        ddl: sql.into(),
-        triggers: vec![
+    let before = TableSnapshot::new(
+        design.clone(),
+        sql.into(),
+        vec![
             watch.into(),
             "CREATE TRIGGER audit AFTER INSERT ON t BEGIN SELECT 1; END".into(),
         ],
-    };
+    );
     let mut renamed = design;
     renamed.columns[1].name = "title".into();
     let only =
@@ -1022,11 +1018,11 @@ fn exclusion_trigger_and_partition_plans_follow_the_dialect() {
     let mut design = TableDesign::blank(&postgres);
     design.name = "t".into();
     design.columns[0].original = Some("id".into());
-    let before = TableSnapshot {
-        design: design.clone(),
-        ddl: String::new(),
-        triggers: vec!["CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into()],
-    };
+    let before = TableSnapshot::new(
+        design.clone(),
+        String::new(),
+        vec!["CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into()],
+    );
     design.triggers = Some(vec![
         "CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into(),
         "CREATE TRIGGER audit2 BEFORE DELETE ON t EXECUTE FUNCTION log()".into(),
@@ -1043,11 +1039,7 @@ fn exclusion_trigger_and_partition_plans_follow_the_dialect() {
     parted.name = "t".into();
     parted.columns[0].original = Some("id".into());
     parted.columns[0].definition = "int NOT NULL".into();
-    let old = TableSnapshot {
-        design: parted.clone(),
-        ddl: String::new(),
-        triggers: vec![],
-    };
+    let old = TableSnapshot::new(parted.clone(), String::new(), vec![]);
     parted.partition = "PARTITION BY HASH(id) PARTITIONS 4".into();
     let statements = plan(&mysql, &scope(), Some(&old), &parted).unwrap();
     assert!(
@@ -1060,11 +1052,7 @@ fn exclusion_trigger_and_partition_plans_follow_the_dialect() {
     parent.name = "t".into();
     parent.columns[0].original = Some("id".into());
     parent.partition = "PARTITION BY RANGE (id)".into();
-    let existing = TableSnapshot {
-        design: parent.clone(),
-        ddl: String::new(),
-        triggers: vec![],
-    };
+    let existing = TableSnapshot::new(parent.clone(), String::new(), vec![]);
     parent.partition = "PARTITION BY LIST (id)".into();
     assert!(
         plan(&postgres, &scope(), Some(&existing), &parent)
@@ -1082,11 +1070,7 @@ fn mysql_standalone_index_removal_names_its_table() {
     design
         .indexes
         .push("CREATE INDEX `ix` ON `main`.`t` (`id`)".into());
-    let old = TableSnapshot {
-        design: design.clone(),
-        ddl: String::new(),
-        triggers: vec![],
-    };
+    let old = TableSnapshot::new(design.clone(), String::new(), vec![]);
     design.indexes.clear();
     assert_eq!(
         plan(&navidog_mysql::MysqlDialect, &scope(), Some(&old), &design).unwrap(),
@@ -1099,11 +1083,11 @@ fn postgres_column_reorder_rebuilds_without_cascade() {
     let dialect = navidog_postgres::PostgresDialect;
     let sql = "CREATE TABLE \"t\" (\"b\" integer, \"a\" integer)";
     let design = super::parse::create(sql, "t", &dialect).unwrap();
-    let before = TableSnapshot {
-        design: design.clone(),
-        ddl: sql.into(),
-        triggers: vec!["CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into()],
-    };
+    let before = TableSnapshot::new(
+        design.clone(),
+        sql.into(),
+        vec!["CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into()],
+    );
     let mut after = design;
     after.columns.swap(0, 1);
     let statements = plan(&dialect, &scope(), Some(&before), &after).unwrap();
@@ -1128,11 +1112,11 @@ fn postgres_rebuild_keeps_constraint_names_and_serial_defaults() {
     let dialect = navidog_postgres::PostgresDialect;
     let sql = "CREATE TABLE \"t\" (\"id\" integer NOT NULL DEFAULT nextval('t_id_seq'::regclass), \"name\" text, CONSTRAINT \"t_pkey\" PRIMARY KEY (id))";
     let design = super::parse::create(sql, "t", &dialect).unwrap();
-    let before = TableSnapshot {
-        design: design.clone(),
-        ddl: sql.into(),
-        triggers: vec!["CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into()],
-    };
+    let before = TableSnapshot::new(
+        design.clone(),
+        sql.into(),
+        vec!["CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into()],
+    );
     let mut after = design;
     after.columns.swap(0, 1);
     after.columns.push(DesignColumn::new(
@@ -1171,11 +1155,7 @@ fn postgres_identity_can_be_added_and_sequence_options_stay_fixed() {
     let dialect = navidog_postgres::PostgresDialect;
     let sql = "CREATE TABLE \"t\" (\"id\" integer NOT NULL)";
     let design = super::parse::create(sql, "t", &dialect).unwrap();
-    let before = TableSnapshot {
-        design: design.clone(),
-        ddl: sql.into(),
-        triggers: vec![],
-    };
+    let before = TableSnapshot::new(design.clone(), sql.into(), vec![]);
     let mut added = design.clone();
     added.columns[0].definition = "integer NOT NULL GENERATED ALWAYS AS IDENTITY".into();
     let statements = plan(&dialect, &scope(), Some(&before), &added).unwrap();
@@ -1186,11 +1166,7 @@ fn postgres_identity_can_be_added_and_sequence_options_stay_fixed() {
     );
     let mut switched = added.clone();
     switched.columns[0].definition = "integer NOT NULL GENERATED BY DEFAULT AS IDENTITY".into();
-    let switched_before = TableSnapshot {
-        design: added,
-        ddl: String::new(),
-        triggers: vec![],
-    };
+    let switched_before = TableSnapshot::new(added, String::new(), vec![]);
     let statements = plan(&dialect, &scope(), Some(&switched_before), &switched).unwrap();
     assert!(
         statements

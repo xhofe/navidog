@@ -10,7 +10,7 @@ use navidog_sql::{
 pub struct PostgresDialect;
 
 impl Dialect for PostgresDialect {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &str {
         "postgres"
     }
     fn lex(&self) -> Lex {
@@ -30,7 +30,7 @@ impl Dialect for PostgresDialect {
     fn qualify_prefix<'a>(&self, scope: &'a Scope) -> Option<&'a str> {
         scope.schema.as_deref()
     }
-    fn object_kinds(&self) -> &'static [ObjectKind] {
+    fn object_kinds(&self) -> &[ObjectKind] {
         &[
             ObjectKind::Table,
             ObjectKind::View,
@@ -87,7 +87,7 @@ impl Dialect for PostgresDialect {
             self.qualified(scope, name)
         ))
     }
-    fn begin_transaction(&self) -> &'static str {
+    fn begin_transaction(&self) -> &str {
         "BEGIN"
     }
     fn is_system_database(&self, _: &str) -> bool {
@@ -96,13 +96,13 @@ impl Dialect for PostgresDialect {
     fn is_system_schema(&self, name: &str) -> bool {
         matches!(name, "pg_catalog" | "information_schema")
     }
-    fn extra_keywords(&self) -> &'static [&'static str] {
+    fn extra_keywords(&self) -> &[&str] {
         crate::words::KEYWORDS
     }
-    fn extra_functions(&self) -> &'static [&'static str] {
+    fn extra_functions(&self) -> &[&str] {
         crate::words::FUNCTIONS
     }
-    fn generated_default_storage(&self) -> &'static str {
+    fn generated_default_storage(&self) -> &str {
         "STORED"
     }
     fn exclusive_lock_sql(&self, qualified: &str) -> Option<String> {
@@ -139,28 +139,28 @@ impl Dialect for PostgresDialect {
     fn table_option_style(&self) -> TableOptionStyle {
         TableOptionStyle::StorageParameters
     }
-    fn table_option_keys(&self) -> &'static [&'static str] {
+    fn table_option_keys(&self) -> &[&str] {
         crate::words::TABLE_OPTIONS
     }
     fn explain_style(&self) -> ExplainStyle {
         ExplainStyle::JsonNodes
     }
-    fn column_types(&self) -> &'static [ColumnType] {
-        COLUMN_TYPES
+    fn column_types(&self) -> &[ColumnType] {
+        &COLUMN_TYPES
     }
-    fn default_column_type(&self) -> &'static str {
+    fn default_column_type(&self) -> &str {
         "integer"
     }
-    fn added_column_type(&self) -> &'static str {
+    fn added_column_type(&self) -> &str {
         "text"
     }
-    fn index_methods(&self) -> &'static [&'static str] {
+    fn index_methods(&self) -> &[&str] {
         &["BTREE", "HASH", "GIN", "GIST", "BRIN"]
     }
-    fn default_schema(&self) -> Option<&'static str> {
+    fn default_schema(&self) -> Option<&str> {
         Some("public")
     }
-    fn session_context_sql(&self) -> Option<&'static str> {
+    fn session_context_sql(&self) -> Option<&str> {
         Some(
             "SELECT pg_catalog.current_database(), pg_catalog.current_schema(), \
              pg_catalog.current_setting('search_path')",
@@ -217,93 +217,95 @@ impl Dialect for PostgresDialect {
 const LEX: Lex = Lex::POSTGRES;
 
 // Names are what PostgreSQL `format_type` prints. Synonyms collapse onto those names.
-const COLUMN_TYPES: &[ColumnType] = &[
-    ColumnType {
-        name: "integer",
-        synonyms: &["INT", "INT4"],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "bigint",
-        synonyms: &["INT8"],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "smallint",
-        synonyms: &["INT2"],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "character varying",
-        synonyms: &["VARCHAR"],
-        args: TypeArgs::Length,
-    },
-    ColumnType {
-        name: "character",
-        synonyms: &["CHAR"],
-        args: TypeArgs::Length,
-    },
-    ColumnType {
-        name: "text",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "numeric",
-        synonyms: &["DECIMAL"],
-        args: TypeArgs::LengthAndScale,
-    },
-    ColumnType {
-        name: "real",
-        synonyms: &["FLOAT4"],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "double precision",
-        synonyms: &["FLOAT8"],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "boolean",
-        synonyms: &["BOOL"],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "date",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "time without time zone",
-        synonyms: &["TIME"],
-        args: TypeArgs::Length,
-    },
-    ColumnType {
-        name: "time with time zone",
-        synonyms: &["TIMETZ"],
-        args: TypeArgs::Length,
-    },
-    ColumnType {
-        name: "timestamp without time zone",
-        synonyms: &["TIMESTAMP"],
-        args: TypeArgs::Length,
-    },
-    ColumnType {
-        name: "timestamp with time zone",
-        synonyms: &["TIMESTAMPTZ"],
-        args: TypeArgs::Length,
-    },
-    ColumnType {
-        name: "bytea",
-        synonyms: &["BLOB"],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "json",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-];
+static COLUMN_TYPES: std::sync::LazyLock<Vec<ColumnType>> = std::sync::LazyLock::new(|| {
+    vec![
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("integer"),
+            synonyms: vec!["INT".into(), "INT4".into()],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("bigint"),
+            synonyms: vec!["INT8".into()],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("smallint"),
+            synonyms: vec!["INT2".into()],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("character varying"),
+            synonyms: vec!["VARCHAR".into()],
+            args: TypeArgs::Length,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("character"),
+            synonyms: vec!["CHAR".into()],
+            args: TypeArgs::Length,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("text"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("numeric"),
+            synonyms: vec!["DECIMAL".into()],
+            args: TypeArgs::LengthAndScale,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("real"),
+            synonyms: vec!["FLOAT4".into()],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("double precision"),
+            synonyms: vec!["FLOAT8".into()],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("boolean"),
+            synonyms: vec!["BOOL".into()],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("date"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("time without time zone"),
+            synonyms: vec!["TIME".into()],
+            args: TypeArgs::Length,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("time with time zone"),
+            synonyms: vec!["TIMETZ".into()],
+            args: TypeArgs::Length,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("timestamp without time zone"),
+            synonyms: vec!["TIMESTAMP".into()],
+            args: TypeArgs::Length,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("timestamp with time zone"),
+            synonyms: vec!["TIMESTAMPTZ".into()],
+            args: TypeArgs::Length,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("bytea"),
+            synonyms: vec!["BLOB".into()],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("json"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+    ]
+});
 
 #[cfg(test)]
 mod tests {

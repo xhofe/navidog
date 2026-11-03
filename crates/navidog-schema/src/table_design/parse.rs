@@ -106,12 +106,10 @@ pub(super) fn create(ddl: &str, name: &str, d: &dyn Dialect) -> DbResult<TableDe
         .find(|i| positions(&body_and_options[..*i], b',', d).is_ok())
         .ok_or_else(|| DbError::msg("Invalid table body."))?;
     let body = &body_and_options[..end];
-    let mut design = TableDesign {
-        name: name.into(),
-        unlogged,
-        options: body_and_options[end + 1..].trim().into(),
-        ..Default::default()
-    };
+    let mut design = TableDesign::default();
+    design.name = name.into();
+    design.unlogged = unlogged;
+    design.options = body_and_options[end + 1..].trim().into();
     let options_upper = design.options.to_uppercase();
     if let Some(ix) = options_upper.find("PARTITION BY") {
         design.partition = design.options[ix..].trim().to_string();

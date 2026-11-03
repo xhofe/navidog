@@ -94,24 +94,37 @@ pub const COMMON_FUNCTIONS: &[&str] = &[
 
 /// The common list chained with a dialect's own, without building a `Vec` on every keystroke.
 /// A named iterator (rather than `impl Iterator`) keeps `Dialect` usable as `dyn Dialect`.
-pub struct Words {
-    common: std::slice::Iter<'static, &'static str>,
-    extra: std::slice::Iter<'static, &'static str>,
+pub struct Words<'a> {
+    common: std::slice::Iter<'a, &'a str>,
+    extra: std::slice::Iter<'a, &'a str>,
+    owned: std::slice::Iter<'a, String>,
 }
 
-impl Words {
-    pub fn new(common: &'static [&'static str], extra: &'static [&'static str]) -> Self {
+impl<'a> Words<'a> {
+    pub fn owned(common: &'a [&'a str], extra: &'a [String]) -> Self {
+        Self {
+            common: common.iter(),
+            extra: [].iter(),
+            owned: extra.iter(),
+        }
+    }
+    pub fn new(common: &'a [&'a str], extra: &'a [&'a str]) -> Self {
         Self {
             common: common.iter(),
             extra: extra.iter(),
+            owned: [].iter(),
         }
     }
 }
 
-impl Iterator for Words {
-    type Item = &'static str;
+impl<'a> Iterator for Words<'a> {
+    type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.common.next().or_else(|| self.extra.next()).copied()
+        self.common
+            .next()
+            .or_else(|| self.extra.next())
+            .copied()
+            .or_else(|| self.owned.next().map(String::as_str))
     }
 }

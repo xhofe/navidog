@@ -10,7 +10,7 @@ use navidog_sql::{
 pub struct MysqlDialect;
 
 impl Dialect for MysqlDialect {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &str {
         "mysql"
     }
     fn lex(&self) -> Lex {
@@ -26,7 +26,7 @@ impl Dialect for MysqlDialect {
     fn qualify_prefix<'a>(&self, scope: &'a Scope) -> Option<&'a str> {
         Some(scope.database.as_str())
     }
-    fn object_kinds(&self) -> &'static [ObjectKind] {
+    fn object_kinds(&self) -> &[ObjectKind] {
         &[
             ObjectKind::Table,
             ObjectKind::View,
@@ -71,7 +71,7 @@ impl Dialect for MysqlDialect {
             draft,
         )
     }
-    fn begin_transaction(&self) -> &'static str {
+    fn begin_transaction(&self) -> &str {
         "START TRANSACTION"
     }
     fn is_system_database(&self, name: &str) -> bool {
@@ -83,10 +83,10 @@ impl Dialect for MysqlDialect {
     fn is_system_schema(&self, _: &str) -> bool {
         false
     }
-    fn extra_keywords(&self) -> &'static [&'static str] {
+    fn extra_keywords(&self) -> &[&str] {
         crate::words::KEYWORDS
     }
-    fn extra_functions(&self) -> &'static [&'static str] {
+    fn extra_functions(&self) -> &[&str] {
         crate::words::FUNCTIONS
     }
     fn ident_quote(&self) -> char {
@@ -133,25 +133,25 @@ impl Dialect for MysqlDialect {
     fn table_option_style(&self) -> TableOptionStyle {
         TableOptionStyle::Clauses
     }
-    fn table_option_keys(&self) -> &'static [&'static str] {
+    fn table_option_keys(&self) -> &[&str] {
         crate::words::TABLE_OPTIONS
     }
     fn explain_style(&self) -> ExplainStyle {
         ExplainStyle::TableAndJson
     }
-    fn column_types(&self) -> &'static [ColumnType] {
-        COLUMN_TYPES
+    fn column_types(&self) -> &[ColumnType] {
+        &COLUMN_TYPES
     }
-    fn default_column_type(&self) -> &'static str {
+    fn default_column_type(&self) -> &str {
         "int"
     }
-    fn added_column_type(&self) -> &'static str {
+    fn added_column_type(&self) -> &str {
         "text"
     }
-    fn index_methods(&self) -> &'static [&'static str] {
+    fn index_methods(&self) -> &[&str] {
         &["BTREE", "HASH"]
     }
-    fn session_context_sql(&self) -> Option<&'static str> {
+    fn session_context_sql(&self) -> Option<&str> {
         Some("SELECT DATABASE()")
     }
     fn prepare_database_sql(&self, database: &str) -> Option<String> {
@@ -200,78 +200,80 @@ impl Dialect for MysqlDialect {
 const LEX: Lex = Lex::MYSQL;
 
 // Names are what MySQL 8.4 prints in SHOW CREATE TABLE. Synonyms collapse onto those names.
-const COLUMN_TYPES: &[ColumnType] = &[
-    ColumnType {
-        name: "int",
-        synonyms: &["INTEGER", "INT"],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "bigint",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "smallint",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "tinyint",
-        synonyms: &["BOOLEAN", "BOOL"],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "varchar",
-        synonyms: &[],
-        args: TypeArgs::Length,
-    },
-    ColumnType {
-        name: "char",
-        synonyms: &[],
-        args: TypeArgs::Length,
-    },
-    ColumnType {
-        name: "text",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "decimal",
-        synonyms: &["NUMERIC"],
-        args: TypeArgs::LengthAndScale,
-    },
-    ColumnType {
-        name: "double",
-        synonyms: &["DOUBLE PRECISION", "REAL"],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "date",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "time",
-        synonyms: &[],
-        args: TypeArgs::Length,
-    },
-    ColumnType {
-        name: "timestamp",
-        synonyms: &[],
-        args: TypeArgs::Length,
-    },
-    ColumnType {
-        name: "blob",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "json",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-];
+static COLUMN_TYPES: std::sync::LazyLock<Vec<ColumnType>> = std::sync::LazyLock::new(|| {
+    vec![
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("int"),
+            synonyms: vec!["INTEGER".into(), "INT".into()],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("bigint"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("smallint"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("tinyint"),
+            synonyms: vec!["BOOLEAN".into(), "BOOL".into()],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("varchar"),
+            synonyms: vec![],
+            args: TypeArgs::Length,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("char"),
+            synonyms: vec![],
+            args: TypeArgs::Length,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("text"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("decimal"),
+            synonyms: vec!["NUMERIC".into()],
+            args: TypeArgs::LengthAndScale,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("double"),
+            synonyms: vec!["DOUBLE PRECISION".into(), "REAL".into()],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("date"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("time"),
+            synonyms: vec![],
+            args: TypeArgs::Length,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("timestamp"),
+            synonyms: vec![],
+            args: TypeArgs::Length,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("blob"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("json"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+    ]
+});
 
 #[cfg(test)]
 mod tests {

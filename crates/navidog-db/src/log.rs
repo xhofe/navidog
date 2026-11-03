@@ -17,6 +17,10 @@ pub async fn logged<T>(
     let started = std::time::Instant::now();
     let result = fut.await;
     record(LogEntry {
+        plugin_source: PLUGIN_SOURCE
+            .try_with(Clone::clone)
+            .ok()
+            .or_else(|| tag.plugin_source.clone()),
         time,
         connection: tag.connection.clone(),
         session: tag.session,
@@ -26,4 +30,13 @@ pub async fn logged<T>(
         error: result.as_ref().err().map(|e| e.to_string()),
     });
     result
+}
+
+tokio::task_local! {static PLUGIN_SOURCE:String;}
+/// Attach origin to the driver's one existing log record without recording SQL twice.
+pub async fn with_plugin_source<T>(
+    source: String,
+    future: impl std::future::Future<Output = T>,
+) -> T {
+    PLUGIN_SOURCE.scope(source, future).await
 }

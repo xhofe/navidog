@@ -1,0 +1,38 @@
+[package]
+name = "navidog-plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Isolated, permission-scoped JavaScript plugins for navidog"
+
+[dependencies]
+gpui-kit.workspace = true
+gpui-shell.workspace = true
+navidog-app-state.workspace = true
+navidog-model.workspace = true
+navidog-db.workspace = true
+navidog-ui.workspace = true
+navidog-session = { path = "../navidog-session" }
+navidog-sql = { path = "../navidog-sql" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+tokio.workspace = true
+regex.workspace = true
+chrono.workspace = true
+rust-i18n.workspace = true
+tracing.workspace = true
+sha2 = "0.10"
+async-channel = "2.5"
+
+[dev-dependencies]
+navidog-schema = { path = "../navidog-schema" }
+uuid.workspace = true
+navidog-postgres = { path = "../navidog-postgres" }
+navidog-mysql = { path = "../navidog-mysql" }
+gpui-kit = { workspace = true, features = ["test-support"] }
+tempfile = "3"
