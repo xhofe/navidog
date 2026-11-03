@@ -4,7 +4,7 @@ yanked = "warn"
 # Only unmaintained advisories about crates we depend on directly fail the check.
 # The unmaintained crates in this tree (`instant`, `paste`, `proc-macro-error2`,
 # `rustls-pemfile`, `rustybuzz`, `ttf-parser`) are pulled in transitively by the
-# pinned gpui-kit 0.8.0, mysql_async and usvg; none of them can be bumped here.
+# pinned gpui-kit 0.8.1, mysql_async and usvg; none of them can be bumped here.
 unmaintained = "workspace"
 
 ignore = [
@@ -19,6 +19,8 @@ version = 2
 allow = [
     "0BSD",
     "Apache-2.0",
+    # Shell QuickJS JIT uses Cranelift under the permissive LLVM exception.
+    "Apache-2.0 WITH LLVM-exception",
     "MIT",
     "BSD-2-Clause",
     "BSD-3-Clause",
