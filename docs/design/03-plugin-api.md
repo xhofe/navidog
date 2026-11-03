@@ -284,7 +284,7 @@ export_rows(context: string, format_id: string, rows: ResultSet): Promise<string
 
 缺权函数不导出，显式失败。SQL 仅针对已打开连接，经 `Sessions::run_operation_rel` 的独立操作会话执行一次后关闭，不进入查询编辑器事务。历史记录可选 `plugin_source`，旧记录兼容，每次 SQL 只记录一次。
 
-请求拥有唯一 ID、plugin generation、操作、不可变上下文及可选会话 token。chunk 包含 result_set（从 0）、sequence（从 0）、columns（首批）、rows、end、affected_rows、notices；最终 reply 收尾。空结果仍显式传 columns/end。下一结果集只能在上一结果 end 后开始；拒绝重复、过期、乱序、重复列、列数不符、未结束结果的最终响应和无请求响应。数值超安全整数用字符串，二进制用显式 base64 类型，保留 origin 和 notices，affected rows 用十进制字符串。取消后不可回传结果。格式扩展通过相同请求/分批协议调用，M6 再提供完整向导。
+请求拥有唯一 ID、plugin generation、操作、不可变上下文及可选会话 token。chunk 包含 result_set（从 0）、sequence（从 0）、columns（首批）、rows、end、affected_rows、notices；最终 reply 收尾。空结果仍显式传 columns/end。下一结果集只能在上一结果 end 后开始；拒绝重复、过期、乱序、重复首批元数据、列数不符、未结束结果的最终响应和无请求响应。数值超安全整数用字符串，二进制用显式 base64 类型，保留 origin 和 notices，affected rows 用十进制字符串。取消后不可回传结果。格式扩展通过相同请求/分批协议调用，M6 再提供完整向导。
 
 ## 14. 格式化器（F-PLUG-005）
 
@@ -313,10 +313,10 @@ Rust 执行六类声明式显示规则：时间戳（秒/毫秒）、JSON、枚�
 - [x] 独立 SQL 会话及插件日志来源；撤销全部贡献/请求/会话，保留配置和草稿
 - [x] 格式 import/export 接口及端到端测试（向导留 M6）
 - [x] 六类格式化、列选择/持久化/停用回退恢复
-- [ ] 全部驱动目录、补全、取消、网格写入及能力门槛
+- [x] 全部驱动目录、补全、取消、网格写入及能力门槛
 - [ ] 通用原生表/视图设计、模板校验、预览版本、结构冲突、事务回滚/部分失败保护
 - [x] 官方组件浮层与 Dock 占位恢复、管理页 headless/浅深色截图
-- [ ] 示例、文档、类型声明；progress §5 全部检查及 release 体积/前台性能
+- [x] 示例、文档、类型声明；progress §5 全部检查及 release 体积/前台性能
 
 验收证据见 [M5 验收记录](../pr/acceptance-m5.md)。未经运行的检查不得勾选或记为完成。M6 向导、M2/M3 目测与既有 M4 遗留不在 M5 范围内。
 

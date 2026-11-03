@@ -102,16 +102,6 @@ impl Stream {
                 "Duplicate, out-of-order or invalid result chunk.",
             ));
         }
-        if chunk.columns.as_ref().is_some_and(|columns| {
-            let mut names = std::collections::BTreeSet::new();
-            columns
-                .iter()
-                .any(|column| column.name.is_empty() || !names.insert(&column.name))
-        }) {
-            return Err(DbError::msg(
-                "Result columns must have non-empty unique names.",
-            ));
-        }
         let width = if next {
             chunk.columns.as_ref().unwrap().len()
         } else {

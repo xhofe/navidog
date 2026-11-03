@@ -20,15 +20,15 @@
 | fmt / workspace all-targets clippy | 通过 |
 | raw-px / i18n / dialect branches / deps | 通过 |
 | cargo audit / deny all-features | 通过，未增加漏洞忽略项；JIT Cranelift 的 Apache-2.0 WITH LLVM-exception 纳入允许清单 |
-| workspace | 401 项、70 套件（初始全量）通过（后续新增 formatter/partial DDL 检查单独通过） |
+| workspace | 410 项、75 套件通过；最后协议/显示生命周期改动的针对性回归通过 |
 | DB/schema/query 实库 | 101 项通过，包含 SSH 隧道、断连/取消、DDL 回归 |
 | HTTP PostgreSQL | 端到端通过，约 3～4 秒 |
 | 查询解释三数据库 | 通过 |
-| 截图 | 74 张；插件空页/详情/授权浅深色已逐张查看，现有主窗口/连接/网格/查询/设计器回归已生成 |
+| 截图 | 76 张；插件空页/详情/授权浅深色已逐张查看，现有主窗口/连接/网格/查询/设计器回归已生成 |
 | release 网格 | 100,000×20 加载 161.21ms；逐行 avg 3.17ms/p95 3.87ms，跳跃 avg 4.29ms/p95 5.08ms，0/600 帧超过 8.3ms |
 | release 导航树 | avg 0.54/0.72ms，0/600 帧超过 8.3ms |
 | release SQL 编辑器 | 50,000 行解析 331.33ms，滚动/输入 avg 约 1.75ms，所有采样 0 帧超过 8.3ms |
-| release 应用 | 49,373,488 bytes；原本机缓存基线 27,457,936 bytes，差约 20.90 MiB。缓存基线不是同一 main commit 的重编译，不能视为精确归因 |
+| release 应用 | 49,373,488 bytes；同 main 基线 58cb3cb 独立重编译 30,250,960 bytes；增量 19,122,528 bytes（18.24 MiB） |
 
 ## 必须继续完成的 M5 验收与限制
 
@@ -41,6 +41,6 @@
 7. 服务监督入口通过官方 Task.is_done 和 timer 检测任务结束；无限循环触发官方 watchdog 后的运输层停用已通过 failure 检查（约 5 秒）。面板 build_error 同步撤销；已打开草稿保留。
 8. JS 堆无公开硬上限，官方 watchdog/栈限制不可配置；M5 不提供进程隔离。
 9. gpui-shell 0.8.1 标准库要求 RSA rc.19，当前 russh 0.64.1 固定 rc.18；保留最新版协议实现的本地兼容补丁只改 RSA/PKCS pins 及 PKCS#1 borrowed 类型名。在线 audit 和 SSH live 通过；上游兼容后应移除 vendor patch。
-10. 74 张现有/新增截图已逐张查看（浅深色插件页与回归联系表），最终全量与截图测试通过。release 真实执行器 HTTP 取消 541ms。精确同 commit 无插件 release 基线和高负载插件前台测量待补。
+10. 76 张现有/新增截图已逐张查看（浅深色插件页与回归联系表），最终全量与截图测试通过。release 真实执行器 HTTP 取消 541ms。同 main commit 无插件 release 已独立重编译；二十列全启用插件显示规则 avg 3.31/4.46ms，0/600 帧超过 8.3ms，比无规则约增 0.14/0.17ms。
 
 M6 向导、M2/M3 历史目测和既有 M4 遗留不在本次范围。测试截图保留 target/snapshots，不提交 git。

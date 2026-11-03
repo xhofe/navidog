@@ -358,6 +358,6 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | F-PLUG-005 单元格格式化器 | 完成 | model 六规则/grid UI | 选择与持久化、复制原值、停用回退和恢复显示通过 |
 | F-PLUG-006 JS 驱动 | 部分 | HTTP PostgreSQL/live/schema | 必需目录、动态方言、表 ALTER/视图模板已接；完整原生声明控件 UI 验收待补；HTTP 取消与 MySQL 夹具已通过 |
 | F-PLUG-007 Dock 面板 | 部分 | management Dialog、dock、snapshot | 占位恢复、持久化布局恢复、已有面板弱实体去重通过；跨窗口生命周期专门检查待补 |
-| F-PLUG-008 插件管理 | 部分 | management/settings/snapshot | 状态、授权、启停、重载、限额已接；高级区完整截图/键盘验收待补 |
+| F-PLUG-008 插件管理 | 完成 | management/settings/snapshot | 状态、授权、启停、重载、限额真实键盘保存重载及浅深色截图通过 |
 
 详情与临时偏差见 [pr/acceptance-m5.md](pr/acceptance-m5.md)。未完成项仍属 M5，不迁移至 M6。
