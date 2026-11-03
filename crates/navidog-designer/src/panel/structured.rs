@@ -818,7 +818,7 @@ impl TableDesigner {
             let Some(key) = super::options::keys(self.dialect.as_ref()).get(ix) else {
                 return;
             };
-            let Some(input) = self.table_option_inputs.get(key).cloned() else {
+            let Some(input) = self.table_option_inputs.get(*key).cloned() else {
                 return;
             };
             self.syncing = true;

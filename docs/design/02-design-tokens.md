@@ -246,3 +246,7 @@ SQL 编辑器（DDL 页、DDL 选项卡，以及 M3 的查询编辑器）的底�
 ### M4 表设计器重新对齐
 
 `designer::HEADER_HEIGHT` 为 Navicat `TableDesignFieldModule_mysql` / `TableDesignFieldsModule_sqlite` 的 `NSTableHeaderView` 23pt。属性区控件复用 `form` 的 300pt 宽、22pt 行高、8pt 间距。`designer` 的 24pt 编辑行高，160/130/80/75/220pt 字段列宽，200pt 属性区默认高度及 110/100pt 区域最小高度为暂定值，用于容纳输入框和可滚动布局，未标为 AX 实测。
+
+## M5 插件管理界面
+
+插件页复用 `preferences.nav_width`、`form.row_gap`、现有窗口与控件 token，来源与上表一致；Dock 初始尺寸取作者 manifest 的逻辑点数，由 `Pt(size).rems()` 按 13pt 基准换算。M5 未新增 Navicat 实测数值。

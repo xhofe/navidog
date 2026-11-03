@@ -504,6 +504,9 @@ impl Plugins {
                 .map(|p| p.id().to_string())
                 .collect();
             for id in changed {
+                if let Some(installation) = self.installations.iter_mut().find(|p| p.id() == id) {
+                    installation.source_revision = source_revision(&installation.directory);
+                }
                 let approval = self.approval(&id);
                 let directory = self
                     .installations

@@ -365,6 +365,7 @@ mod tests {
     fn only_errors_keeps_failed_statements() {
         let at = chrono::TimeZone::with_ymd_and_hms(&chrono::Local, 2026, 1, 2, 3, 4, 5).unwrap();
         let entry = |sql: &str, error: Option<&str>| LogEntry {
+            plugin_source: None,
             time: at,
             connection: "c".into(),
             session: 1,

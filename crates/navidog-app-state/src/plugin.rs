@@ -143,6 +143,9 @@ impl ContextBridge {
     }
     pub fn capture(cx: &mut App, window: WindowId, plugin: &str, generation: u64) -> String {
         let bridge = cx.global_mut::<Self>();
+        if bridge.invocations.len() >= 4096 {
+            bridge.invocations.clear();
+        }
         let token = uuid::Uuid::new_v4().to_string();
         bridge.invocations.insert(
             token.clone(),

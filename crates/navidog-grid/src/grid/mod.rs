@@ -192,6 +192,7 @@ impl ResultGrid {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let delegate = GridDelegate {
             model: GridModel::default(),
+            formatters: Default::default(),
             editing: None,
             sort: None,
             applied_sort: None,
@@ -306,6 +307,11 @@ impl ResultGrid {
     pub fn set_target(&mut self, target: Option<GridTarget>, cx: &mut Context<Self>) {
         let dialect = target.as_ref().map(|t| t.dialect.clone());
         self.target = target;
+        let formatters = self
+            .target
+            .as_ref()
+            .map(|target| navidog_model::formatter_choices::load(&target.scope, &target.table))
+            .unwrap_or_default();
         let widths = self
             .target
             .as_ref()
@@ -313,6 +319,7 @@ impl ResultGrid {
             .unwrap_or_default();
         self.table.update(cx, |t, cx| {
             let d = t.delegate_mut();
+            d.formatters = formatters;
             d.dialect = dialect;
             d.widths = widths;
             d.layout.clear();
@@ -323,6 +330,11 @@ impl ResultGrid {
 
     /// See `GridModel::locked`. A locked grid also does not open the in-place editor.
     pub fn set_locked(&mut self, locked: bool, cx: &mut Context<Self>) {
+        let locked = locked
+            || self
+                .target
+                .as_ref()
+                .is_some_and(|target| !target.dialect.grid_writes());
         self.table.update(cx, |t, cx| {
             t.delegate_mut().model.locked = locked;
             cx.notify();
@@ -707,6 +719,35 @@ impl Render for ResultGrid {
             .min_w_0()
             .overflow_hidden()
             .when_some(font_pt, |d, pt| d.text_size(tokens::Pt(pt).rems()))
+            .on_action(cx.listener(
+                |this, action: &navidog_app_state::plugin::PluginCommand, window, cx| {
+                    this.publish_plugin_context(window, cx);
+                    let _ = action;
+                    cx.propagate();
+                },
+            ))
+            .on_action(cx.listener(|this, action: &SetFormatter, _, cx| {
+                if let Some(target) = &this.target
+                    && let Err(error) = navidog_model::formatter_choices::store(
+                        &target.scope,
+                        &target.table,
+                        &action.column,
+                        action.formatter.as_deref(),
+                    )
+                {
+                    tracing::warn!("{error}");
+                    return;
+                }
+                this.table.update(cx, |table, cx| {
+                    let selected = &mut table.delegate_mut().formatters;
+                    if let Some(id) = &action.formatter {
+                        selected.insert(action.column.to_string(), id.to_string());
+                    } else {
+                        selected.remove(action.column.as_ref());
+                    }
+                    cx.notify();
+                });
+            }))
             .on_action(cx.listener(|this, _: &Copy, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(this.copy_text("tsv", cx)))
             }))
@@ -995,4 +1036,47 @@ mod tests {
         assert_eq!(changed.get("name"), Some(&200.));
         assert_eq!(changed.len(), 1);
     }
+}
+
+impl ResultGrid {
+    pub fn publish_plugin_context(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let alive = cx.entity().downgrade();
+        let target = alive.clone();
+        let panel = cx.entity_id();
+        navidog_app_state::plugin::ContextBridge::set_grid(
+            cx,
+            window.window_handle().window_id(),
+            panel,
+            move |_| alive.upgrade().is_some(),
+            move |cx| {
+                let entity = target.upgrade().ok_or("Result grid closed.")?;
+                let grid = entity.read(cx);
+                let model = grid.model(cx);
+                let (rows, columns) = model.selection();
+                let selected:Vec<_>=columns.clone().filter_map(|ix|model.columns.get(ix)).map(|c|serde_json::json!({"name":c.name.to_string(),"type_name":c.type_name.to_string()})).collect();
+                let data: Vec<_> = rows
+                    .filter(|r| *r < model.row_count())
+                    .map(|r| {
+                        columns
+                            .clone()
+                            .map(|c| {
+                                model
+                                    .value(r, c)
+                                    .and_then(|v| v.as_ref())
+                                    .map(ToString::to_string)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                Ok(serde_json::json!({"columns":selected,"rows":data}))
+            },
+        );
+    }
+}
+
+#[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
+#[action(namespace=grid,no_json)]
+pub struct SetFormatter {
+    pub column: SharedString,
+    pub formatter: Option<SharedString>,
 }

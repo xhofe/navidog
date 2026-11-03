@@ -114,6 +114,39 @@ fn discover_partial_approval_disable_and_reload_cleanup(cx: &mut TestAppContext)
             5
         )
     });
+    let manifest = installed.join("navidog.json");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    value["permissions"]
+        .as_array_mut()
+        .unwrap()
+        .push("connections.read".into());
+    std::fs::write(&manifest, value.to_string()).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(
+            Plugins::global(cx)
+                .update(cx, |plugins, cx| plugins.reload(
+                    "com.example.commands",
+                    window,
+                    cx
+                ))
+                .is_err()
+        )
+    })
+    .unwrap();
+    cx.read(|cx| {
+        assert!(
+            !Plugins::global(cx)
+                .read(cx)
+                .approval("com.example.commands")
+                .enabled
+        );
+        assert!(
+            cx.global::<navidog_app_state::plugin::Contributions>()
+                .commands
+                .is_empty()
+        );
+    });
     cx.update(|cx| {
         Plugins::global(cx).update(cx, |p, cx| p.disable("com.example.commands", cx).unwrap())
     });

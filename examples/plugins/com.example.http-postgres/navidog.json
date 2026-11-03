@@ -1,0 +1,97 @@
+{
+  "api": 1,
+  "drivers": [
+    {
+      "id": "postgres",
+      "name": "HTTP PostgreSQL",
+      "family": "relational",
+      "default_port": 15432,
+      "fields": [
+        "host",
+        "port",
+        "user",
+        "password",
+        "database"
+      ],
+      "dialect": {
+        "id": "http-postgres",
+        "quote": "\"",
+        "has_schemas": true,
+        "object_kinds": [
+          "table",
+          "view",
+          "function"
+        ],
+        "dollar_quotes": true,
+        "nested_comments": true,
+        "begin": "BEGIN",
+        "savepoint": "SAVEPOINT navidog_apply",
+        "rollback_savepoint": "ROLLBACK TO SAVEPOINT navidog_apply",
+        "transactional_ddl": true,
+        "keywords": [
+          "RETURNING",
+          "ILIKE"
+        ],
+        "templates": {
+          "create_table": {
+            "sql": "CREATE TABLE ${table} (${definition})",
+            "parameters": {
+              "table": "fragment",
+              "definition": "fragment"
+            }
+          },
+          "add_column": {
+            "sql": "ALTER TABLE ${table} ADD COLUMN ${column} ${definition}",
+            "parameters": {
+              "table": "fragment",
+              "column": "identifier",
+              "definition": "fragment"
+            }
+          },
+          "drop_column": {
+            "sql": "ALTER TABLE ${table} DROP COLUMN ${column}",
+            "parameters": {
+              "table": "fragment",
+              "column": "identifier"
+            }
+          },
+          "create_view": {
+            "sql": "CREATE VIEW ${table} AS ${body}",
+            "parameters": {
+              "table": "fragment",
+              "body": "fragment"
+            }
+          },
+          "update_view": {
+            "sql": "CREATE OR REPLACE VIEW ${table} AS ${body}",
+            "parameters": {
+              "table": "fragment",
+              "body": "fragment"
+            }
+          },
+          "lock_table": {
+            "sql": "LOCK TABLE ${table} IN ACCESS EXCLUSIVE MODE",
+            "parameters": {
+              "table": "fragment"
+            }
+          }
+        },
+        "types": [
+          {
+            "name": "integer",
+            "synonyms": [
+              "INT",
+              "INT4"
+            ],
+            "args": "none"
+          },
+          {
+            "name": "text",
+            "synonyms": [],
+            "args": "none"
+          }
+        ]
+      }
+    }
+  ]
+}

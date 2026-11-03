@@ -86,6 +86,21 @@ impl DialectDescriptor {
             "create_view",
             "update_view",
         ];
+        if self.transactional_ddl && self.begin.is_none() {
+            return Err("Transactional DDL needs a declared begin operation.".into());
+        }
+        for statement in [&self.begin, &self.savepoint, &self.rollback_savepoint]
+            .into_iter()
+            .flatten()
+        {
+            crate::span::check(statement, crate::Lex::GENERIC)
+                .map_err(|e| format!("Invalid transaction statement: {e:?}"))?;
+            if statement.trim().is_empty()
+                || !crate::definition::single_statement(statement, crate::Lex::GENERIC)
+            {
+                return Err("Transaction operations must be single non-empty statements.".into());
+            }
+        }
         for (operation, template) in &self.templates {
             if !OPERATIONS.contains(&operation.as_str()) {
                 return Err(format!("Unknown SQL operation template: {operation}"));

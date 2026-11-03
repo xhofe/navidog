@@ -1,3 +1,4 @@
+use navidog_schema::table_design::{TableComments as _, TableDesignExt as _};
 use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -275,7 +276,7 @@ pub struct TableDesigner {
     table: Entity<TableState<DesignerGrid>>,
     properties: Vec<complete::Line>,
     entry_inputs: Vec<complete::Line>,
-    table_option_inputs: std::collections::BTreeMap<&'static str, Entity<InputState>>,
+    table_option_inputs: std::collections::BTreeMap<String, Entity<InputState>>,
     entry_selected: Option<usize>,
     active_cell: Option<usize>,
     syncing: bool,
@@ -667,7 +668,7 @@ impl TableDesigner {
                                 }
                             },
                         ));
-                        (*key, input)
+                        (key.to_string(), input)
                     })
                     .collect();
             let mut this = Self {
@@ -1069,6 +1070,14 @@ impl TableDesigner {
         let scope = self.scope.clone();
         let draft = self.draft.clone();
         let baseline = self.baseline.clone();
+        let plugin_plan = self.dialect.designer_templates().map(|_| {
+            table_design::PreviewPlan::new(
+                self.dialect.as_ref(),
+                baseline.clone(),
+                draft.clone(),
+                self.preview.clone().unwrap_or_default(),
+            )
+        });
         self.task = Some(cx.spawn_in(window, async move |this, cx| {
             let result: DbResult<TableSnapshot> = async {
                 let mut session = job.await.map_err(|e| DbError::msg(e.to_string()))??;
@@ -1085,7 +1094,11 @@ impl TableDesigner {
                             r.execute(&sql).await?;
                         }
                         if save {
-                            table_design::apply(r, &scope, baseline.as_ref(), &draft).await
+                            if let Some(plan) = plugin_plan {
+                                plan.execute(r, &scope, &draft).await
+                            } else {
+                                table_design::apply(r, &scope, baseline.as_ref(), &draft).await
+                            }
                         } else {
                             table_design::load(r, &scope, &draft.name).await
                         }

@@ -2,16 +2,16 @@ use super::*;
 use gpui_kit::component::checkbox::Checkbox;
 use navidog_schema::table_design::{edit_table_option, table_option};
 
-pub(super) fn keys(d: &dyn Dialect) -> &'static [&'static str] {
+pub(super) fn keys(d: &dyn Dialect) -> &[&str] {
     d.table_option_keys()
 }
 impl TableDesigner {
     pub(super) fn sync_table_options(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.syncing = true;
         for (key, input) in &self.table_option_inputs {
-            let value = if *key == "owner" {
+            let value = if key == "owner" {
                 self.draft.owner.clone()
-            } else if *key == "table_comment" && self.dialect.features().separate_comments {
+            } else if key == "table_comment" && self.dialect.features().separate_comments {
                 self.draft.comment.clone()
             } else {
                 table_option(&self.draft.options, key, self.dialect.as_ref()).unwrap_or_default()
@@ -148,7 +148,7 @@ impl TableDesigner {
                                 .max_w_full()
                                 .min_w_0()
                                 .child(
-                                    Input::new(&self.table_option_inputs[key])
+                                    Input::new(&self.table_option_inputs[*key])
                                         .id(SharedString::from(format!("designer-option-{key}")))
                                         .small()
                                         .disabled(disabled || parse_error)
@@ -177,14 +177,15 @@ impl TableDesigner {
                 ))
             })
             .children(self.dialect.bool_table_options().iter().map(|key| {
-                let value = table_option(&self.draft.options, key, self.dialect.as_ref());
+                let key = key.to_string();
+                let value = table_option(&self.draft.options, &key, self.dialect.as_ref());
                 FormRow::bare(
                     Checkbox::new(SharedString::from(format!("designer-option-{key}")))
                         .label(t!(format!("designer.option_{key}")).to_string())
                         .checked(value.as_deref().is_ok_and(|v| v == "true"))
                         .disabled(disabled || value.is_err())
                         .on_click(cx.listener(move |this, value, w, cx| {
-                            this.toggle_table_option(key, *value, w, cx)
+                            this.toggle_table_option(&key, *value, w, cx)
                         })),
                 )
             }))

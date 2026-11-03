@@ -69,7 +69,7 @@ pub struct ObjectDesigner {
     name: Entity<InputState>,
     body: Entity<EditorState>,
     sql: Entity<EditorState>,
-    options: Vec<(&'static str, Entity<InputState>)>,
+    options: Vec<(String, Entity<InputState>)>,
     run_args: Entity<InputState>,
     run_raw: bool,
     previous: Option<String>,
@@ -78,6 +78,7 @@ pub struct ObjectDesigner {
     server_ddl: String,
     page: Page,
     preview: Option<Vec<String>>,
+    preview_generation: Option<u64>,
     error: Option<String>,
     busy: bool,
     close_approved: bool,
@@ -137,7 +138,30 @@ impl ObjectDesigner {
         cx: &mut App,
     ) -> Entity<Self> {
         let kind = DefinitionKind::from_key(&saved.kind).unwrap_or(DefinitionKind::View);
-        let keys = option_keys(kind, dialect.features());
+        let keys: Vec<String> = if let Some(templates) = dialect.designer_templates() {
+            templates
+                .get(&format!(
+                    "{}_{}",
+                    if saved.previous.is_some() {
+                        "update"
+                    } else {
+                        "create"
+                    },
+                    kind.key()
+                ))
+                .map(|template| {
+                    template
+                        .parameter_names()
+                        .filter_map(|name| name.strip_prefix("field.").map(ToOwned::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            option_keys(kind, dialect.features())
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        };
         cx.new(|cx| {
             let name = cx.new(|cx| InputState::new(window, cx).default_value(saved.name.clone()));
             let body = cx.new(|cx| {
@@ -150,9 +174,9 @@ impl ObjectDesigner {
             let options = keys
                 .iter()
                 .map(|key| {
-                    let value = saved.options.get(*key).cloned().unwrap_or_default();
+                    let value = saved.options.get(key).cloned().unwrap_or_default();
                     let input = cx.new(|cx| InputState::new(window, cx).default_value(value));
-                    (*key, input)
+                    (key.clone(), input)
                 })
                 .collect();
             let run_args = cx.new(|cx| InputState::new(window, cx).default_value(""));
@@ -173,6 +197,7 @@ impl ObjectDesigner {
                 server_ddl: saved.server_ddl,
                 page: Page::Definition,
                 preview: None,
+                preview_generation: None,
                 error: None,
                 busy: false,
                 close_approved: false,
@@ -193,7 +218,7 @@ impl ObjectDesigner {
             for (key, input) in &self.options {
                 let value = input.read(cx).value().trim().to_string();
                 if !value.is_empty() {
-                    draft.options.insert((*key).to_string(), value);
+                    draft.options.insert(key.to_string(), value);
                 }
             }
         }
@@ -227,6 +252,7 @@ impl ObjectDesigner {
                 };
                 self.sql.update(cx, |s, cx| s.set_value(text, window, cx));
                 self.preview = Some(sql);
+                self.preview_generation = self.dialect.plugin_generation();
                 self.page = Page::Preview;
                 self.error = None;
             }
@@ -261,6 +287,8 @@ impl ObjectDesigner {
         self.error = None;
         let scope = self.scope.clone();
         let draft = self.draft(cx);
+        let preview = self.preview.clone().unwrap_or_default();
+        let generation = self.preview_generation;
         self.task = Some(cx.spawn_in(window, async move |this, cx| {
             let result: DbResult<()> = async {
                 let mut session = job.await.map_err(|e| DbError::msg(e.to_string()))??;
@@ -269,7 +297,10 @@ impl ObjectDesigner {
                         let r = session.relational().ok_or_else(|| {
                             DbError::msg("This connection is not a relational database.")
                         })?;
-                        object_design::apply(r, &scope, &draft).await
+                        if r.dialect().plugin_generation() != generation {
+                            return Err(DbError::msg("Plugin changed; generate a new preview."));
+                        }
+                        object_design::apply_statements(r, &scope, &draft, &preview).await
                     }
                     .await;
                     let _ = session.close().await;
@@ -331,7 +362,7 @@ impl ObjectDesigner {
         self.busy = true;
         let scope = self.scope.clone();
         self.task = Some(cx.spawn_in(window, async move |this, cx| {
-            let result: DbResult<String> = async {
+            let result: DbResult<(String,Option<navidog_model::table_design::ObjectSnapshot>)> = async {
                 let mut session = job.await.map_err(|e| DbError::msg(e.to_string()))??;
                 let job = navidog_db::runtime::spawn(async move {
                     let result = async {
@@ -341,7 +372,10 @@ impl ObjectDesigner {
                         if let Some(sql) = r.dialect().prepare_database_sql(&scope.database) {
                             r.execute(&sql).await?;
                         }
-                        r.object_ddl(&scope, kind, &name).await
+                        if r.dialect().designer_templates().is_some() {
+                            let snapshot=r.object_snapshot(&scope,kind,&name).await?.ok_or_else(||DbError::msg("Plugin driver must provide a structured object snapshot."))?;
+                            Ok((snapshot.ddl.clone(),Some(snapshot)))
+                        }else{Ok((r.object_ddl(&scope, kind, &name).await?,None))}
                     }
                     .await;
                     let _ = session.close().await;
@@ -353,12 +387,17 @@ impl ObjectDesigner {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.busy = false;
                 match result {
-                    Ok(ddl) if !ddl.is_empty() => {
+                    Ok((ddl,snapshot)) if !ddl.is_empty() => {
                         this.server_ddl = ddl.clone();
                         if replace_body {
-                            this.loaded = ddl.clone();
-                            this.raw = true;
-                            this.body.update(cx, |s, cx| s.set_value(ddl, window, cx));
+                            if let Some(snapshot)=snapshot {
+                                this.loaded=snapshot.body.clone();this.raw=false;
+                                this.body.update(cx,|s,cx|s.set_value(snapshot.body,window,cx));
+                                for (key,input) in &this.options {let value=snapshot.fields.get(key).cloned().unwrap_or_default();input.update(cx,|s,cx|s.set_value(value,window,cx));}
+                            }else{
+                                this.loaded = ddl.clone();this.raw = true;
+                                this.body.update(cx, |s, cx| s.set_value(ddl, window, cx));
+                            }
                         }
                     }
                     _ => this.error = Some(t!("designer.readback_failed").to_string()),
@@ -533,7 +572,7 @@ impl BasePanel for ObjectDesigner {
             options: self
                 .options
                 .iter()
-                .map(|(key, input)| ((*key).to_string(), input.read(cx).value().to_string()))
+                .map(|(key, input)| (key.to_string(), input.read(cx).value().to_string()))
                 .collect(),
         };
         PanelState {
@@ -763,7 +802,11 @@ impl ObjectDesigner {
             .overflow_y_scroll()
             .children(self.options.iter().map(|(key, input)| {
                 FormRow::new(
-                    t!(format!("designer.opt_{key}")).to_string(),
+                    if self.dialect.designer_templates().is_some() {
+                        key.clone()
+                    } else {
+                        t!(format!("designer.opt_{key}")).to_string()
+                    },
                     Input::new(input)
                         .id(SharedString::from(format!("object-opt-{key}")))
                         .small()

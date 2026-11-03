@@ -308,6 +308,7 @@ impl Bridge {
             .remove(id)
             .ok_or_else(|| DbError::msg("Unknown or cancelled plugin request."))?;
         let arguments = pending.arguments.clone();
+        let declared_error = result.is_err();
         let result = result.and_then(|value| {
             if !pending.stream.sets.is_empty() && !pending.stream.ended {
                 return Err(DbError::msg("Final reply arrived before result end."));
@@ -333,7 +334,11 @@ impl Bridge {
             self.send_cancel(id, "Request failed.", arguments);
         }
         let _ = pending.reply.send(result);
-        error.map_or(Ok(()), Err)
+        if declared_error {
+            Ok(())
+        } else {
+            error.map_or(Ok(()), Err)
+        }
     }
     fn validate(&self, state: &State, generation: u64) -> DbResult<()> {
         if !state.active || generation != self.generation() {

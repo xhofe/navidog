@@ -210,6 +210,13 @@ impl InstalledPlugin {
         if let Some(capabilities) = shell_json.get("capabilities") {
             collect_grants(capabilities, &mut Vec::new(), &mut requested);
         }
+        for (name, dependency) in shell.dependencies() {
+            let value = serde_json::json!({"git":dependency.git(),"branch":dependency.branch(),"tag":dependency.tag(),"entry":dependency.entry()});
+            requested.insert(
+                format!("shell.dependency.{name}={value}"),
+                (vec!["dependency".into()], value),
+            );
+        }
         let mut all: BTreeSet<_> = requested.keys().cloned().collect();
         all.extend(extensions.permissions.iter().cloned());
         let fingerprint = format!(
@@ -256,8 +263,18 @@ impl InstalledPlugin {
         let mut capabilities = Value::Object(Default::default());
         for key in granted {
             if let Some((path, value)) = self.requested.get(key) {
+                if path.first().is_some_and(|p| p == "dependency") {
+                    continue;
+                }
                 insert_grant(&mut capabilities, path, value);
             }
+        }
+        if self.shell.dependencies().keys().any(|name| {
+            !granted
+                .iter()
+                .any(|grant| grant.starts_with(&format!("shell.dependency.{name}=")))
+        }) {
+            return Err("Declared dependencies must be approved before loading.".into());
         }
         let mut manifest = self.shell_json.clone();
         manifest["capabilities"] = capabilities;
