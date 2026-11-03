@@ -23,6 +23,8 @@ fn plugin_native_designer_previews_types_and_guards_undeclared_properties(cx: &m
         .unwrap(),
     )
     .unwrap();
+    let mut manifest = manifest;
+    manifest["drivers"][0]["dialect"]["objects"]["view"]["fields"] = serde_json::json!({"check":{"label":"Check option","control":"checkbox","default":"false","encoding":"literal"},"mode":{"label":"Mode","control":{"select":["simple","strict"]},"default":"simple","encoding":"literal"}});
     let descriptor: DriverDescriptor =
         serde_json::from_value(manifest["drivers"][0].clone()).unwrap();
     let driver = JsDriver::new(
@@ -77,5 +79,37 @@ fn plugin_native_designer_previews_types_and_guards_undeclared_properties(cx: &m
         let text = serde_json::to_string(&state).unwrap();
         assert!(text.contains("plugin_people"));
         assert!(text.contains("integer"));
+    });
+    let (object_window, object) = cx
+        .update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                navidog_designer::ObjectDesigner::blank(
+                    navidog_model::object::Scope::new("plugin", "pagila", Some("public".into())),
+                    "view",
+                    None,
+                    window,
+                    cx,
+                )
+                .unwrap()
+            })
+        })
+        .unwrap();
+    cx.update_window(object_window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("object-page-options", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(object_window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("object-field-check", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        use gpui_kit::component::dock::BasePanel as _;
+        let text = serde_json::to_string(&object.read(cx).dump(cx)).unwrap();
+        assert!(text.contains("true"));
+        assert!(text.contains("simple"));
     });
 }

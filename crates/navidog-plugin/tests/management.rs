@@ -168,6 +168,64 @@ fn discover_partial_approval_disable_and_reload_cleanup(cx: &mut TestAppContext)
             32
         )
     });
+    let panel_id = cx.read(|cx| {
+        navidog_plugin::panel::PluginPanel::open("com.example.commands/help", cx)
+            .unwrap()
+            .entity_id()
+    });
+    cx.update(|cx| {
+        Plugins::global(cx).update(cx, |plugins, cx| {
+            plugins.disable("com.example.commands", cx).unwrap()
+        })
+    });
+    cx.update_window(panel_window, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    cx.read(|cx| {
+        assert!(
+            Plugins::global(cx)
+                .read(cx)
+                .panel("com.example.commands/help")
+                .is_none()
+        );
+        assert_eq!(
+            navidog_plugin::panel::PluginPanel::open("com.example.commands/help", cx)
+                .unwrap()
+                .entity_id(),
+            panel_id
+        );
+    });
+    cx.update_window(handle, |_, window, cx| {
+        let plugins = Plugins::global(cx);
+        let mut approval = plugins.read(cx).approval("com.example.commands");
+        approval.enabled = true;
+        plugins.update(cx, |plugins, cx| {
+            plugins
+                .enable("com.example.commands", approval, window, cx)
+                .unwrap()
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(panel_window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("plugin-about", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(panel_window, |_, window, cx| {
+        use gpui_kit::component::WindowExt as _;
+        assert!(window.has_active_dialog(cx));
+        window.close_dialog(cx);
+    })
+    .unwrap();
+    cx.read(|cx| {
+        assert_eq!(
+            navidog_plugin::panel::PluginPanel::open("com.example.commands/help", cx)
+                .unwrap()
+                .entity_id(),
+            panel_id
+        )
+    });
     let manifest = installed.join("navidog.json");
     let mut value: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
