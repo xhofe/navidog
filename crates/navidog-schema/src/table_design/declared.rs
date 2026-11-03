@@ -66,7 +66,15 @@ pub(super) fn plan(
             .map(|c| format!("{} {}", d.quote_ident(&c.name), c.definition))
             .collect::<Vec<_>>();
         definition.extend(after.constraints.clone());
-        let mut out = vec![render("create_table", values("", &definition.join(", ")))?];
+        let mut parameters = values("", &definition.join(", "));
+        parameters.insert("options".into(), after.options.clone());
+        parameters.extend(
+            after
+                .option_fields
+                .iter()
+                .map(|(key, value)| (format!("field.{key}"), value.clone())),
+        );
+        let mut out = vec![render("create_table", parameters)?];
         for index in &after.indexes {
             out.push(render("create_index", values("", index))?);
         }

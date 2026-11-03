@@ -257,6 +257,7 @@ impl ResultView {
     ) -> Entity<Self> {
         let grid = cx.new(|cx| {
             let mut grid = ResultGrid::new(window, cx);
+            grid.set_formatter_persistence(false);
             grid.set_quick_filter(false);
             let columns = set
                 .columns

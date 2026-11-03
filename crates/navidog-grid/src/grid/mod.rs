@@ -166,6 +166,7 @@ pub enum GridEvent {
 pub struct ResultGrid {
     table: Entity<TableState<GridDelegate>>,
     target: Option<GridTarget>,
+    persist_formatters: bool,
     edit_sub: Option<Subscription>,
     temporal_input: Option<WeakEntity<InputState>>,
     row_height: tokens::Pt,
@@ -244,6 +245,7 @@ impl ResultGrid {
         Self {
             table,
             target: None,
+            persist_formatters: true,
             edit_sub: None,
             temporal_input: None,
             row_height: tokens::grid::ROW_HEIGHT,
@@ -304,14 +306,20 @@ impl ResultGrid {
         cx.notify();
     }
 
+    pub fn set_formatter_persistence(&mut self, persistent: bool) {
+        self.persist_formatters = persistent;
+    }
     pub fn set_target(&mut self, target: Option<GridTarget>, cx: &mut Context<Self>) {
         let dialect = target.as_ref().map(|t| t.dialect.clone());
         self.target = target;
-        let formatters = self
-            .target
-            .as_ref()
-            .map(|target| navidog_model::formatter_choices::load(&target.scope, &target.table))
-            .unwrap_or_default();
+        let formatters = if self.persist_formatters {
+            self.target
+                .as_ref()
+                .map(|target| navidog_model::formatter_choices::load(&target.scope, &target.table))
+                .unwrap_or_default()
+        } else {
+            self.table.read(cx).delegate().formatters.clone()
+        };
         let widths = self
             .target
             .as_ref()
@@ -751,7 +759,8 @@ impl Render for ResultGrid {
                 },
             ))
             .on_action(cx.listener(|this, action: &SetFormatter, _, cx| {
-                if let Some(target) = &this.target
+                if this.persist_formatters
+                    && let Some(target) = &this.target
                     && let Err(error) = navidog_model::formatter_choices::store(
                         &target.scope,
                         &target.table,
