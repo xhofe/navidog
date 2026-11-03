@@ -17,7 +17,7 @@
 | M2 对象树、对象选项卡、表查看器 | 进行中 | `m2-specs`、`m2-objects-grid` | 20-objects、21-table-viewer | 任务都已完成，剩两份规格验收清单里的并排目测 |
 | M3 查询编辑器 | 进行中 | `feat/m3`、`codex/m3-completion` | 30-query-editor、31-query-results | 运行/选择/当前语句/停止、存储过程、结果上限和命令列交互验收已补齐；剩配色、解释视图和消息措辞的目测项。见 [本机验收记录](pr/acceptance-m3.md)。查询创建工具（F-QRY-013）移到 M7 |
 | M4 表设计器及其他对象设计器 | 完成 | `feat/m4-remainder` | 40、41、42、43 | 查询创建工具留在 M7。偏差见第 4 节。见 [验收记录](pr/acceptance-m4-remainder.md) |
-| M5 插件体系 | 进行中 | `m5-plugin-system` | 03-plugin-api | 按已确认计划实施，规格与代码独立提交 |
+| M5 插件体系 | 进行中 | `m5-plugin-system` | 03-plugin-api | 宿主与主要扩展链路已实现；完整设计器声明、HTTP 取消/非事务夹具等验收待补，见 [验收记录](pr/acceptance-m5.md) |
 | M6 导入导出 | 未开始 | | | |
 | M7 模型和 ER 图 | 未开始 | | | 含查询创建工具，与 ER 图共用画布 |
 | M8 数据传输与同步 | 未开始 | | | |
@@ -345,3 +345,19 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 导航树性能 | `cargo run --release -p navidog-navigator --example tree_spike` | 本地执行，需要 Metal |
 | SQL 编辑器性能 | `cargo run --release -p navidog-query --example editor_spike` | 本地执行，需要 Metal；`NAVIDOG_SPIKE_LINES` 改行数，截图写到 `target/editor-spike-*.png` |
 | 查询解释实库测试 | `docker compose up -d --wait && NAVIDOG_LIVE=1 cargo test -p navidog-query live_plans` | 本地执行；MySQL 8、MariaDB 11、PostgreSQL 16 的计划都能解析 |
+
+
+## M5 插件体系实施记录
+
+| 功能 | 状态 | 验证 | 说明 |
+| --- | --- | --- | --- |
+| F-PLUG-001 插件加载 | 完成 | manifest/runtime/management/failure | 官方 0.8.1、独立 VM、同步 Policy；Task.is_done 监督与 watchdog 终止 |
+| F-PLUG-002 能力授权 | 完成 | settings/management/runtime | 默认停用、部分 grant、扩大申请停用、持久化、撤权重载 |
+| F-PLUG-003 命令与菜单 | 部分 | manifest、app-state context、plugin_context | 五处及弹出窗口同一 Action、延迟插入原窗口与关闭失效通过；五位置完整菜单 UI 实操待补 |
+| F-PLUG-004 导入导出格式 | 完成 | format/protocol | 可注册/调用/分批输入与回应、背压/限额；向导留 M6 |
+| F-PLUG-005 单元格格式化器 | 完成 | model 六规则/grid UI | 选择与持久化、复制原值、停用回退和恢复显示通过 |
+| F-PLUG-006 JS 驱动 | 部分 | HTTP PostgreSQL/live/schema | 必需目录、动态方言、表 ALTER/视图模板已接；完整原生声明控件 UI 验收待补；HTTP 取消与 MySQL 夹具已通过 |
+| F-PLUG-007 Dock 面板 | 部分 | management Dialog、dock、snapshot | 占位恢复、持久化布局恢复、已有面板弱实体去重通过；跨窗口生命周期专门检查待补 |
+| F-PLUG-008 插件管理 | 部分 | management/settings/snapshot | 状态、授权、启停、重载、限额已接；高级区完整截图/键盘验收待补 |
+
+详情与临时偏差见 [pr/acceptance-m5.md](pr/acceptance-m5.md)。未完成项仍属 M5，不迁移至 M6。
