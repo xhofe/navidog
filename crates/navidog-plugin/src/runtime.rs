@@ -70,7 +70,37 @@ impl PluginRuntime {
             service_path.starts_with(plugin.directory().canonicalize()?),
             "Service entry escapes plugin directory."
         );
-        let loaded = runtime.load_application(plugin.directory(), plugin.shell().entry())?;
+        let wrapper = format!(
+            r#"
+import Service from {entry};
+import {{ runtime_failed }} from "navidog";
+export default class SupervisedService extends Service {{
+  init(props,cx) {{
+    let serviceTask=null;
+    const supervised=new Proxy(cx,{{get(target,key) {{
+      if (key==="spawn") return (body,options)=>{{const task=target.spawn(body,options);if (!serviceTask) serviceTask=task;return task;}};
+      const value=Reflect.get(target,key);return typeof value==="function"?value.bind(target):value;
+    }}}});
+    super.init(props,supervised);
+    if (!serviceTask) throw new Error("Plugin service init must start its event loop with cx.spawn");
+    cx.timer.every(1000,()=>{{if(serviceTask.is_done())runtime_failed("Plugin service task ended. Reload to restart.");}});
+  }}
+}}
+"#,
+            entry = serde_json::to_string(&format!("./{}", plugin.shell().entry()))?
+        );
+        let wrapper_name = ".navidog-service-v1.js";
+        if let Ok(metadata) = std::fs::symlink_metadata(plugin.directory().join(wrapper_name)) {
+            anyhow::ensure!(
+                !metadata.file_type().is_symlink(),
+                "Service supervision entry cannot be a symlink."
+            );
+        }
+        navidog_model::paths::write_atomic(
+            &plugin.directory().join(wrapper_name),
+            wrapper.as_bytes(),
+        )?;
+        let loaded = runtime.load_application(plugin.directory(), wrapper_name)?;
         let service = runtime.mount_application(&loaded, window, cx)?;
         let mut panels = Vec::new();
         for descriptor in &plugin.extensions().panels {

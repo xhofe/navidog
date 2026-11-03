@@ -319,3 +319,12 @@ Rust 执行六类声明式显示规则：时间戳（秒/毫秒）、JSON、枚�
 - [ ] 示例、文档、类型声明；progress §5 全部检查及 release 体积/前台性能
 
 验收证据见 [M5 验收记录](../pr/acceptance-m5.md)。未经运行的检查不得勾选或记为完成。M6 向导、M2/M3 目测与既有 M4 遗留不在 M5 范围内。
+
+
+### M5 最终协议细化
+
+服务入口 `init` 的首个 `cx.spawn` 必须是长期事件循环。宿主生成保留的 `.navidog-service-v1.js`，通过官方 Task.is_done 与 timer 监督事件循环；结束/错误/watchdog 后 `runtime_failed` 只终止运输层，Rust 在后续更新中撤销 source 与延迟释放 VM。服务仍不渲染。该文件禁止插件覆盖或使用符号链接。
+
+导出输入协议先发送 export（columns、context、stream），随后 export.chunk（同 request_id/generation、sequence、rows、end）。宿主按单批行/字节拆分并使用队列背压，超时从请求提交开始。插件在 end 后回应文本；取消后停止收集。API 的 columns 在后续结果批次可省略。
+
+声明式方言新增 designer descriptor（properties、constraints、index_methods、options）和 objects 描述（字段 label/control/default/encoding，create/update 模板）。控件支持 text、SQL、checkbox、number、select；字段参数与模板编码必须一致。表操作按模板开放 create/add/drop/alter/move column、constraint/index、table options/comment、trigger、partition/child；缺失操作禁止提交，原内容保留。完整 Lex 可声明，仍仅由唯一 scanner 读取。

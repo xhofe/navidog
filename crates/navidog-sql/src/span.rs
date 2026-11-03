@@ -15,7 +15,8 @@ use std::ops::Range;
 
 /// Lexical switches for the one shared scanner. A dialect supplies these; the scanner does not
 /// name MySQL, PostgreSQL or SQLite.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Lex {
     /// `` `ident` `` is a quoted identifier.
     pub backtick_idents: bool,

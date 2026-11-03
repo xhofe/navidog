@@ -31,6 +31,26 @@ pub struct Origin {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum WireCell {
+    Text(String),
+    Binary { base64: String },
+}
+impl WireCell {
+    fn text(self) -> DbResult<String> {
+        match self {
+            Self::Text(text) => Ok(text),
+            Self::Binary { base64 } => {
+                use base64::Engine as _;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(base64)
+                    .map_err(|_| DbError::msg("Invalid base64 binary value."))?;
+                Ok(format!("\\x{}", hex::encode(bytes)))
+            }
+        }
+    }
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct Chunk {
@@ -39,7 +59,7 @@ pub struct Chunk {
     #[serde(default)]
     pub columns: Option<Vec<StreamColumn>>,
     #[serde(default)]
-    pub rows: Vec<Vec<Option<String>>>,
+    pub rows: Vec<Vec<Option<WireCell>>>,
     #[serde(default)]
     pub end: bool,
     #[serde(default)]
@@ -109,6 +129,15 @@ impl Stream {
         if !chunk.end && affected_rows.is_some() {
             return Err(DbError::msg("Affected rows are only valid at result end."));
         }
+        let rows = chunk
+            .rows
+            .into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .map(|cell| cell.map(WireCell::text).transpose())
+                    .collect::<DbResult<Vec<_>>>()
+            })
+            .collect::<DbResult<Vec<_>>>()?;
         if next {
             self.sets.push(ResultSet {
                 columns: chunk
@@ -129,9 +158,9 @@ impl Stream {
             });
         }
         let set = self.sets.last_mut().unwrap();
-        self.rows += chunk.rows.len();
+        self.rows += rows.len();
         self.bytes += bytes;
-        set.rows.extend(chunk.rows);
+        set.rows.extend(rows);
         set.notices.extend(chunk.notices);
         set.affected_rows = affected_rows;
         self.sequence = chunk.sequence + 1;
@@ -458,7 +487,7 @@ mod tests {
                     origin: None,
                 }]
             }),
-            rows: vec![vec![Some("9007199254740993".into())]],
+            rows: vec![vec![Some(WireCell::Text("9007199254740993".into()))]],
             end,
             affected_rows: None,
             notices: vec![],
@@ -540,5 +569,18 @@ mod deadline_tests {
                 .contains("timed out")
         );
         assert!(bridge.respond(id, 1, Ok(Value::Null)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod binary_tests {
+    use super::*;
+    #[test]
+    fn binary_base64_is_explicit_and_invalid_payloads_fail() {
+        let chunk:Chunk=serde_json::from_value(serde_json::json!({"result_set":0,"sequence":0,"columns":[{"name":"bytes","type_name":"bytea"}],"rows":[[{"base64":"AAH/"}]],"end":true})).unwrap();
+        let mut stream = Stream::default();
+        stream.chunk(chunk, &Limits::default()).unwrap();
+        assert_eq!(stream.sets[0].rows[0][0].as_deref(), Some("\\x0001ff"));
+        assert!(WireCell::Binary { base64: "!".into() }.text().is_err());
     }
 }

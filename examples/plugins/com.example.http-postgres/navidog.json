@@ -60,6 +60,12 @@
             "parameters": {
               "table": "fragment"
             }
+          },
+          "explain": {
+            "sql": "EXPLAIN ${body}",
+            "parameters": {
+              "body": "fragment"
+            }
           }
         },
         "types": [

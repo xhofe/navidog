@@ -34,6 +34,7 @@ export default class Service extends View {
     let count = Arc::new(AtomicUsize::new(0));
     let seen = count.clone();
     let module = HostModule::new("navidog")
+        .function("runtime_failed", |_| Ok(HostValue::Null))
         .async_function("next_event", move |_| {
             let events = events.clone();
             Ok(async move {

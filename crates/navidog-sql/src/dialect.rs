@@ -227,6 +227,13 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
     fn object_designer(&self, _kind: &str) -> Option<&crate::declared::ObjectDesignerDescriptor> {
         None
     }
+    fn explain_sql(&self, sql: &str) -> Option<String> {
+        Some(match self.explain_style() {
+            ExplainStyle::TableAndJson => format!("EXPLAIN {sql}"),
+            ExplainStyle::JsonNodes => format!("EXPLAIN (FORMAT JSON) {sql}"),
+            ExplainStyle::QueryPlanRows => format!("EXPLAIN QUERY PLAN {sql}"),
+        })
+    }
     fn column_property(&self, key: &str) -> bool {
         self.designer_descriptor()
             .is_none_or(|descriptor| descriptor.properties.contains(key))

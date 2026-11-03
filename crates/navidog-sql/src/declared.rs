@@ -57,6 +57,7 @@ pub struct DialectDescriptor {
     pub object_kinds: Vec<ObjectKind>,
     pub keywords: Vec<String>,
     pub functions: Vec<String>,
+    pub extra_lex: Option<crate::Lex>,
     pub system_databases: Vec<String>,
     pub system_schemas: Vec<String>,
     pub backslash_strings: bool,
@@ -81,6 +82,7 @@ impl Default for DialectDescriptor {
             object_kinds: vec![ObjectKind::Table, ObjectKind::View],
             keywords: Vec::new(),
             functions: Vec::new(),
+            extra_lex: None,
             system_databases: Vec::new(),
             system_schemas: Vec::new(),
             backslash_strings: false,
@@ -345,6 +347,9 @@ impl Dialect for DeclaredDialect {
         &self.descriptor.id
     }
     fn lex(&self) -> Lex {
+        if let Some(lex) = self.descriptor.extra_lex {
+            return lex;
+        }
         Lex {
             backtick_idents: self.descriptor.quote == '`',
             hash_comments: false,
@@ -470,6 +475,44 @@ impl Dialect for DeclaredDialect {
             fk_reference_schema: false,
             ..Default::default()
         }
+    }
+    fn explain_sql(&self, sql: &str) -> Option<String> {
+        self.template("explain", &BTreeMap::from([("body".into(), sql.into())]))
+            .ok()
+            .flatten()
+    }
+    fn select_page(
+        &self,
+        scope: &Scope,
+        table: &str,
+        filter: &str,
+        order: &str,
+        limit: Option<u64>,
+        offset: u64,
+        _rowid: bool,
+    ) -> String {
+        let table = self.qualified(scope, table);
+        let values = BTreeMap::from([
+            ("table".into(), table.clone()),
+            ("body".into(), filter.into()),
+            ("fields".into(), order.into()),
+            ("limit".into(), limit.unwrap_or(u64::MAX).to_string()),
+            ("offset".into(), offset.to_string()),
+        ]);
+        if let Ok(Some(sql)) = self.template("select_page", &values) {
+            return sql;
+        }
+        let mut sql = format!("SELECT * FROM {table}");
+        if !filter.trim().is_empty() {
+            sql.push_str(&format!(" WHERE {filter}"));
+        }
+        if !order.trim().is_empty() {
+            sql.push_str(&format!(" ORDER BY {order}"));
+        }
+        if let Some(limit) = limit {
+            sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
+        }
+        sql
     }
     fn column_types(&self) -> &[crate::ColumnType] {
         &self.descriptor.types

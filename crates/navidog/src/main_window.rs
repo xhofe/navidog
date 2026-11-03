@@ -743,8 +743,12 @@ impl MainWindow {
         if let Some(contributions) = cx.try_global::<navidog_app_state::plugin::Contributions>() {
             for (id, command) in contributions.commands_at("main.toolbar") {
                 let action = navidog_app_state::plugin::PluginCommand { id: id.clone() };
+                let mut button = gpui_kit::component::button::Button::new(id.clone());
+                if let Some(icon) = &command.icon {
+                    button = button.icon(gpui_kit::component::Icon::default().path(icon.clone()));
+                }
                 items.push(
-                    gpui_kit::component::button::Button::new(id.clone())
+                    button
                         .label(command.title())
                         .disabled(!command.is_enabled(window.window_handle().window_id(), cx))
                         .on_click(move |_, window, cx| {

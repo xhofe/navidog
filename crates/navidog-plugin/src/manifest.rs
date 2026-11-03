@@ -151,6 +151,9 @@ impl Extensions {
             }
         }
         for driver in &extensions.drivers {
+            if let Some(icon) = driver.get("icon").and_then(Value::as_str) {
+                validate_entry(icon)?;
+            }
             serde_json::from_value::<crate::driver::DriverDescriptor>(driver.clone())
                 .map_err(|e| e.to_string())?
                 .validate()?;

@@ -1,5 +1,5 @@
 declare module "navidog" {
-  export type Cell = string | null;
+  export type Cell = string | { base64: string } | null;
   export interface Column { name: string; type_name: string; origin?: { schema: string; table: string; column: string } }
   export interface ResultSet { columns: Column[]; rows: Cell[][]; affected_rows?: string | null; notices?: string[] }
   export interface ResultChunk { columns?: Column[]; rows: Cell[][]; affected_rows?: string | null; notices?: string[]; result_set: number; sequence: number; end: boolean }

@@ -54,6 +54,12 @@
               "table": "fragment",
               "column": "identifier"
             }
+          },
+          "explain": {
+            "sql": "EXPLAIN ${body}",
+            "parameters": {
+              "body": "fragment"
+            }
           }
         },
         "types": [

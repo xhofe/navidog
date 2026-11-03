@@ -144,7 +144,7 @@ impl Plugins {
             installation.generation = self.next_generation;
             if let Some(runtime) = installation.runtime.take() {
                 runtime.bridge().stop(reason);
-                drop(runtime);
+                cx.defer(move |_| drop(runtime));
             }
         }
         let driver_ids: Vec<_> = cx

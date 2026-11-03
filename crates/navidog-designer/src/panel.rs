@@ -313,6 +313,7 @@ pub struct TableDesigner {
     needs_reload: bool,
     error: Option<String>,
     preview: Option<Vec<String>>,
+    plugin_preview: Option<table_design::PreviewPlan>,
     close_approved: bool,
     /// Column to select once the table snapshot arrives.
     focus_column: Option<String>,
@@ -716,6 +717,7 @@ impl TableDesigner {
                 needs_reload: false,
                 error: migration_error,
                 preview: None,
+                plugin_preview: None,
                 close_approved: false,
                 focus_column: None,
                 task: None,
@@ -1007,6 +1009,14 @@ impl TableDesigner {
                         cx,
                     )
                 });
+                self.plugin_preview = self.dialect.designer_templates().map(|_| {
+                    table_design::PreviewPlan::new(
+                        self.dialect.as_ref(),
+                        self.baseline.clone(),
+                        self.draft.clone(),
+                        sql.clone(),
+                    )
+                });
                 self.preview = Some(sql);
                 self.page = Page::Preview;
                 self.error = None;
@@ -1077,14 +1087,7 @@ impl TableDesigner {
         let scope = self.scope.clone();
         let draft = self.draft.clone();
         let baseline = self.baseline.clone();
-        let plugin_plan = self.dialect.designer_templates().map(|_| {
-            table_design::PreviewPlan::new(
-                self.dialect.as_ref(),
-                baseline.clone(),
-                draft.clone(),
-                self.preview.clone().unwrap_or_default(),
-            )
-        });
+        let plugin_plan = self.plugin_preview.clone();
         self.task = Some(cx.spawn_in(window, async move |this, cx| {
             let result: DbResult<TableSnapshot> = async {
                 let mut session = job.await.map_err(|e| DbError::msg(e.to_string()))??;

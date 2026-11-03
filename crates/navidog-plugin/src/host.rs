@@ -21,6 +21,11 @@ pub fn module(
     locale: &str,
 ) -> HostModule {
     let mut module = core_module(bridge.clone(), locale.into());
+    let failure = bridge.clone();
+    module = module.function("runtime_failed", move |args| {
+        failure.stop(args.string(0)?);
+        Ok(HostValue::Null)
+    });
     let id = plugin.to_owned();
     let generation = bridge.generation();
     let active = bridge.clone();
@@ -130,11 +135,23 @@ pub fn module(
             let operation = gpui_shell::with_current_app(|cx| {
                 ContextBridge::window(cx, token, &plugin, generation).map_err(HostError::new)?;
                 let cancellation = active.cancellation();
+                let timeout = std::time::Duration::from_secs_f64(active.limits().timeout_seconds);
                 Sessions::global(cx)
                     .read(cx)
                     .run_plugin_operation_rel(connection, database, cancellation, move |rel| {
                         async move {
-                            navidog_db::log::with_plugin_source(source, rel.execute(&sql)).await
+                            let result = tokio::time::timeout(
+                                timeout,
+                                navidog_db::log::with_plugin_source(source, rel.execute(&sql)),
+                            )
+                            .await;
+                            match result {
+                                Ok(result) => result,
+                                Err(_) => {
+                                    Err(navidog_db::DbError::msg("Plugin SQL operation timed out.")
+                                        .with_session_loss(true))
+                                }
+                            }
                         }
                         .boxed()
                     })
@@ -211,7 +228,7 @@ pub fn module(
         });
     }
     let mut declarations = String::from(
-        "export function api_version(): number;\nexport function locale(): string;\nexport function next_event(): Promise<unknown>;\nexport function respond(id:string,generation:number,reply:unknown):void;\nexport function respond_chunk(id:string,generation:number,chunk:unknown):void;\nexport function notify(context:string,level:string,message:string):void;\nexport function import_rows(context:string,format:string,input:string):Promise<unknown>;\nexport function export_rows(context:string,format:string,result:unknown):Promise<string>;\n",
+        "export function runtime_failed(reason:string):void;\nexport function api_version(): number;\nexport function locale(): string;\nexport function next_event(): Promise<unknown>;\nexport function respond(id:string,generation:number,reply:unknown):void;\nexport function respond_chunk(id:string,generation:number,chunk:unknown):void;\nexport function notify(context:string,level:string,message:string):void;\nexport function import_rows(context:string,format:string,input:string):Promise<unknown>;\nexport function export_rows(context:string,format:string,result:unknown):Promise<string>;\n",
     );
     for (permission, declaration) in [
         (

@@ -257,3 +257,5 @@ pub struct RunMaintenance {
     pub database: SharedString,
     pub sql: SharedString,
 }
+
+pub use crate::plugin::PluginCommand;
