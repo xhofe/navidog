@@ -124,11 +124,17 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("cmd-.", StopLoad, Some(CONTEXT)),
         KeyBinding::new("ctrl-r", ApplyFilterSort, Some(CONTEXT)),
         KeyBinding::new("shift-cmd-y", QueryTable, Some(CONTEXT)),
-        KeyBinding::new(
+        KeyBinding::load(
             "secondary-d",
-            navidog_app_state::actions::DesignTable { object: None },
-            Some(CONTEXT),
-        ),
+            Box::new(navidog_app_state::actions::DesignTable { object: None }),
+            Some(std::rc::Rc::new(
+                gpui_kit::KeyBindingContextPredicate::parse(CONTEXT).unwrap(),
+            )),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid design shortcut"),
     ]);
     register_panel(cx, PANEL, |ctx, window, cx| {
         let object = match ctx.info() {
@@ -312,7 +318,7 @@ impl BasePanel for TableViewer {
         });
         tabs::set_close_guard(panel, guard, cx);
     }
-    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
+    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         let panel = PanelId::from(cx.entity_id());
         tabs::set_active(panel, active, cx);
         tabs::set_surface(
@@ -327,6 +333,9 @@ impl BasePanel for TableViewer {
         );
         let workspace = Workspace::global(cx);
         if active {
+            self.view
+                .grid
+                .update(cx, |grid, cx| grid.publish_plugin_context(window, cx));
             // The info pane and the navigator follow the tab, not the last tree click.
             let object = self.object.clone();
             workspace.update(cx, |w, cx| w.select(Selection::Object(object), cx));

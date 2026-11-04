@@ -87,7 +87,7 @@ impl CountingDriver {
     fn new(calls: Arc<Calls>) -> Self {
         Self {
             info: DriverInfo {
-                icon: "icons/db/mysql.svg",
+                icon: "icons/db/mysql.svg".into(),
                 supports_network: true,
                 ..DriverInfo::relational(
                     "counting",

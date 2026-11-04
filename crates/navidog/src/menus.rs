@@ -50,8 +50,24 @@ pub fn bind_keys(cx: &mut App) {
     ]);
     for id in 1..=9u8 {
         cx.bind_keys([
-            KeyBinding::new(&format!("alt-shift-{id}"), AddFavoriteWithId { id }, None),
-            KeyBinding::new(&format!("ctrl-shift-{id}"), OpenFavoriteId { id }, None),
+            KeyBinding::load(
+                &format!("alt-shift-{id}"),
+                Box::new(AddFavoriteWithId { id }),
+                None,
+                false,
+                None,
+                cx,
+            )
+            .expect("valid favorite shortcut"),
+            KeyBinding::load(
+                &format!("ctrl-shift-{id}"),
+                Box::new(OpenFavoriteId { id }),
+                None,
+                false,
+                None,
+                cx,
+            )
+            .expect("valid favorite shortcut"),
         ]);
     }
 }
@@ -469,43 +485,61 @@ pub fn set_menus(cx: &mut App) {
             MenuItem::action(t!("menu.full_screen").to_string(), ToggleFullScreen),
         ]),
         favorites_menu(cx),
-        Menu::new(t!("menu.tools").to_string()).items([
-            MenuItem::action(t!("menu.console").to_string(), OpenConsole),
-            MenuItem::action(t!("menu.history_log").to_string(), OpenHistoryLog),
-            MenuItem::separator(),
-            MenuItem::action(
-                t!("menu.users").to_string(),
-                OpenTool {
-                    scope: None,
-                    tool: "users".into(),
-                    target: None,
-                },
+        Menu::new(t!("menu.tools").to_string()).items(
+            vec![
+                MenuItem::action(t!("menu.console").to_string(), OpenConsole),
+                MenuItem::action(t!("menu.history_log").to_string(), OpenHistoryLog),
+                MenuItem::separator(),
+                MenuItem::action(
+                    t!("menu.users").to_string(),
+                    OpenTool {
+                        scope: None,
+                        tool: "users".into(),
+                        target: None,
+                    },
+                ),
+                MenuItem::action(
+                    t!("menu.privileges").to_string(),
+                    OpenTool {
+                        scope: None,
+                        tool: "privileges".into(),
+                        target: None,
+                    },
+                ),
+                MenuItem::action(
+                    t!("menu.server_monitor").to_string(),
+                    OpenTool {
+                        scope: None,
+                        tool: "monitor".into(),
+                        target: None,
+                    },
+                ),
+                MenuItem::action(
+                    t!("menu.find_in_database").to_string(),
+                    OpenTool {
+                        scope: None,
+                        tool: "find".into(),
+                        target: None,
+                    },
+                ),
+            ]
+            .into_iter()
+            .chain(
+                cx.global::<navidog_app_state::plugin::Contributions>()
+                    .commands_at("tools.menu")
+                    .map(|(id, command)| MenuItem::Action {
+                        name: command.title(),
+                        action: Box::new(navidog_app_state::plugin::PluginCommand {
+                            id: id.clone(),
+                        }),
+                        os_action: None,
+                        checked: false,
+                        disabled: !cx
+                            .active_window()
+                            .is_some_and(|window| command.is_enabled(window.window_id(), cx)),
+                    }),
             ),
-            MenuItem::action(
-                t!("menu.privileges").to_string(),
-                OpenTool {
-                    scope: None,
-                    tool: "privileges".into(),
-                    target: None,
-                },
-            ),
-            MenuItem::action(
-                t!("menu.server_monitor").to_string(),
-                OpenTool {
-                    scope: None,
-                    tool: "monitor".into(),
-                    target: None,
-                },
-            ),
-            MenuItem::action(
-                t!("menu.find_in_database").to_string(),
-                OpenTool {
-                    scope: None,
-                    tool: "find".into(),
-                    target: None,
-                },
-            ),
-        ]),
+        ),
         Menu::new(t!("menu.window").to_string()).items([
             MenuItem::action(t!("menu.minimize").to_string(), Minimize),
             MenuItem::action(t!("menu.zoom").to_string(), Zoom),

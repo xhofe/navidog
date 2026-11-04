@@ -118,7 +118,13 @@ impl TableDesigner {
                         .icon(lucide("arrow-up"))
                         .tooltip(t!("designer.up").to_string())
                         .accessibility_label(t!("designer.up").to_string())
-                        .disabled(disabled || !selected)
+                        .disabled(
+                            disabled
+                                || !selected
+                                || self.dialect.designer_templates().is_some_and(|templates| {
+                                    !templates.contains_key("move_column")
+                                }),
+                        )
                         .on_click(cx.listener(|this, _, w, cx| this.move_field(true, w, cx))),
                 )
                 .child(
@@ -128,7 +134,13 @@ impl TableDesigner {
                         .icon(lucide("arrow-down"))
                         .tooltip(t!("designer.down").to_string())
                         .accessibility_label(t!("designer.down").to_string())
-                        .disabled(disabled || !selected)
+                        .disabled(
+                            disabled
+                                || !selected
+                                || self.dialect.designer_templates().is_some_and(|templates| {
+                                    !templates.contains_key("move_column")
+                                }),
+                        )
                         .on_click(cx.listener(|this, _, w, cx| this.move_field(false, w, cx))),
                 )
             })
@@ -180,6 +192,21 @@ impl TableDesigner {
         disabled: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let property = match ix {
+            0 => "type",
+            1 => "length",
+            2 => "scale",
+            3 => "comment",
+            4 => "default",
+            5 => "collation",
+            6 => "charset",
+            7 => "expression",
+            8 => "storage",
+            9 => "on_update",
+            10 => "identity",
+            _ => "",
+        };
+        let disabled = disabled || !self.dialect.column_property(property);
         FormRow::new(
             t!(format!("designer.{key}")).to_string(),
             h_flex()
@@ -251,7 +278,7 @@ impl TableDesigner {
                     Checkbox::new("designer-auto-increment")
                         .label(t!("designer.auto_increment").to_string())
                         .checked(p.auto_increment)
-                        .disabled(disabled)
+                        .disabled(disabled || !self.dialect.column_property("auto_increment"))
                         .on_click(cx.listener(|this, value, w, cx| {
                             this.toggle_attribute(ColumnProperty::AutoIncrement, *value, w, cx)
                         })),
@@ -548,6 +575,32 @@ impl Render for TableDesigner {
                 .into_iter()
                 .filter(|(page, _)| {
                     let features = self.dialect.features();
+                    if let Some(templates) = self.dialect.designer_templates() {
+                        return match page {
+                            Page::Indexes => {
+                                templates.contains_key("create_index")
+                                    || templates.contains_key("drop_index")
+                            }
+                            Page::ForeignKeys | Page::Checks | Page::Exclusions => {
+                                templates.contains_key("add_constraint")
+                                    || templates.contains_key("drop_constraint")
+                            }
+                            Page::Triggers => {
+                                templates.contains_key("create_trigger")
+                                    || templates.contains_key("drop_trigger")
+                            }
+                            Page::Partitions => {
+                                templates.contains_key("partition")
+                                    || templates.contains_key("create_partition_child")
+                            }
+                            Page::Options => {
+                                templates.contains_key("table_options")
+                                    || templates.contains_key("table_comment")
+                            }
+                            Page::Advanced => false,
+                            _ => true,
+                        };
+                    }
                     match page {
                         Page::Exclusions => features.supports_exclude,
                         Page::Partitions => features.supports_partitions,

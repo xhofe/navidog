@@ -1,5 +1,8 @@
 _version: 2
 grid:
+  formatter_original:
+    en: Original value
+    zh-CN: 原始值
   copy:
     en: Copy
     zh-CN: 复制

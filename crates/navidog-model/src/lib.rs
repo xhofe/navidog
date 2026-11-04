@@ -8,3 +8,9 @@ pub mod json_store;
 pub mod object;
 pub mod paths;
 pub mod queries;
+
+pub mod cell_formatter;
+
+pub mod table_design;
+
+pub mod formatter_choices;

@@ -255,17 +255,18 @@ impl TableViewer {
 
     pub(crate) fn run_simple(
         &mut self,
-        sql: &'static str,
+        sql: impl Into<String>,
         after: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) {
         let Some(session) = self.session.clone() else {
             return;
         };
+        let sql = sql.into();
         let generation = self.session_generation;
         self.transaction_pending = true;
         let job = run_on(session.clone(), move |rel| {
-            Box::pin(async move { rel.execute(sql).await })
+            Box::pin(async move { rel.execute(&sql).await })
         });
         // Not in `self.task`: replacing that drops the page load in flight (opening a table with
         // "auto begin transaction" sends BEGIN right after the first SELECT)

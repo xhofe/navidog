@@ -79,6 +79,8 @@ pub fn run() {
         };
         // The recovery dialog needs the window root, which exists only after open_window returns.
         let _ = window.update(cx, |_, window, cx| {
+            navidog_plugin::Plugins::global(cx)
+                .update(cx, |plugins, cx| plugins.start_enabled(window, cx));
             view.update(cx, |v, cx| v.check_recovery(window, cx));
         });
         cx.on_app_quit(|cx| {
@@ -111,6 +113,7 @@ pub fn init_with_settings(cx: &mut App, settings: Settings) {
     navidog_grid::init(cx);
     navidog_query::init(cx);
     navidog_designer::init(cx);
+    navidog_plugin::init(cx);
     register_commands(cx);
     cx.set_global(AppState::load());
 }
@@ -148,7 +151,8 @@ fn register_commands(cx: &mut App) {
             title: "toolbar.new_query".into(),
             icon: Some("icons/square-terminal.svg".into()),
             shortcut: Some("cmd-y".into()),
-            action: || Box::new(navidog_app_state::actions::NewQuery),
+            action: std::rc::Rc::new(|| Box::new(navidog_app_state::actions::NewQuery)),
+            locations: Vec::new(),
             enabled: None,
         },
     );

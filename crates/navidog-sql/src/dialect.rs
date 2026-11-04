@@ -42,7 +42,8 @@ pub enum TableOptionStyle {
 }
 
 /// How many parenthesized arguments a designer type stores.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TypeArgs {
     /// The server drops a length, so the designer does not edit one.
     None,
@@ -51,10 +52,10 @@ pub enum TypeArgs {
 }
 
 /// One type in the table designer menu, spelled as the server prints it back.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ColumnType {
-    pub name: &'static str,
-    pub synonyms: &'static [&'static str],
+    pub name: std::borrow::Cow<'static, str>,
+    pub synonyms: Vec<String>,
     pub args: TypeArgs,
 }
 
@@ -213,22 +214,57 @@ impl Default for DialectFeatures {
 /// exhaustiveness check a capability method has. `scripts/check-dialect-branches.sh` enforces it.
 pub trait Dialect: std::fmt::Debug + Send + Sync {
     /// Registry-style identifier, for logs and diagnostics. Never branch on it.
-    fn id(&self) -> &'static str;
+    fn id(&self) -> &str;
     fn lex(&self) -> Lex;
+    fn designer_templates(
+        &self,
+    ) -> Option<&std::collections::BTreeMap<String, crate::template::SqlTemplate>> {
+        None
+    }
+    fn designer_descriptor(&self) -> Option<&crate::declared::DesignerDescriptor> {
+        None
+    }
+    fn object_designer(&self, _kind: &str) -> Option<&crate::declared::ObjectDesignerDescriptor> {
+        None
+    }
+    fn explain_sql(&self, sql: &str) -> Option<String> {
+        Some(match self.explain_style() {
+            ExplainStyle::TableAndJson => format!("EXPLAIN {sql}"),
+            ExplainStyle::JsonNodes => format!("EXPLAIN (FORMAT JSON) {sql}"),
+            ExplainStyle::QueryPlanRows => format!("EXPLAIN QUERY PLAN {sql}"),
+        })
+    }
+    fn column_property(&self, key: &str) -> bool {
+        self.designer_descriptor()
+            .is_none_or(|descriptor| descriptor.properties.contains(key))
+    }
+    fn plugin_generation(&self) -> Option<u64> {
+        None
+    }
+    fn grid_writes(&self) -> bool {
+        true
+    }
+    fn savepoint_sql(&self) -> &str {
+        "SAVEPOINT navidog_apply"
+    }
+    fn rollback_savepoint_sql(&self) -> &str {
+        "ROLLBACK TO SAVEPOINT navidog_apply"
+    }
+
     fn quote_ident(&self, name: &str) -> String;
     fn string_literal(&self, value: &str) -> String;
     /// Database or schema prefixed before an object name, when the dialect wants one.
     fn qualify_prefix<'a>(&self, scope: &'a Scope) -> Option<&'a str>;
-    fn object_kinds(&self) -> &'static [ObjectKind];
-    fn begin_transaction(&self) -> &'static str;
+    fn object_kinds(&self) -> &[ObjectKind];
+    fn begin_transaction(&self) -> &str;
     fn is_system_database(&self, name: &str) -> bool;
     fn is_system_schema(&self, name: &str) -> bool;
     /// A catalog object the product ships with, such as SQLite's `sqlite_stat1`.
     fn is_system_object(&self, _name: &str) -> bool {
         false
     }
-    fn extra_keywords(&self) -> &'static [&'static str];
-    fn extra_functions(&self) -> &'static [&'static str];
+    fn extra_keywords(&self) -> &[&str];
+    fn extra_functions(&self) -> &[&str];
     fn rename_object(
         &self,
         scope: &Scope,
@@ -250,7 +286,7 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
     fn features(&self) -> DialectFeatures;
     /// Query that reads the session's current database, and for [`ContextSelection::Schema`]
     /// also the schema and `search_path`. `None` when the product has no such state.
-    fn session_context_sql(&self) -> Option<&'static str> {
+    fn session_context_sql(&self) -> Option<&str> {
         None
     }
     fn prepare_database_sql(&self, _database: &str) -> Option<String> {
@@ -283,32 +319,32 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
         None
     }
     /// Default storage of a generated column when the user does not pick one.
-    fn generated_default_storage(&self) -> &'static str {
+    fn generated_default_storage(&self) -> &str {
         "VIRTUAL"
     }
-    fn autoincrement_keyword(&self) -> &'static str {
+    fn autoincrement_keyword(&self) -> &str {
         "AUTO_INCREMENT"
     }
 
     /// How the table designer's option form maps onto this product's `CREATE TABLE` tail.
     fn table_option_style(&self) -> TableOptionStyle;
     /// Keys of the table-option form, in display order.
-    fn table_option_keys(&self) -> &'static [&'static str] {
+    fn table_option_keys(&self) -> &[&str] {
         &[]
     }
     /// Keys the option form edits as checkboxes rather than text inputs.
-    fn bool_table_options(&self) -> &'static [&'static str] {
+    fn bool_table_options(&self) -> &[&str] {
         &[]
     }
     /// Which `EXPLAIN` form [`crate::Dialect`] consumers should use.
     fn explain_style(&self) -> ExplainStyle;
     /// Types offered in the table designer, in menu order. Each name is the spelling this
     /// product prints back after `CREATE TABLE`.
-    fn column_types(&self) -> &'static [ColumnType] {
+    fn column_types(&self) -> &[ColumnType] {
         &[]
     }
     /// The menu entry named by `name`, including a case-insensitive synonym.
-    fn column_type(&self, name: &str) -> Option<&'static ColumnType> {
+    fn column_type(&self, name: &str) -> Option<&ColumnType> {
         let name = name.trim();
         self.column_types().iter().find(|ty| {
             ty.name.eq_ignore_ascii_case(name)
@@ -319,24 +355,24 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
         })
     }
     /// Type of a new table's `id` column.
-    fn default_column_type(&self) -> &'static str {
+    fn default_column_type(&self) -> &str {
         "INTEGER"
     }
     /// Type of a field added to an existing design.
-    fn added_column_type(&self) -> &'static str {
+    fn added_column_type(&self) -> &str {
         "TEXT"
     }
     /// `USING` methods offered for an index.
-    fn index_methods(&self) -> &'static [&'static str] {
+    fn index_methods(&self) -> &[&str] {
         &["BTREE", "HASH"]
     }
     /// Schema assumed when a scope names none, when the product has one.
-    fn default_schema(&self) -> Option<&'static str> {
+    fn default_schema(&self) -> Option<&str> {
         None
     }
     /// The only catalog whose tables the designer can rebuild by copying them; `None` when the
     /// dialect rebuilds without one.
-    fn table_rebuild_catalog(&self) -> Option<&'static str> {
+    fn table_rebuild_catalog(&self) -> Option<&str> {
         None
     }
 
@@ -368,7 +404,7 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
         }
     }
 
-    fn drop_keyword(&self, kind: ObjectKind) -> Option<&'static str> {
+    fn drop_keyword(&self, kind: ObjectKind) -> Option<&str> {
         Some(match kind {
             ObjectKind::Table => "TABLE",
             ObjectKind::View => "VIEW",
@@ -439,7 +475,7 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
         crate::security::account_form(self.definition_family())
     }
 
-    fn account_list_sql(&self) -> Option<&'static str> {
+    fn account_list_sql(&self) -> Option<&str> {
         crate::security::account_list_sql(self.definition_family())
     }
 
@@ -451,7 +487,7 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
         crate::security::monitors_server(self.definition_family())
     }
 
-    fn process_sql(&self) -> Option<&'static str> {
+    fn process_sql(&self) -> Option<&str> {
         crate::security::process_sql(self.definition_family())
     }
 
@@ -459,11 +495,11 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
         crate::security::kill_sql(self.definition_family(), id)
     }
 
-    fn variables_sql(&self) -> Option<&'static str> {
+    fn variables_sql(&self) -> Option<&str> {
         crate::security::variables_sql(self.definition_family())
     }
 
-    fn status_sql(&self) -> Option<&'static str> {
+    fn status_sql(&self) -> Option<&str> {
         crate::security::status_sql(self.definition_family())
     }
 
@@ -605,11 +641,11 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
             .join("\n")
     }
 
-    fn keywords(&self) -> Words {
+    fn keywords(&self) -> Words<'_> {
         Words::new(crate::keywords::COMMON, self.extra_keywords())
     }
 
-    fn functions(&self) -> Words {
+    fn functions(&self) -> Words<'_> {
         Words::new(crate::keywords::COMMON_FUNCTIONS, self.extra_functions())
     }
 

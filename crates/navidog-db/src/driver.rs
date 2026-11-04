@@ -84,7 +84,7 @@ pub struct DriverInfo {
     pub name: String,
     pub family: Family,
     pub default_port: Option<u16>,
-    pub icon: &'static str,
+    pub icon: String,
     pub dialect: Arc<dyn Dialect>,
     /// File database (SQLite): the connection is a path, not a host.
     pub file_based: bool,
@@ -118,7 +118,7 @@ impl DriverInfo {
             name: name.into(),
             family: Family::Relational,
             default_port: None,
-            icon: "",
+            icon: String::new(),
             dialect,
             file_based: false,
             multi_host: false,
@@ -190,7 +190,7 @@ pub struct ResultSet {
 }
 
 /// One entry in an object list (the List and Detail views of the Objects tab).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ObjectInfo {
     pub name: String,
     pub kind: ObjectKind,
@@ -200,14 +200,14 @@ pub struct ObjectInfo {
 }
 
 /// Elements shown under a table in the navigator, besides its fields.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TableChildren {
     pub indexes: Vec<String>,
     pub foreign_keys: Vec<String>,
     pub triggers: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ColumnInfo {
     pub name: String,
     pub type_name: String,
@@ -218,7 +218,7 @@ pub struct ColumnInfo {
 }
 
 /// One column of a foreign key and the column it references (F-DATA-012).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ForeignKey {
     pub column: String,
     /// Referenced schema, or the SQLite schema / MySQL database. Empty if the server omitted it.
@@ -312,6 +312,23 @@ macro_rules! recovering_execute {
 }
 
 pub trait Relational: Send {
+    fn object_snapshot<'a>(
+        &'a mut self,
+        _scope: &'a Scope,
+        _kind: ObjectKind,
+        _name: &'a str,
+    ) -> BoxFuture<'a, DbResult<Option<navidog_model::table_design::ObjectSnapshot>>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn table_snapshot<'a>(
+        &'a mut self,
+        _scope: &'a Scope,
+        _name: &'a str,
+    ) -> BoxFuture<'a, DbResult<Option<navidog_model::table_design::StructuredTableSnapshot>>> {
+        Box::pin(async { Ok(None) })
+    }
+
     fn dialect(&self) -> Arc<dyn Dialect>;
     /// Execute once on the current physical session. Transport failures never replay the SQL.
     fn execute<'a>(&'a mut self, sql: &'a str) -> BoxFuture<'a, DbResult<Vec<ResultSet>>>;
@@ -339,8 +356,8 @@ pub trait Relational: Send {
     /// Schemas in the database this session is connected to. Dialects without a schema level
     /// return an empty list.
     fn list_schemas(&mut self) -> BoxFuture<'_, DbResult<Vec<String>>>;
-    fn object_kinds(&self) -> &'static [ObjectKind] {
-        self.dialect().object_kinds()
+    fn object_kinds(&self) -> Vec<ObjectKind> {
+        self.dialect().object_kinds().to_vec()
     }
     fn list_objects<'a>(
         &'a mut self,

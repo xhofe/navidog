@@ -180,7 +180,8 @@ fn register_commands(cx: &mut App) {
                 title: title.into(),
                 icon: Some(icon.into()),
                 shortcut: None,
-                action,
+                action: std::rc::Rc::new(action),
+                locations: Vec::new(),
                 enabled: Some(enabled),
             },
         );

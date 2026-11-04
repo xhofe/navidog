@@ -5,6 +5,7 @@ use gpui_kit::{
     TestAppContext, Window, WindowOptions,
 };
 use navidog_model::object::Scope;
+use navidog_schema::table_design::TableDesignExt as _;
 
 fn isolate_home(name: &str) -> (std::sync::MutexGuard<'static, ()>, std::path::PathBuf) {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

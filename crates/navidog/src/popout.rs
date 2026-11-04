@@ -6,8 +6,8 @@ use std::sync::Arc;
 use gpui_kit::component::dock::{BasePanelView, PanelHandle};
 use gpui_kit::component::{TitleBar, v_flex};
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext as _, Context, IntoElement, ParentElement as _, Render,
-    Styled as _, WeakEntity, Window, div,
+    AnyWindowHandle, App, AppContext as _, Context, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, Styled as _, WeakEntity, Window, div,
 };
 use navidog_ui::palette;
 
@@ -25,7 +25,21 @@ impl Render for PoppedOut {
             .size_full()
             .bg(palette(cx).window_bg)
             .child(TitleBar::new().child(div().flex_1().flex().justify_center().children(title)))
-            .child(div().flex_1().min_h_0().child(self.panel.view()))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .on_action(
+                        |action: &navidog_app_state::plugin::PluginCommand, window, cx| {
+                            let result = navidog_plugin::Plugins::global(cx)
+                                .update(cx, |plugins, cx| plugins.command(&action.id, window, cx));
+                            if let Err(error) = result {
+                                tracing::warn!("{error}");
+                            }
+                        },
+                    )
+                    .child(self.panel.view()),
+            )
     }
 }
 

@@ -316,7 +316,14 @@ impl QueryEditor {
                                 t!("query.explain").to_string()
                             },
                         )
-                        .disabled(self.running)
+                        .disabled(
+                            self.running
+                                || self.dialect(cx).is_some_and(|dialect| {
+                                    dialect
+                                        .designer_templates()
+                                        .is_some_and(|templates| !templates.contains_key("explain"))
+                                }),
+                        )
                         .on_click(
                             cx.listener(|this, _, window, cx| {
                                 this.run(RunKind::Explain, window, cx)

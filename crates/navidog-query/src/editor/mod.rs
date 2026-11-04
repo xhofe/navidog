@@ -286,6 +286,27 @@ impl BasePanel for QueryEditor {
             cx,
         );
         if active {
+            let alive = cx.entity().downgrade();
+            let target = alive.clone();
+            let entity_id = cx.entity_id();
+            navidog_app_state::plugin::ContextBridge::set_editor(
+                cx,
+                window.window_handle().window_id(),
+                entity_id,
+                move |cx| {
+                    alive.upgrade().is_some_and(|entity| {
+                        let _ = entity.read(cx);
+                        true
+                    })
+                },
+                move |text, window, cx| {
+                    target
+                        .update(cx, |editor, cx| {
+                            editor.insert_text(&text, false, window, cx)
+                        })
+                        .map_err(|e| e.to_string())
+                },
+            );
             set_active_editor(cx.entity().downgrade(), cx);
             self.publish_context(cx);
             if let QuerySource::Saved(o) = &self.source {
@@ -302,6 +323,8 @@ impl BasePanel for QueryEditor {
         if tabs::removed(PanelId::from(cx.entity_id()), cx) {
             return;
         }
+        let entity_id = cx.entity_id();
+        navidog_app_state::plugin::ContextBridge::retire(cx, entity_id);
         Workspace::global(cx).update(cx, |w, cx| w.set_query_context(None, cx));
         if let Some(live) = self.live.take() {
             live.close();

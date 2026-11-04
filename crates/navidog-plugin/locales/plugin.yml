@@ -1,0 +1,74 @@
+_version: 2
+plugin:
+  title:
+    en: Plugins
+    zh-CN: 插件
+  permissions:
+    en: Plugin permissions
+    zh-CN: 插件授权
+  permissions_action:
+    en: Permissions…
+    zh-CN: 授权…
+  enabled:
+    en: Enabled
+    zh-CN: 已启用
+  disabled:
+    en: Disabled
+    zh-CN: 已停用
+  failed:
+    en: Needs attention
+    zh-CN: 需要处理
+  enable:
+    en: Enable…
+    zh-CN: 启用…
+  disable:
+    en: Disable
+    zh-CN: 停用
+  reload:
+    en: Reload
+    zh-CN: 重新加载
+  scan:
+    en: Rescan
+    zh-CN: 重新扫描
+  select:
+    en: Select a plugin to review its status and permissions.
+    zh-CN: 选择插件以查看状态和授权。
+  empty:
+    en: Install a plugin directory here, then rescan.
+    zh-CN: 将插件目录放到此处，然后重新扫描。
+  confirm:
+    en: Enable with selected permissions
+    zh-CN: 按所选授权启用
+  unavailable:
+    en: Plugin disabled or unavailable
+    zh-CN: 插件已停用或不可用
+  limits:
+    en: Advanced limits…
+    zh-CN: 高级限额…
+  limits_title:
+    en: Plugin limits
+    zh-CN: 插件运行限额
+  timeout:
+    en: Request timeout (seconds)
+    zh-CN: 请求超时（秒）
+  event_limit:
+    en: Event queue
+    zh-CN: 事件队列
+  request_limit:
+    en: In-flight requests
+    zh-CN: 在途请求
+  batch_rows:
+    en: Rows per batch
+    zh-CN: 单批行数
+  batch_bytes:
+    en: Bytes per batch
+    zh-CN: 单批字节数
+  result_rows:
+    en: Rows per request
+    zh-CN: 单请求行数
+  result_bytes:
+    en: Bytes per request
+    zh-CN: 单请求字节数
+  save_reload:
+    en: Save and reload
+    zh-CN: 保存并重新加载

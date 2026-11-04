@@ -30,6 +30,9 @@ pub(super) fn plan_on(
     occupied: &[String],
     day: &str,
 ) -> DbResult<Vec<String>> {
+    if d.designer_templates().is_some() {
+        return super::declared::plan(d, scope, before, after);
+    }
     let mut after = after.clone();
     let mut before = before.cloned();
     if d.features().separate_comments {
