@@ -95,7 +95,7 @@ pub fn init(cx: &mut App) {
             "connection.new_group",
             "conn.new_group",
             || Box::new(NewGroup),
-            CommandTarget::Connection,
+            CommandTarget::Workspace,
             None,
         ),
         (
