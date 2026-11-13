@@ -76,6 +76,44 @@ pub(super) fn ident(input: &str) -> DbResult<(String, &str)> {
     }
     Ok((input[..len].into(), input[len..].trim_start()))
 }
+
+fn partition_offset(sql: &str, spans: &[span::Span]) -> Option<usize> {
+    spans.windows(2).find_map(|pair| {
+        let [partition, by] = pair else { return None };
+        (partition.depth == 0
+            && by.depth == 0
+            && partition.kind == SpanKind::Word
+            && by.kind == SpanKind::Word
+            && partition.text(sql).eq_ignore_ascii_case("PARTITION")
+            && by.text(sql).eq_ignore_ascii_case("BY"))
+        .then_some(partition.range.start)
+    })
+}
+
+fn split_partition<'a>(options: &'a str, d: &dyn Dialect) -> (&'a str, &'a str) {
+    if !d.features().supports_partitions {
+        return (options, "");
+    }
+    let spans = span::spans(options, d.lex());
+    if let Some(offset) = partition_offset(options, &spans) {
+        return (options[..offset].trim_end(), &options[offset..]);
+    }
+    // MySQL SHOW CREATE TABLE wraps the trailing clause in a version comment.
+    if d.table_option_style() == navidog_sql::TableOptionStyle::Clauses
+        && let Some(last) = spans.last()
+        && last.kind == SpanKind::BlockComment
+        && last.depth == 0
+        && let Some(body) = last.text(options).strip_prefix("/*!")
+        && let Some(body) = body.strip_suffix("*/")
+    {
+        let body = body.trim_start_matches(|c: char| c.is_ascii_digit()).trim();
+        if partition_offset(body, &span::spans(body, d.lex())) == Some(0) {
+            return (options[..last.range.start].trim_end(), body);
+        }
+    }
+    (options, "")
+}
+
 pub(super) fn create(ddl: &str, name: &str, d: &dyn Dialect) -> DbResult<TableDesign> {
     let statements = navidog_db::sql::split_script(ddl, d.lex());
     let sql = statements
@@ -106,17 +144,14 @@ pub(super) fn create(ddl: &str, name: &str, d: &dyn Dialect) -> DbResult<TableDe
         .find(|i| positions(&body_and_options[..*i], b',', d).is_ok())
         .ok_or_else(|| DbError::msg("Invalid table body."))?;
     let body = &body_and_options[..end];
+    let (options, partition) = split_partition(body_and_options[end + 1..].trim(), d);
     let mut design = TableDesign {
         name: name.into(),
         unlogged,
-        options: body_and_options[end + 1..].trim().into(),
+        options: options.into(),
+        partition: partition.into(),
         ..Default::default()
     };
-    let options_upper = design.options.to_uppercase();
-    if let Some(ix) = options_upper.find("PARTITION BY") {
-        design.partition = design.options[ix..].trim().to_string();
-        design.options = design.options[..ix].trim().to_string();
-    }
     let mut begin = 0;
     for finish in positions(body, b',', d)?
         .into_iter()

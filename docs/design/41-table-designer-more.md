@@ -52,7 +52,7 @@ MySQL 写在 `CREATE` / `ALTER TABLE … PARTITION BY` 子句里。PostgreSQL �
 - [ ] 排除约束可添加、修改、删除，PostgreSQL 实库往返。
 - [ ] 三种库的触发器可添加和替换，失败回滚或保留草稿。
 - [ ] MySQL 与 PostgreSQL 的分区方式和列表可预览并执行；改方式被拒绝。
-- [ ] MySQL 和 MariaDB 回读含 `PARTITION BY` 字样的表注释，分区状态正确；修改注释后分区定义不变。
+- [x] MySQL 和 MariaDB 回读含 `PARTITION BY` 字样的表注释，分区状态正确；修改注释后分区定义不变。见[验收记录](../pr/acceptance-partition-comments.md)。
 - [x] PostgreSQL 列重排在事务内完成，有依赖时整笔失败。
 - [x] identity 可添加、删除和切换模式；改序列选项被拒绝。
 - [x] SQLite 生成列、`WITHOUT ROWID` 和合并重命名保留数据，预览写明重建。

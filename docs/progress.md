@@ -114,6 +114,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 其余对象、安全与工具 | 完成 | 共用定义设计器、表设计器排除/触发器/分区、整表重建、用户与权限、维护、信息窗格依赖与成员、服务器监控、在库中查找。SQLite 用户认证扩展未编入发行版，面板只说明原因。见 [验收记录](pr/acceptance-m4-remainder.md) |
 | 依赖审计补丁 | 完成 | `ctutils` 升至 0.4.5（RUSTSEC-2026-0385）、`tokio` 升至 1.54.1（RUSTSEC-2026-0386）；audit 与 deny 均通过，未新增忽略项 |
 | 界面对齐 | 完成 | 表设计器编辑字号、连续关闭未保存选项卡、测试连接底栏、选中色、对象列表详细信息、系统对象开关、新建连接菜单、缺省主题与行底纹、关于文案、全局解锁；CI lint 修复后全工作区 clippy 与 334 项测试通过。见 [验收记录](pr/acceptance-ui-polish.md) |
+| 表注释与分区回读 | 完成 | MySQL 和 MariaDB 正确区分表注释里的 `PARTITION BY` 与实际分区子句；只改注释时保留分区定义。见[验收记录](pr/acceptance-partition-comments.md) |
 
 ## 3. 功能状态
 
@@ -247,11 +248,11 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | F-DSG-003 表设计器：外键 | 部分 | 三服务端实库、SQLite 级联 UI/外键校验/回滚测试、浅深色截图 | 独立外键列表及结构化表单；引用模式/表/字段从连接元数据级联选择，支持按序多字段、自引用草稿、异步过期隔离与失败重试；刷新图标至少转半圈；类型/唯一键兼容性由执行检查，完整方言属性待做 |
 | F-DSG-004 唯一与检查 | 部分 | SQL 计划测试、三服务端与 SQLite 实库、`an_unedited_definition_and_check_keep_their_line_breaks` | 检查名称与表达式表单、索引唯一开关；MySQL 移除部分 CHECK 明确拒绝；唯一约束有单独定义并保留，完整方言属性待做 |
 | F-DSG-007 表设计器：选项 | 部分 | 选项单元测试、三服务端与 SQLite 实库、designer UI、浅深色截图 | MySQL 23 项常用选项；PG 拥有者/表空间/继承/存储参数/UNLOGGED，含事务修改与并发检测；SQLite STRICT、WITHOUT ROWID（含已有表，预览写明隐式 rowid 会丢掉）。引擎私有属性经高级定义保留，未知参数变更明确拒绝 |
-| F-DSG-009 注释与 SQL 预览 | 完成 | designer headless（含预览页放弃修改后立即清掉 SQL）、PG 实库、浅深色 snapshot、注释计划测试 | 表/字段注释与只读 SQL 预览；PG 支持已有注释读取、修改、清空、重命名跟随、复制、旧草稿迁移、失败回滚和外部变化检查；SQLite 无数据库注释语法 |
+| F-DSG-009 注释与 SQL 预览 | 完成 | designer headless（含预览页放弃修改后立即清掉 SQL）、PG 实库、浅深色 snapshot、注释计划测试、MySQL/MariaDB 实库 `live_table_options_and_dialect_attributes` | 表/字段注释与只读 SQL 预览；MySQL/MariaDB 的表注释可以包含 `PARTITION BY`；PG 支持已有注释读取、修改、清空、重命名跟随、复制、旧草稿迁移、失败回滚和外部变化检查；SQLite 无数据库注释语法 |
 | F-DSG-010 表设计器：保存 | 完成 | table_design 实库、designer headless、tabs 测试、`postgres_column_reorder_rebuilds_without_cascade`、`postgres_rebuild_keeps_constraint_names_and_serial_defaults`、`postgres_identity_can_be_added_and_sequence_options_stay_fixed`、`sqlite_rebuild_keeps_generated_columns_and_combines_renames`、`sqlite_rename_with_a_trigger_edit_keeps_the_other_trigger`、`sqlite_rename_and_trigger_edit_keeps_update_of_and_the_view`、`sqlite_strict_rebuild_preserves_data_and_converts_without_rowid`、`live_type_names_round_trip_from_the_server` | 新建/差异迁移、先预览后执行、失败保留草稿、目录与补全刷新。PostgreSQL 现有列重排、identity 添加/删除/模式切换、SQLite 生成列、已有表 WITHOUT ROWID 和合并重命名走事务内整表重建。命名主键/唯一/排除先用临时名，原来就有的列上的 `nextval` 默认值先解除序列归属再挂回。新建列的 `nextval` 不改序列归属。序列的 start/increment 不能改。未知选项、删除仍被依赖的字段、附加库上的表重建仍拒绝 |
 | F-DSG-005 排除约束 | 完成 | `exclude` SQL 计划测试 | PostgreSQL 排除约束可添加、修改、删除并预览 |
 | F-DSG-006 触发器 | 完成 | 表设计计划测试 | 三种库可编辑触发器文本；SQLite 只改触发器时不重建整表。PostgreSQL/MySQL 打开已有表时读取触发器定义，列重排重建会按原文建回。表单仍是自由文本，事件固定为 `FOR EACH ROW` |
-| F-DSG-008 分区 | 完成 | 表设计计划测试、`mysql_partition_keeps_the_partition_name` | MySQL 可改分区，填写的分区名写入 `PARTITION` 子句；PostgreSQL 已有表不能改分区方式，已有子分区不加载 |
+| F-DSG-008 分区 | 完成 | 表设计计划测试、`mysql_partition_keeps_the_partition_name`、`partition_clause_ignores_table_comment_text`、MySQL/MariaDB 实库 `live_table_options_and_dialect_attributes` | MySQL 可改分区，填写的分区名写入 `PARTITION` 子句；回读 `SHOW CREATE TABLE` 时识别版本注释包装。PostgreSQL 已有表不能改分区方式，已有子分区不加载 |
 | F-DSG-011 视图设计器 | 完成 | `definition_plans_cover_each_object_kind` | 定义、MySQL 算法/安全性/检查选项、SQL 预览、预览数据。已有视图仍按整段 DDL 打开。新建后再次保存时，外部变更守卫比较服务器 DDL，不拿编辑器正文去比。查询创建工具在 M7，面板里不出现 |
 | F-DSG-012 实体化视图 | 完成 | 同上、`refresh_materialized_view` | 新建、SQL 预览、刷新、预览数据 |
 | F-DSG-013 函数与过程 | 完成 | 同上 | 新建、SQL 预览、带参数时先询问再运行 |
