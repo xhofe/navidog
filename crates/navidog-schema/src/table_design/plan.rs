@@ -631,6 +631,32 @@ fn temp_constraint_name(name: &str) -> String {
     format!("{base}{SUFFIX}")
 }
 
+pub(super) fn transferred_sequences<'a>(
+    d: &dyn Dialect,
+    before: &'a TableSnapshot,
+    after: &'a TableDesign,
+) -> DbResult<Vec<(&'a OwnedSequence, &'a DesignColumn)>> {
+    if d.features().rebuilds_tables
+        || d.features().supports_column_position
+        || !columns_reordered(&before.design, after)
+    {
+        return Ok(Vec::new());
+    }
+    let sequences = before.owned_sequences.as_ref().ok_or_else(|| {
+        DbError::msg("Reload the table before rebuilding it to read PostgreSQL sequence ownership.")
+    })?;
+    Ok(sequences
+        .iter()
+        .filter_map(|sequence| {
+            let column = after
+                .columns
+                .iter()
+                .find(|column| column.original.as_ref() == Some(&sequence.column))?;
+            Some((sequence, column))
+        })
+        .collect())
+}
+
 fn postgres_rebuild(
     d: &dyn Dialect,
     scope: &Scope,
@@ -640,26 +666,7 @@ fn postgres_rebuild(
     let old = &before.design;
     let mut staged = after.clone();
     let renames = stage_index_constraints(&mut staged, d);
-    let owned_sequences = before.owned_sequences.as_ref().ok_or_else(|| {
-        DbError::msg("Reload the table before rebuilding it to read PostgreSQL sequence ownership.")
-    })?;
-    let sequences: Vec<_> = owned_sequences
-        .iter()
-        .filter_map(|sequence| {
-            let column = after
-                .columns
-                .iter()
-                .find(|column| column.original.as_ref() == Some(&sequence.column))?;
-            Some((
-                d.quote_ident(&column.name),
-                format!(
-                    "{}.{}",
-                    d.quote_ident(&sequence.schema),
-                    d.quote_ident(&sequence.name)
-                ),
-            ))
-        })
-        .collect();
+    let sequences = transferred_sequences(d, before, after)?;
     let temp = format!("{}__navidog_new", old.name);
     let mut out = vec![rebuild_note(staged.create_sql(d, scope, &temp)?, false)];
     let mut destination = Vec::new();
@@ -695,7 +702,8 @@ fn postgres_rebuild(
     let temp_table = d.qualified(scope, &temp);
     // Detaching keeps the original sequence alive when the old table is dropped.
     // The replacement can keep its complete defaults, including references to that sequence.
-    for (_, sequence) in &sequences {
+    for (sequence, _) in &sequences {
+        let sequence = sequence.qualified(d);
         out.push(format!("ALTER SEQUENCE {sequence} OWNED BY NONE"));
     }
     out.push(format!("DROP TABLE {}", d.qualified(scope, &old.name)));
@@ -704,11 +712,6 @@ fn postgres_rebuild(
         d.quote_ident(&old.name)
     ));
     let renamed = d.qualified(scope, &old.name);
-    for (column, sequence) in &sequences {
-        out.push(format!(
-            "ALTER SEQUENCE {sequence} OWNED BY {renamed}.{column}"
-        ));
-    }
     for (temp_name, original) in &renames {
         out.push(format!(
             "ALTER TABLE {renamed} RENAME CONSTRAINT {} TO {}",
@@ -733,7 +736,21 @@ fn postgres_rebuild(
     if d.features().separate_comments {
         out.extend(comments::statements(scope, None, after, d));
     }
+    // A rebuild may be run by a role other than the original owner. Attach under
+    // the original owner first; PostgreSQL then moves owned sequences with the table.
+    let restore_owner = !sequences.is_empty() && !old.owner.is_empty();
+    if restore_owner && let Some(sql) = d.table_owner_sql(&renamed, &old.owner) {
+        out.push(sql);
+    }
+    for (sequence, column) in sequences {
+        out.push(format!(
+            "ALTER SEQUENCE {} OWNED BY {renamed}.{}",
+            sequence.qualified(d),
+            d.quote_ident(&column.name)
+        ));
+    }
     if !after.owner.is_empty()
+        && (!restore_owner || after.owner != old.owner)
         && let Some(sql) = d.table_owner_sql(&d.qualified(scope, &old.name), &after.owner)
     {
         out.push(sql);

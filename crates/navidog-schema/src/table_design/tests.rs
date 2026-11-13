@@ -1382,9 +1382,11 @@ fn live_postgres_reorder_preserves_sequence_ownership_and_defaults() {
         let r = session.relational().unwrap();
         let d = &navidog_postgres::PostgresDialect;
         let schema = format!("navidog_sequence_{}", std::process::id());
+        let role = format!("{schema}_owner");
         let scope = Scope::new("test", "pagila", Some(schema.clone()));
         let table = d.qualified(&scope, "sample");
         let parent = d.qualified(&scope, "parent");
+        let other_owner = d.qualified(&scope, "other_owner");
         let owned = d.qualified(&scope, "owned.with.dot");
         let shared = d.qualified(&scope, "parent_id_seq");
         let owned_lit = d.string_literal(&owned);
@@ -1396,11 +1398,19 @@ fn live_postgres_reorder_preserves_sequence_ownership_and_defaults() {
              CREATE TABLE {table} (id serial, shared_id integer DEFAULT nextval({shared_lit}::regclass), label text); \
              ALTER SEQUENCE {schema}.sample_id_seq RENAME TO \"owned.with.dot\"; \
              ALTER SEQUENCE {owned} RESTART WITH 40 INCREMENT BY 3; \
-             INSERT INTO {table} (label) VALUES ('before')"
+             INSERT INTO {table} (label) VALUES ('before'); \
+             CREATE ROLE {role}; ALTER TABLE {table} OWNER TO {role}; \
+             CREATE TABLE {other_owner} (id integer); ALTER TABLE {other_owner} OWNER TO {role}"
         ))
         .await
         .unwrap();
         let before = load(r, &scope, "sample").await.unwrap();
+        assert_eq!(before.design.owner, role);
+        assert!(load(r, &scope, "missing_table").await.is_err());
+        assert_eq!(
+            r.execute("SHOW search_path").await.unwrap()[0].rows[0][0].as_deref(),
+            Some("\"$user\", public")
+        );
         let mut after = before.design.clone();
         after.columns.swap(0, 2);
         after.columns[2].name = "serial_id".into();
@@ -1431,8 +1441,60 @@ fn live_postgres_reorder_preserves_sequence_ownership_and_defaults() {
         r.execute(&format!("ALTER SEQUENCE {owned} OWNED BY {table}.id"))
             .await
             .unwrap();
+        let mut concurrent = navidog_db::connect(
+            Arc::new(navidog_postgres::PostgresDriver::default()),
+            navidog_db::ConnectParams {
+                host: "127.0.0.1".into(),
+                port: 15432,
+                database: Some("pagila".into()),
+                user: "postgres".into(),
+                password: Some("navidog".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let second = concurrent.relational().unwrap();
+        let pid = r.execute("SELECT pg_backend_pid()").await.unwrap()[0].rows[0][0]
+            .clone()
+            .unwrap();
+        // Hold an uncommitted ownership change while apply sees the old baseline.
+        second.execute("BEGIN").await.unwrap();
+        second
+            .execute(&format!("ALTER SEQUENCE {owned} OWNED BY {other_owner}.id"))
+            .await
+            .unwrap();
+        let save = tokio::spawn(async move {
+            let result = apply(session.relational().unwrap(), &scope, Some(&before), &after).await;
+            (session, scope, before, after, result)
+        });
+        let wait_query = format!("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = {pid} AND NOT granted)");
+        let waiting = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if second.execute(&wait_query).await.unwrap()[0].rows[0][0].as_deref() == Some("t") {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }).await;
+        second.execute("COMMIT").await.unwrap();
+        waiting.expect("the rebuild waits for the sequence lock");
+        let (mut session, scope, before, after, result) = save.await.unwrap();
+        assert!(result.unwrap_err().message.contains("changed outside"));
+        let r = session.relational().unwrap();
+        let other_owner_lit = d.string_literal(&other_owner);
+        assert_eq!(
+            r.execute(&format!("SELECT pg_get_serial_sequence({other_owner_lit}, 'id')::regclass = {owned_lit}::regclass"))
+                .await.unwrap()[0].rows[0][0].as_deref(),
+            Some("t")
+        );
+        r.execute(&format!("ALTER SEQUENCE {owned} OWNED BY {table}.id"))
+            .await
+            .unwrap();
+        concurrent.close().await.unwrap();
         let saved = apply(r, &scope, Some(&before), &after).await.unwrap();
         assert_eq!(saved.design.columns[0].name, "label");
+        assert_eq!(saved.design.owner, role);
         let inserted = r
             .execute(&format!(
                 "INSERT INTO {table} (label) VALUES ('after') RETURNING serial_id, shared_id"
@@ -1448,7 +1510,21 @@ fn live_postgres_reorder_preserves_sequence_ownership_and_defaults() {
                 .unwrap()[0].rows[0][0].as_deref(),
             Some("40")
         );
-        r.execute(&format!("DROP TABLE {table}, {parent}; DROP SCHEMA {schema}"))
+        r.execute(&format!(
+            "ALTER TABLE {table} ALTER COLUMN label SET DEFAULT nextval({owned_lit}::regclass)::text"
+        ))
+        .await
+        .unwrap();
+        let before_drop = load(r, &scope, "sample").await.unwrap();
+        let mut drop_owner = before_drop.design.clone();
+        drop_owner.columns.pop();
+        drop_owner.columns.swap(0, 1);
+        let error = apply(r, &scope, Some(&before_drop), &drop_owner)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code.as_deref(), Some("2BP01"));
+        assert_eq!(load(r, &scope, "sample").await.unwrap(), before_drop);
+        r.execute(&format!("DROP TABLE {table}, {parent}, {other_owner}; DROP SCHEMA {schema}; DROP ROLE {role}"))
             .await
             .unwrap();
         session.close().await.unwrap();
