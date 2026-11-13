@@ -41,7 +41,7 @@ MySQL 写在 `CREATE` / `ALTER TABLE … PARTITION BY` 子句里。PostgreSQL �
 仍先预览再执行。预览在语句前加一行注释，说明这是整表重建；转成 `WITHOUT ROWID` 时再写明隐式 rowid 会丢掉。注释不执行。
 
 - PostgreSQL 现有列顺序变化：同一事务里 `CREATE TABLE` 临时名（列按新顺序，含约束）、按 `original` 列名 `INSERT … SELECT`、`DROP TABLE` 旧表（不用 `CASCADE`）、临时表改回原名、重建独立索引、再写注释和拥有者。入站外键或视图挡住 `DROP` 时整笔回滚，错误原文留下。不在表达式里替换标识符。
-- PostgreSQL 序列：从 `pg_depend` 读取原表各列实际拥有的普通序列（自动依赖），纳入保存前的外部变更检查。重建只为保留的原列转移这些归属，保留序列状态和完整默认表达式；仅引用其他列或其他表的序列不会改归属。identity 序列仍走 identity 逻辑。旧快照没有归属信息时，重建前要求重新加载表。
+- PostgreSQL 序列：从 `pg_depend` 读取原表各列实际拥有的普通序列（自动依赖），纳入保存前的外部变更检查。重建只为保留的原列转移这些归属，保留序列状态和完整默认表达式；仅引用其他列或其他表的序列不会改归属。执行时先锁住待迁移序列再复查；挂回前让替换表与原序列的角色所有者一致。若删除序列所属列但还有默认值依赖该序列，按 PostgreSQL 的 `RESTRICT` 行为拒绝并回滚。identity 序列仍走 identity 逻辑。旧快照没有归属信息时，重建前要求重新加载表。
 - identity：只改了 `GENERATED … AS IDENTITY` 子句时，添加用 `ADD GENERATED {ALWAYS|BY DEFAULT} AS IDENTITY`，删除用 `DROP IDENTITY`，模式切换仍用 `SET GENERATED`。括号里的序列选项必须与原来相同，否则拒绝。和其他列改动一起出现时，先做类型 / NULL / DEFAULT，再做 identity。
 - SQLite 生成列：重建时把生成列写进 `CREATE`，`INSERT` 不包含它们。表达式原样拷贝，不求值。
 - SQLite 已有表切换 `WITHOUT ROWID`：允许。不拷贝隐式 `rowid`。普通表重建仍拷贝一个未占用的 rowid 别名。
