@@ -230,12 +230,83 @@ pub struct TableSnapshot {
     pub design: TableDesign,
     pub ddl: String,
     pub triggers: Vec<String>,
+    /// `None` for older snapshots or dialects without PostgreSQL sequence ownership.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owned_sequences: Option<Vec<OwnedSequence>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct OwnedSequence {
+    column: String,
+    schema: String,
+    name: String,
+    oid: u32,
+}
+
+impl TableSnapshot {
+    fn matches_baseline(&self, before: &Self) -> bool {
+        self.design == before.design
+            && self.ddl == before.ddl
+            && self.triggers == before.triggers
+            // Old drafts can still save without rebuilding. A rebuild separately
+            // requires the ownership baseline to be present in the preview.
+            && (before.owned_sequences.is_none() || self.owned_sequences == before.owned_sequences)
+    }
+}
+
+async fn load_owned_sequences(
+    r: &mut dyn Relational,
+    d: &dyn Dialect,
+    table: &str,
+) -> DbResult<Vec<OwnedSequence>> {
+    let sql = format!(
+        "SELECT a.attname, n.nspname, s.relname, s.oid \
+         FROM pg_catalog.pg_depend dep \
+         JOIN pg_catalog.pg_class s ON s.oid = dep.objid AND s.relkind = 'S' \
+         JOIN pg_catalog.pg_namespace n ON n.oid = s.relnamespace \
+         JOIN pg_catalog.pg_attribute a ON a.attrelid = dep.refobjid AND a.attnum = dep.refobjsubid \
+         WHERE dep.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND dep.objsubid = 0 \
+           AND dep.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass \
+           AND dep.refobjid = {}::pg_catalog.regclass AND dep.deptype = 'a' \
+           AND a.attnum > 0 AND NOT a.attisdropped \
+         ORDER BY a.attnum, s.oid",
+        d.string_literal(table)
+    );
+    r.execute(&sql)
+        .await?
+        .into_iter()
+        .flat_map(|set| set.rows)
+        .map(|row| {
+            let [Some(column), Some(schema), Some(name), Some(oid)] = row.as_slice() else {
+                return Err(DbError::msg(
+                    "Invalid PostgreSQL sequence ownership metadata.",
+                ));
+            };
+            Ok(OwnedSequence {
+                column: column.clone(),
+                schema: schema.clone(),
+                name: name.clone(),
+                oid: oid
+                    .parse()
+                    .map_err(|_| DbError::msg("Invalid PostgreSQL sequence ownership metadata."))?,
+            })
+        })
+        .collect()
 }
 
 pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult<TableSnapshot> {
     let dialect = r.dialect();
+    // Deparse defaults under the same search path used to apply the plan. A regclass
+    // literal outside this schema must stay qualified when it is replayed.
+    if dialect.features().enriches_from_catalog
+        && let Some(schema) = scope.schema.as_deref().or(dialect.default_schema())
+        && let Some(sql) = dialect.set_search_path_sql(schema)
+    {
+        r.execute(&sql).await?;
+    }
     let mut ddl = r.object_ddl(scope, ObjectKind::Table, name).await?;
     let mut design = parse::create(&ddl, name, dialect.as_ref())?;
+    let mut owned_sequences = None;
     if dialect.features().enriches_from_catalog {
         design.migrate_comments(scope, dialect.as_ref())?;
         // The general DDL view omits identity/generated flags and nondefault collations.
@@ -312,6 +383,7 @@ pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult
             serde_json::to_string(&sets.iter().flat_map(|s| s.rows.clone()).collect::<Vec<_>>())
                 .unwrap_or_default()
         ));
+        owned_sequences = Some(load_owned_sequences(r, dialect.as_ref(), &table).await?);
     }
     let mut triggers = Vec::new();
     if dialect.features().rebuilds_tables {
@@ -349,6 +421,7 @@ pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult
         design,
         ddl,
         triggers,
+        owned_sequences,
     })
 }
 
@@ -393,7 +466,7 @@ pub async fn apply(
     let before = legacy_before.as_ref();
     if let Some(old) = before {
         let current = load(r, scope, &old.design.name).await?;
-        if &current != old {
+        if !current.matches_baseline(old) {
             return Err(DbError::msg(
                 "The table changed outside this designer. Reload before saving.",
             ));
@@ -470,7 +543,7 @@ pub async fn apply(
             if let Some(sql) = d.exclusive_lock_sql(&d.qualified(scope, &old.design.name)) {
                 r.execute(&sql).await?;
             }
-            if load(r, scope, &old.design.name).await? != *old {
+            if !load(r, scope, &old.design.name).await?.matches_baseline(old) {
                 return Err(DbError::msg(
                     "The table changed outside this designer. Reload before saving.",
                 ));

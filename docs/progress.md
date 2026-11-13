@@ -116,6 +116,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 界面对齐 | 完成 | 表设计器编辑字号、连续关闭未保存选项卡、测试连接底栏、选中色、对象列表详细信息、系统对象开关、新建连接菜单、缺省主题与行底纹、关于文案、全局解锁；CI lint 修复后全工作区 clippy 与 334 项测试通过。见 [验收记录](pr/acceptance-ui-polish.md) |
 | 表注释与分区回读 | 完成 | MySQL 和 MariaDB 正确区分表注释里的 `PARTITION BY` 与实际分区子句；只改注释时保留分区定义。见[验收记录](pr/acceptance-partition-comments.md) |
 | PR #36 依赖审计修复 | 完成 | `rusqlite` 0.41.1 / `libsqlite3-sys` 0.39.1（RUSTSEC-2026-0459）与 `russh` 0.65.1（RUSTSEC-2026-0495）；未新增忽略项。见[验收记录](pr/acceptance-partition-comments.md) |
+| PostgreSQL 重建的序列归属 | 完成 | 以系统目录中的归属为准，只迁移保留的原列所拥有的普通序列；实库验证自增状态、共享序列和归属变化冲突检查。见[验收记录](pr/acceptance-postgres-sequence-ownership.md) |
 
 ## 3. 功能状态
 
@@ -250,7 +251,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | F-DSG-004 唯一与检查 | 部分 | SQL 计划测试、三服务端与 SQLite 实库、`an_unedited_definition_and_check_keep_their_line_breaks` | 检查名称与表达式表单、索引唯一开关；MySQL 移除部分 CHECK 明确拒绝；唯一约束有单独定义并保留，完整方言属性待做 |
 | F-DSG-007 表设计器：选项 | 部分 | 选项单元测试、三服务端与 SQLite 实库、designer UI、浅深色截图 | MySQL 23 项常用选项；PG 拥有者/表空间/继承/存储参数/UNLOGGED，含事务修改与并发检测；SQLite STRICT、WITHOUT ROWID（含已有表，预览写明隐式 rowid 会丢掉）。引擎私有属性经高级定义保留，未知参数变更明确拒绝 |
 | F-DSG-009 注释与 SQL 预览 | 完成 | designer headless（含预览页放弃修改后立即清掉 SQL）、PG 实库、浅深色 snapshot、注释计划测试、MySQL/MariaDB 实库 `live_table_options_and_dialect_attributes` | 表/字段注释与只读 SQL 预览；MySQL/MariaDB 的表注释可以包含 `PARTITION BY`；PG 支持已有注释读取、修改、清空、重命名跟随、复制、旧草稿迁移、失败回滚和外部变化检查；SQLite 无数据库注释语法 |
-| F-DSG-010 表设计器：保存 | 完成 | table_design 实库、designer headless、tabs 测试、`postgres_column_reorder_rebuilds_without_cascade`、`postgres_rebuild_keeps_constraint_names_and_serial_defaults`、`postgres_identity_can_be_added_and_sequence_options_stay_fixed`、`sqlite_rebuild_keeps_generated_columns_and_combines_renames`、`sqlite_rename_with_a_trigger_edit_keeps_the_other_trigger`、`sqlite_rename_and_trigger_edit_keeps_update_of_and_the_view`、`sqlite_strict_rebuild_preserves_data_and_converts_without_rowid`、`live_type_names_round_trip_from_the_server` | 新建/差异迁移、先预览后执行、失败保留草稿、目录与补全刷新。PostgreSQL 现有列重排、identity 添加/删除/模式切换、SQLite 生成列、已有表 WITHOUT ROWID 和合并重命名走事务内整表重建。命名主键/唯一/排除先用临时名，原来就有的列上的 `nextval` 默认值先解除序列归属再挂回。新建列的 `nextval` 不改序列归属。序列的 start/increment 不能改。未知选项、删除仍被依赖的字段、附加库上的表重建仍拒绝 |
+| F-DSG-010 表设计器：保存 | 完成 | table_design 实库、designer headless、tabs 测试、`postgres_column_reorder_rebuilds_without_cascade`、`postgres_rebuild_keeps_constraint_names_and_serial_defaults`、`live_postgres_reorder_preserves_sequence_ownership_and_defaults`、`postgres_identity_can_be_added_and_sequence_options_stay_fixed`、`sqlite_rebuild_keeps_generated_columns_and_combines_renames`、`sqlite_rename_with_a_trigger_edit_keeps_the_other_trigger`、`sqlite_rename_and_trigger_edit_keeps_update_of_and_the_view`、`sqlite_strict_rebuild_preserves_data_and_converts_without_rowid`、`live_type_names_round_trip_from_the_server` | 新建/差异迁移、先预览后执行、失败保留草稿、目录与补全刷新。PostgreSQL 现有列重排、identity 添加/删除/模式切换、SQLite 生成列、已有表 WITHOUT ROWID 和合并重命名走事务内整表重建。命名主键/唯一/排除先用临时名，保留列的普通序列按系统目录确认的归属转移，完整默认表达式保留；引用其他列或其他表的序列不改归属。序列的 start/increment 不能改。未知选项、删除仍被依赖的字段、附加库上的表重建仍拒绝 |
 | F-DSG-005 排除约束 | 完成 | `exclude` SQL 计划测试 | PostgreSQL 排除约束可添加、修改、删除并预览 |
 | F-DSG-006 触发器 | 完成 | 表设计计划测试 | 三种库可编辑触发器文本；SQLite 只改触发器时不重建整表。PostgreSQL/MySQL 打开已有表时读取触发器定义，列重排重建会按原文建回。表单仍是自由文本，事件固定为 `FOR EACH ROW` |
 | F-DSG-008 分区 | 完成 | 表设计计划测试、`mysql_partition_keeps_the_partition_name`、`partition_clause_ignores_table_comment_text`、MySQL/MariaDB 实库 `live_table_options_and_dialect_attributes` | MySQL 可改分区，填写的分区名写入 `PARTITION` 子句；回读 `SHOW CREATE TABLE` 时识别版本注释包装。PostgreSQL 已有表不能改分区方式，已有子分区不加载 |
@@ -338,7 +339,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 弹出窗口里的查询编辑器没有代码段和标识符页 | M3 | 无 |
 | MySQL 的“写入超时”仍只保存 | M3 | mysql_async 提供发送超时后接上 |
 | `navidog-schema` 的表选项解析（`mysql_span`/`pg_storage`/`pg_clause`）仍在通用 crate 里，只按 `TableOptionStyle` 分派；表设计在 `enriches_from_catalog` / `rebuilds_tables` 下仍直接执行 PostgreSQL catalog SQL 和 SQLite 重建 SQL（`sqlite_schema`、`sqlite_sequence`、`PRAGMA`）；关键字表是手抄的保留字集合，不是脚本从官方文件生成 | 拆 crate | 接第四个数据库前把选项解析和上述 SQL 搬进方言方法（会形成 schema → 方言 crate 的依赖，需要在 00-overview 里先定方向），并让关键字表由脚本生成 |
-| 已有视图/函数/事件仍按整段 DDL 打开；用户面板不能改已有账号；查找结果不能双击；PostgreSQL 已有分区子表不加载；触发器表单没有事件和语句级；库/模式选项不标脏。列重排丢触发器、命名约束/`serial` 重建失败、二次保存被拒、移窗取消监控、分区名、监控语义和查找 SQL 已在 `9dccbb6` 修掉。其后补了冲突检查读失败、空基线禁止再保存、新建列不改序列归属，以及 MySQL 区分大小写正则 | M4 | 按 [pr/review-pr-31.md](pr/review-pr-31.md) 第 7 节的未修清单做。相关功能行仍标「完成」，不在本轮整批改成「部分」 |
+| 已有视图/函数/事件仍按整段 DDL 打开；用户面板不能改已有账号；查找结果不能双击；PostgreSQL 已有分区子表不加载；触发器表单没有事件和语句级；库/模式选项不标脏。列重排丢触发器、命名约束/`serial` 重建失败、二次保存被拒、移窗取消监控、分区名、监控语义和查找 SQL 已在 `9dccbb6` 修掉。其后补了冲突检查读失败、空基线禁止再保存、新建列不改序列归属，以及 MySQL 区分大小写正则。PostgreSQL 重建已改按真实归属转移序列，见[验收记录](pr/acceptance-postgres-sequence-ownership.md) | M4 | 按 [pr/review-pr-31.md](pr/review-pr-31.md) 第 7 节的未修清单做。相关功能行仍标「完成」，不在本轮整批改成「部分」 |
 
 ## 5. 验证
 

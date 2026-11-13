@@ -631,70 +631,6 @@ fn temp_constraint_name(name: &str) -> String {
     format!("{base}{SUFFIX}")
 }
 
-/// `(column, quoted sequence, nextval expression)`.
-fn nextval_bindings(design: &TableDesign, d: &dyn Dialect) -> Vec<(String, String, String)> {
-    design
-        .columns
-        .iter()
-        .filter_map(|column| {
-            // A new column has no `original`. Taking `OWNED BY` on its sequence can
-            // steal one that belongs to another table. An existing column may still
-            // point at a shared sequence: the planner has no ownership catalog.
-            column.original.as_ref()?;
-            let (raw, expr) = nextval_call(&column.definition)?;
-            Some((column.name.clone(), quote_sequence(d, &raw), expr))
-        })
-        .collect()
-}
-
-fn nextval_call(definition: &str) -> Option<(String, String)> {
-    let lower = definition.to_ascii_lowercase();
-    let start = lower.find("nextval(")?;
-    let mut rest = definition[start + "nextval(".len()..].trim_start();
-    if !rest.starts_with('\'') {
-        return None;
-    }
-    rest = &rest[1..];
-    let mut raw = String::new();
-    let mut chars = rest.chars();
-    loop {
-        match chars.next()? {
-            '\'' if chars.as_str().starts_with('\'') => {
-                chars.next();
-                raw.push('\'');
-            }
-            '\'' => break,
-            c => raw.push(c),
-        }
-    }
-    let after = chars.as_str();
-    let close = after.find(')')?;
-    let expr_end = definition.len() - after.len() + close + 1;
-    Some((raw, definition[start..expr_end].to_string()))
-}
-
-fn quote_sequence(d: &dyn Dialect, raw: &str) -> String {
-    match raw.split_once('.') {
-        Some((schema, name)) => format!(
-            "{}.{}",
-            d.quote_ident(&unquote_ident(schema)),
-            d.quote_ident(&unquote_ident(name))
-        ),
-        None => d.quote_ident(&unquote_ident(raw)),
-    }
-}
-
-fn unquote_ident(raw: &str) -> String {
-    let raw = raw.trim();
-    let quote = raw.chars().next();
-    if matches!(quote, Some('"' | '`')) && raw.ends_with(quote.unwrap()) && raw.len() >= 2 {
-        let inner = &raw[1..raw.len() - 1];
-        inner.replace("\"\"", "\"").replace("``", "`")
-    } else {
-        raw.to_string()
-    }
-}
-
 fn postgres_rebuild(
     d: &dyn Dialect,
     scope: &Scope,
@@ -704,7 +640,26 @@ fn postgres_rebuild(
     let old = &before.design;
     let mut staged = after.clone();
     let renames = stage_index_constraints(&mut staged, d);
-    let sequences = nextval_bindings(after, d);
+    let owned_sequences = before.owned_sequences.as_ref().ok_or_else(|| {
+        DbError::msg("Reload the table before rebuilding it to read PostgreSQL sequence ownership.")
+    })?;
+    let sequences: Vec<_> = owned_sequences
+        .iter()
+        .filter_map(|sequence| {
+            let column = after
+                .columns
+                .iter()
+                .find(|column| column.original.as_ref() == Some(&sequence.column))?;
+            Some((
+                d.quote_ident(&column.name),
+                format!(
+                    "{}.{}",
+                    d.quote_ident(&sequence.schema),
+                    d.quote_ident(&sequence.name)
+                ),
+            ))
+        })
+        .collect();
     let temp = format!("{}__navidog_new", old.name);
     let mut out = vec![rebuild_note(staged.create_sql(d, scope, &temp)?, false)];
     let mut destination = Vec::new();
@@ -738,13 +693,9 @@ fn postgres_rebuild(
         ));
     }
     let temp_table = d.qualified(scope, &temp);
-    for (column, sequence, _) in &sequences {
-        // The copy's DEFAULT points at the old table's sequence. Drop it, and
-        // clear OWNED BY, before DROP TABLE or the sequence is dropped with the old table.
-        out.push(format!(
-            "ALTER TABLE {temp_table} ALTER COLUMN {} DROP DEFAULT",
-            d.quote_ident(column)
-        ));
+    // Detaching keeps the original sequence alive when the old table is dropped.
+    // The replacement can keep its complete defaults, including references to that sequence.
+    for (_, sequence) in &sequences {
         out.push(format!("ALTER SEQUENCE {sequence} OWNED BY NONE"));
     }
     out.push(format!("DROP TABLE {}", d.qualified(scope, &old.name)));
@@ -753,14 +704,9 @@ fn postgres_rebuild(
         d.quote_ident(&old.name)
     ));
     let renamed = d.qualified(scope, &old.name);
-    for (column, sequence, expr) in &sequences {
+    for (column, sequence) in &sequences {
         out.push(format!(
-            "ALTER TABLE {renamed} ALTER COLUMN {} SET DEFAULT {expr}",
-            d.quote_ident(column)
-        ));
-        out.push(format!(
-            "ALTER SEQUENCE {sequence} OWNED BY {renamed}.{}",
-            d.quote_ident(column)
+            "ALTER SEQUENCE {sequence} OWNED BY {renamed}.{column}"
         ));
     }
     for (temp_name, original) in &renames {

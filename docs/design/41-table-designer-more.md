@@ -55,7 +55,7 @@ MySQL 写在 `CREATE` / `ALTER TABLE … PARTITION BY` 子句里。PostgreSQL �
 - [ ] MySQL 与 PostgreSQL 的分区方式和列表可预览并执行；改方式被拒绝。
 - [x] MySQL 和 MariaDB 回读含 `PARTITION BY` 字样的表注释，分区状态正确；修改注释后分区定义不变。见[验收记录](../pr/acceptance-partition-comments.md)。
 - [x] PostgreSQL 列重排在事务内完成，有依赖时整笔失败。
-- [ ] PostgreSQL 实库重建后，原 `serial` 序列继续自增，引用其他表的序列仍归原主列；预览后的归属变更会阻止保存。
+- [x] PostgreSQL 实库重建后，原 `serial` 序列继续自增，引用其他表的序列仍归原主列；预览后的归属变更会阻止保存。见[验收记录](../pr/acceptance-postgres-sequence-ownership.md)。
 - [x] identity 可添加、删除和切换模式；改序列选项被拒绝。
 - [x] SQLite 生成列、`WITHOUT ROWID` 和合并重命名保留数据，预览写明重建。
 - [x] 未知选项、依赖字段、附加库重建仍被拒绝。

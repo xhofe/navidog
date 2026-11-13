@@ -19,6 +19,7 @@ fn quoted_definitions_round_trip_and_change_by_identity() {
         design: design.clone(),
         ddl: sql.into(),
         triggers: Vec::new(),
+        owned_sequences: None,
     };
     let mut after = design;
     after.columns[1].name = "renamed".into();
@@ -113,6 +114,7 @@ fn sqlite_rebuild_renames_the_old_table_and_leaves_it() {
         design: design.clone(),
         ddl: sql.into(),
         triggers: vec!["CREATE TRIGGER audit_t AFTER INSERT ON test BEGIN SELECT 1; END".into()],
+        owned_sequences: None,
     };
     let mut added = design.clone();
     added.columns.push(DesignColumn::new(9, "add_col", "TEXT"));
@@ -182,6 +184,7 @@ fn sqlite_rename_with_a_trigger_edit_keeps_the_other_trigger() {
             watch.into(),
             "CREATE TRIGGER audit AFTER INSERT ON t BEGIN SELECT 1; END".into(),
         ],
+        owned_sequences: None,
     };
     let mut renamed = design;
     renamed.columns[1].name = "title".into();
@@ -1102,6 +1105,7 @@ fn exclusion_trigger_and_partition_plans_follow_the_dialect() {
         design: design.clone(),
         ddl: String::new(),
         triggers: vec!["CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into()],
+        owned_sequences: None,
     };
     design.triggers = Some(vec![
         "CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into(),
@@ -1123,6 +1127,7 @@ fn exclusion_trigger_and_partition_plans_follow_the_dialect() {
         design: parted.clone(),
         ddl: String::new(),
         triggers: vec![],
+        owned_sequences: None,
     };
     parted.partition = "PARTITION BY HASH(id) PARTITIONS 4".into();
     let statements = plan(&mysql, &scope(), Some(&old), &parted).unwrap();
@@ -1140,6 +1145,7 @@ fn exclusion_trigger_and_partition_plans_follow_the_dialect() {
         design: parent.clone(),
         ddl: String::new(),
         triggers: vec![],
+        owned_sequences: None,
     };
     parent.partition = "PARTITION BY LIST (id)".into();
     assert!(
@@ -1162,6 +1168,7 @@ fn mysql_standalone_index_removal_names_its_table() {
         design: design.clone(),
         ddl: String::new(),
         triggers: vec![],
+        owned_sequences: None,
     };
     design.indexes.clear();
     assert_eq!(
@@ -1175,13 +1182,21 @@ fn postgres_column_reorder_rebuilds_without_cascade() {
     let dialect = navidog_postgres::PostgresDialect;
     let sql = "CREATE TABLE \"t\" (\"b\" integer, \"a\" integer)";
     let design = super::parse::create(sql, "t", &dialect).unwrap();
-    let before = TableSnapshot {
+    let mut before = TableSnapshot {
         design: design.clone(),
         ddl: sql.into(),
         triggers: vec!["CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into()],
+        owned_sequences: None,
     };
     let mut after = design;
     after.columns.swap(0, 1);
+    assert!(
+        plan(&dialect, &scope(), Some(&before), &after)
+            .unwrap_err()
+            .message
+            .contains("Reload")
+    );
+    before.owned_sequences = Some(Vec::new());
     let statements = plan(&dialect, &scope(), Some(&before), &after).unwrap();
     assert!(statements[0].contains("Rebuilding the whole table"));
     assert!(statements[0].contains("CREATE TABLE"));
@@ -1202,12 +1217,18 @@ fn postgres_column_reorder_rebuilds_without_cascade() {
 #[test]
 fn postgres_rebuild_keeps_constraint_names_and_serial_defaults() {
     let dialect = navidog_postgres::PostgresDialect;
-    let sql = "CREATE TABLE \"t\" (\"id\" integer NOT NULL DEFAULT nextval('t_id_seq'::regclass), \"name\" text, CONSTRAINT \"t_pkey\" PRIMARY KEY (id))";
+    let sql = "CREATE TABLE \"t\" (\"id\" integer NOT NULL DEFAULT (nextval('t_id_seq'::regclass) + 10), \"name\" text, CONSTRAINT \"t_pkey\" PRIMARY KEY (id))";
     let design = super::parse::create(sql, "t", &dialect).unwrap();
     let before = TableSnapshot {
         design: design.clone(),
         ddl: sql.into(),
         triggers: vec!["CREATE TRIGGER audit AFTER INSERT ON t EXECUTE FUNCTION log()".into()],
+        owned_sequences: Some(vec![OwnedSequence {
+            column: "id".into(),
+            schema: "public".into(),
+            name: "t_id_seq".into(),
+            oid: 1,
+        }]),
     };
     let mut after = design;
     after.columns.swap(0, 1);
@@ -1222,9 +1243,9 @@ fn postgres_rebuild_keeps_constraint_names_and_serial_defaults() {
         joined.contains("CONSTRAINT \"t_pkey__navidog\" PRIMARY KEY"),
         "{joined}"
     );
-    assert!(joined.contains("DROP DEFAULT"), "{joined}");
+    assert!(!joined.contains("DROP DEFAULT"), "{joined}");
     assert!(
-        joined.contains("ALTER SEQUENCE \"t_id_seq\" OWNED BY NONE"),
+        joined.contains("ALTER SEQUENCE \"public\".\"t_id_seq\" OWNED BY NONE"),
         "{joined}"
     );
     assert!(
@@ -1232,7 +1253,7 @@ fn postgres_rebuild_keeps_constraint_names_and_serial_defaults() {
         "{joined}"
     );
     assert!(
-        joined.contains("SET DEFAULT nextval('t_id_seq'::regclass)"),
+        statements[0].contains("DEFAULT (nextval('t_id_seq'::regclass) + 10)"),
         "{joined}"
     );
     assert!(joined.contains("CREATE TRIGGER audit"), "{joined}");
@@ -1251,6 +1272,7 @@ fn postgres_identity_can_be_added_and_sequence_options_stay_fixed() {
         design: design.clone(),
         ddl: sql.into(),
         triggers: vec![],
+        owned_sequences: None,
     };
     let mut added = design.clone();
     added.columns[0].definition = "integer NOT NULL GENERATED ALWAYS AS IDENTITY".into();
@@ -1266,6 +1288,7 @@ fn postgres_identity_can_be_added_and_sequence_options_stay_fixed() {
         design: added,
         ddl: String::new(),
         triggers: vec![],
+        owned_sequences: None,
     };
     let statements = plan(&dialect, &scope(), Some(&switched_before), &switched).unwrap();
     assert!(
@@ -1334,6 +1357,101 @@ fn sqlite_rebuild_keeps_generated_columns_and_combines_renames() {
             .map(|c| c.definition.split_whitespace().next().unwrap())
             .collect();
         assert_eq!(spellings, ["int", "varchar(8)", "numeric(4,1)"]);
+    });
+}
+
+#[test]
+fn live_postgres_reorder_preserves_sequence_ownership_and_defaults() {
+    if std::env::var_os("NAVIDOG_LIVE").is_none() {
+        return;
+    }
+    navidog_db::runtime::runtime().block_on(async {
+        let mut session = navidog_db::connect(
+            Arc::new(navidog_postgres::PostgresDriver::default()),
+            navidog_db::ConnectParams {
+                host: "127.0.0.1".into(),
+                port: 15432,
+                database: Some("pagila".into()),
+                user: "postgres".into(),
+                password: Some("navidog".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let r = session.relational().unwrap();
+        let d = &navidog_postgres::PostgresDialect;
+        let schema = format!("navidog_sequence_{}", std::process::id());
+        let scope = Scope::new("test", "pagila", Some(schema.clone()));
+        let table = d.qualified(&scope, "sample");
+        let parent = d.qualified(&scope, "parent");
+        let owned = d.qualified(&scope, "owned.with.dot");
+        let shared = d.qualified(&scope, "parent_id_seq");
+        let owned_lit = d.string_literal(&owned);
+        let shared_lit = d.string_literal(&shared);
+        let table_lit = d.string_literal(&table);
+        let parent_lit = d.string_literal(&parent);
+        r.execute(&format!(
+            "CREATE SCHEMA {schema}; CREATE TABLE {parent} (id serial); \
+             CREATE TABLE {table} (id serial, shared_id integer DEFAULT nextval({shared_lit}::regclass), label text); \
+             ALTER SEQUENCE {schema}.sample_id_seq RENAME TO \"owned.with.dot\"; \
+             ALTER SEQUENCE {owned} RESTART WITH 40 INCREMENT BY 3; \
+             INSERT INTO {table} (label) VALUES ('before')"
+        ))
+        .await
+        .unwrap();
+        let before = load(r, &scope, "sample").await.unwrap();
+        let mut after = before.design.clone();
+        after.columns.swap(0, 2);
+        after.columns[2].name = "serial_id".into();
+        let statements = plan(d, &scope, Some(&before), &after).unwrap();
+        assert_eq!(
+            statements.iter().filter(|sql| sql.starts_with("ALTER SEQUENCE ")).collect::<Vec<_>>(),
+            [
+                &format!("ALTER SEQUENCE {owned} OWNED BY NONE"),
+                &format!("ALTER SEQUENCE {owned} OWNED BY {table}.\"serial_id\""),
+            ]
+        );
+        let owners = format!(
+            "SELECT pg_get_serial_sequence({table_lit}, 'serial_id')::regclass = {owned_lit}::regclass, \
+                    pg_get_serial_sequence({parent_lit}, 'id')::regclass = {shared_lit}::regclass, \
+                    pg_get_serial_sequence({table_lit}, 'shared_id') IS NULL"
+        );
+        // OWNED BY changes only the catalog dependency, not the deparsed table DDL.
+        r.execute(&format!("ALTER SEQUENCE {owned} OWNED BY NONE"))
+            .await
+            .unwrap();
+        assert!(
+            apply(r, &scope, Some(&before), &after)
+                .await
+                .unwrap_err()
+                .message
+                .contains("changed outside")
+        );
+        r.execute(&format!("ALTER SEQUENCE {owned} OWNED BY {table}.id"))
+            .await
+            .unwrap();
+        let saved = apply(r, &scope, Some(&before), &after).await.unwrap();
+        assert_eq!(saved.design.columns[0].name, "label");
+        let inserted = r
+            .execute(&format!(
+                "INSERT INTO {table} (label) VALUES ('after') RETURNING serial_id, shared_id"
+            ))
+            .await
+            .unwrap();
+        assert_eq!(inserted[0].rows[0], [Some("43".into()), Some("2".into())]);
+        let checks = r.execute(&owners).await.unwrap();
+        assert_eq!(checks[0].rows[0], [Some("t".into()), Some("t".into()), Some("t".into())]);
+        assert_eq!(
+            r.execute(&format!("SELECT serial_id FROM {table} WHERE label = 'before'"))
+                .await
+                .unwrap()[0].rows[0][0].as_deref(),
+            Some("40")
+        );
+        r.execute(&format!("DROP TABLE {table}, {parent}; DROP SCHEMA {schema}"))
+            .await
+            .unwrap();
+        session.close().await.unwrap();
     });
 }
 
