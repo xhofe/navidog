@@ -34,6 +34,8 @@ ALTER TABLE t ADD CONSTRAINT name EXCLUDE USING gist (expr WITH operator) WHERE 
 
 MySQL 写在 `CREATE` / `ALTER TABLE … PARTITION BY` 子句里。PostgreSQL 父表是 `PARTITION BY method (key)`，每个分区是 `CREATE TABLE name PARTITION OF parent FOR VALUES …`，和父表改动放在同一事务。已有分区表只改列表时，能 `ATTACH` / `DETACH` 的按名称做；方式或键变了明确拒绝，不重建父表。SQLite 没有这一页。
 
+加载已有表时，只把顶层 `PARTITION BY` 子句读入分区草稿。MySQL `SHOW CREATE TABLE` 若用版本注释包住末尾的分区子句，读取时去掉包装；表注释里出现 `PARTITION BY` 仍是普通文本。只改表注释时，预览和保存都不改分区。
+
 ## 4. 迁移
 
 仍先预览再执行。预览在语句前加一行注释，说明这是整表重建；转成 `WITHOUT ROWID` 时再写明隐式 rowid 会丢掉。注释不执行。
@@ -50,6 +52,7 @@ MySQL 写在 `CREATE` / `ALTER TABLE … PARTITION BY` 子句里。PostgreSQL �
 - [ ] 排除约束可添加、修改、删除，PostgreSQL 实库往返。
 - [ ] 三种库的触发器可添加和替换，失败回滚或保留草稿。
 - [ ] MySQL 与 PostgreSQL 的分区方式和列表可预览并执行；改方式被拒绝。
+- [ ] MySQL 和 MariaDB 回读含 `PARTITION BY` 字样的表注释，分区状态正确；修改注释后分区定义不变。
 - [x] PostgreSQL 列重排在事务内完成，有依赖时整笔失败。
 - [x] identity 可添加、删除和切换模式；改序列选项被拒绝。
 - [x] SQLite 生成列、`WITHOUT ROWID` 和合并重命名保留数据，预览写明重建。
