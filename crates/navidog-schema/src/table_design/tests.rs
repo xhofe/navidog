@@ -43,6 +43,14 @@ fn partition_clause_ignores_table_comment_text() {
             "partition\tby HASH (`id`) PARTITIONS 2",
         ),
         (
+            "\nPARTITION /* documentation */ BY HASH (`id`) PARTITIONS 2",
+            "PARTITION BY HASH (`id`) PARTITIONS 2",
+        ),
+        (
+            "\nPARTITION -- documentation\nBY HASH (`id`) PARTITIONS 2",
+            "PARTITION BY HASH (`id`) PARTITIONS 2",
+        ),
+        (
             "\n/*!50100 PARTITION BY HASH (`id`)\nPARTITIONS 2 */",
             "PARTITION BY HASH (`id`)\nPARTITIONS 2",
         ),
@@ -767,7 +775,13 @@ fn live_table_options_and_dialect_attributes() {
                     .as_deref(),
                 Some("1")
             );
-            if d.id() == "postgres" {
+            if d.features().inline_table_options {
+                assert_eq!(
+                    table_option(&saved.design.options, "table_comment", d).unwrap(),
+                    "Changed"
+                );
+                check_partitioned_table_comment(r, &scope, &parent_name).await;
+            } else {
                 assert!(!saved.design.unlogged);
                 assert_eq!(saved.design.owner, role);
                 assert_eq!(
@@ -803,12 +817,6 @@ fn live_table_options_and_dialect_attributes() {
                         .message
                         .contains("outside")
                 );
-            } else {
-                assert_eq!(
-                    table_option(&saved.design.options, "table_comment", d).unwrap(),
-                    "Changed"
-                );
-                check_partitioned_table_comment(r, &scope, &parent_name).await;
             }
             r.execute(&format!("DROP TABLE {table}")).await.unwrap();
             if d.id() == "postgres" {

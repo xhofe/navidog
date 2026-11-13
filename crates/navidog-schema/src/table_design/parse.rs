@@ -77,26 +77,46 @@ pub(super) fn ident(input: &str) -> DbResult<(String, &str)> {
     Ok((input[..len].into(), input[len..].trim_start()))
 }
 
-fn partition_offset(sql: &str, spans: &[span::Span]) -> Option<usize> {
-    spans.windows(2).find_map(|pair| {
-        let [partition, by] = pair else { return None };
-        (partition.depth == 0
-            && by.depth == 0
+fn partition_clause(sql: &str, spans: &[span::Span]) -> Option<(usize, String)> {
+    let mut tokens = spans
+        .iter()
+        .filter(|token| {
+            // Executable MySQL comments are not whitespace. Handle the server's outer wrapper
+            // separately instead of silently removing one between the keywords.
+            let text = token.text(sql);
+            !token.kind.is_comment() || text.starts_with("/*!") || text.starts_with("/*M!")
+        })
+        .peekable();
+    while let Some(partition) = tokens.next() {
+        if partition.depth == 0
             && partition.kind == SpanKind::Word
-            && by.kind == SpanKind::Word
             && partition.text(sql).eq_ignore_ascii_case("PARTITION")
-            && by.text(sql).eq_ignore_ascii_case("BY"))
-        .then_some(partition.range.start)
-    })
+            && let Some(by) = tokens.peek()
+            && by.depth == 0
+            && by.kind == SpanKind::Word
+            && by.text(sql).eq_ignore_ascii_case("BY")
+        {
+            let start = partition.range.start;
+            let between = &sql[partition.range.end..by.range.start];
+            let clause = if between.trim().is_empty() {
+                sql[start..].to_owned()
+            } else {
+                // The designer accepts no SQL comments in a saved partition draft.
+                format!("PARTITION {}", &sql[by.range.start..])
+            };
+            return Some((start, clause));
+        }
+    }
+    None
 }
 
-fn split_partition<'a>(options: &'a str, d: &dyn Dialect) -> (&'a str, &'a str) {
+fn split_partition<'a>(options: &'a str, d: &dyn Dialect) -> (&'a str, String) {
     if !d.features().supports_partitions {
-        return (options, "");
+        return (options, String::new());
     }
     let spans = span::spans(options, d.lex());
-    if let Some(offset) = partition_offset(options, &spans) {
-        return (options[..offset].trim_end(), &options[offset..]);
+    if let Some((offset, clause)) = partition_clause(options, &spans) {
+        return (options[..offset].trim_end(), clause);
     }
     // MySQL SHOW CREATE TABLE wraps the trailing clause in a version comment.
     if d.table_option_style() == navidog_sql::TableOptionStyle::Clauses
@@ -107,11 +127,11 @@ fn split_partition<'a>(options: &'a str, d: &dyn Dialect) -> (&'a str, &'a str) 
         && let Some(body) = body.strip_suffix("*/")
     {
         let body = body.trim_start_matches(|c: char| c.is_ascii_digit()).trim();
-        if partition_offset(body, &span::spans(body, d.lex())) == Some(0) {
-            return (options[..last.range.start].trim_end(), body);
+        if let Some((0, clause)) = partition_clause(body, &span::spans(body, d.lex())) {
+            return (options[..last.range.start].trim_end(), clause);
         }
     }
-    (options, "")
+    (options, String::new())
 }
 
 pub(super) fn create(ddl: &str, name: &str, d: &dyn Dialect) -> DbResult<TableDesign> {
@@ -149,7 +169,7 @@ pub(super) fn create(ddl: &str, name: &str, d: &dyn Dialect) -> DbResult<TableDe
         name: name.into(),
         unlogged,
         options: options.into(),
-        partition: partition.into(),
+        partition,
         ..Default::default()
     };
     let mut begin = 0;
