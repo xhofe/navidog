@@ -33,6 +33,41 @@ fn quoted_definitions_round_trip_and_change_by_identity() {
     assert!(plan[0].contains("CHANGE COLUMN `a``b` `renamed` enum('x,y','z') DEFAULT 'x,y'"));
 }
 #[test]
+fn partition_clause_ignores_table_comment_text() {
+    let d = &navidog_mysql::MysqlDialect;
+    let options = "ENGINE=InnoDB COMMENT='ß: PARTITION BY is documentation'";
+    for (tail, expected) in [
+        ("", ""),
+        (
+            "\npartition\tby HASH (`id`) PARTITIONS 2",
+            "partition\tby HASH (`id`) PARTITIONS 2",
+        ),
+        (
+            "\nPARTITION /* documentation */ BY HASH (`id`) PARTITIONS 2",
+            "PARTITION BY HASH (`id`) PARTITIONS 2",
+        ),
+        (
+            "\nPARTITION -- documentation\nBY HASH (`id`) PARTITIONS 2",
+            "PARTITION BY HASH (`id`) PARTITIONS 2",
+        ),
+        (
+            "\n/*!50100 PARTITION BY HASH (`id`)\nPARTITIONS 2 */",
+            "PARTITION BY HASH (`id`)\nPARTITIONS 2",
+        ),
+        (
+            "\n/*!50100 PARTITION BY KEY */ /*!50611 ALGORITHM = 1 */ /*!50100 (id)\nPARTITIONS 2 */",
+            "PARTITION BY KEY ALGORITHM = 1 (id)\nPARTITIONS 2",
+        ),
+    ] {
+        let ddl = format!("CREATE TABLE `t` (`id` int NOT NULL) {options}{tail}");
+        let design = super::parse::create(&ddl, "t", d).unwrap();
+        assert_eq!(design.options, options);
+        assert_eq!(design.partition, expected);
+        assert!(design.create_sql(d, &scope(), "t").is_ok());
+    }
+}
+
+#[test]
 fn invalid_fragments_and_unsupported_attributes_are_rejected() {
     let mut draft = TableDesign::new();
     draft.name = "t".into();
@@ -653,7 +688,7 @@ fn live_table_options_and_dialect_attributes() {
                     ("collation", "utf8mb4_bin"),
                     ("row_format", "DYNAMIC"),
                     ("auto_increment", "20"),
-                    ("table_comment", "O'Brien"),
+                    ("table_comment", "O'Brien wrote PARTITION BY"),
                 ] {
                     draft.options = edit_table_option(&draft.options, key, value, d).unwrap();
                 }
@@ -697,9 +732,10 @@ fn live_table_options_and_dialect_attributes() {
             let old = load(r, &scope, &draft.name).await.unwrap();
             let mut next = old.design.clone();
             if d.id() == "mysql" {
+                assert!(old.design.partition.is_empty());
                 assert_eq!(
                     table_option(&next.options, "table_comment", d).unwrap(),
-                    "O'Brien"
+                    "O'Brien wrote PARTITION BY"
                 );
                 next.options =
                     edit_table_option(&next.options, "table_comment", "Changed", d).unwrap();
@@ -743,7 +779,13 @@ fn live_table_options_and_dialect_attributes() {
                     .as_deref(),
                 Some("1")
             );
-            if d.id() == "postgres" {
+            if d.features().inline_table_options {
+                assert_eq!(
+                    table_option(&saved.design.options, "table_comment", d).unwrap(),
+                    "Changed"
+                );
+                check_partitioned_table_comment(r, &scope, &parent_name).await;
+            } else {
                 assert!(!saved.design.unlogged);
                 assert_eq!(saved.design.owner, role);
                 assert_eq!(
@@ -779,11 +821,6 @@ fn live_table_options_and_dialect_attributes() {
                         .message
                         .contains("outside")
                 );
-            } else {
-                assert_eq!(
-                    table_option(&saved.design.options, "table_comment", d).unwrap(),
-                    "Changed"
-                );
             }
             r.execute(&format!("DROP TABLE {table}")).await.unwrap();
             if d.id() == "postgres" {
@@ -797,6 +834,45 @@ fn live_table_options_and_dialect_attributes() {
             session.close().await.unwrap();
         }
     });
+}
+
+async fn check_partitioned_table_comment(r: &mut dyn Relational, scope: &Scope, name: &str) {
+    let d = r.dialect();
+    let d = d.as_ref();
+    let table = d.qualified(scope, name);
+    let comment = "分区语句是 PARTITION BY";
+    r.execute(&format!("DROP TABLE IF EXISTS {table}"))
+        .await
+        .unwrap();
+    r.execute(&format!(
+        "CREATE TABLE {table} (id INT NOT NULL) COMMENT={} PARTITION BY KEY ALGORITHM=1 (id) PARTITIONS 2",
+        d.string_literal(comment)
+    ))
+    .await
+    .unwrap();
+    let old = load(r, scope, name).await.unwrap();
+    assert_eq!(
+        table_option(&old.design.options, "table_comment", d).unwrap(),
+        comment
+    );
+    assert!(
+        old.design
+            .partition
+            .starts_with("PARTITION BY KEY ALGORITHM = 1")
+    );
+    assert!(old.design.partition.ends_with("PARTITIONS 2"));
+
+    let mut next = old.design.clone();
+    next.options = edit_table_option(&next.options, "table_comment", "Edited", d).unwrap();
+    let preview = plan(d, scope, Some(&old), &next).unwrap();
+    assert_eq!(preview, [format!("ALTER TABLE {table} COMMENT='Edited'")]);
+    let saved = apply(r, scope, Some(&old), &next).await.unwrap();
+    assert_eq!(
+        table_option(&saved.design.options, "table_comment", d).unwrap(),
+        "Edited"
+    );
+    assert_eq!(saved.design.partition, old.design.partition);
+    r.execute(&format!("DROP TABLE {table}")).await.unwrap();
 }
 
 #[test]

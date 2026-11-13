@@ -225,7 +225,6 @@ fn execute_all(conn: &mut rusqlite::Connection, sql: &str) -> DbResult<Vec<Resul
         let origins = stmt.columns_with_metadata();
         let columns: Vec<Column> = stmt
             .columns()
-            .iter()
             .zip(origins)
             .map(|(c, m)| Column {
                 name: c.name().to_string(),

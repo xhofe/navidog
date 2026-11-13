@@ -20,7 +20,7 @@ futures.workspace = true
 tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-russh = { version = "0.64", default-features = false, features = ["flate2", "ring", "rsa"] }
+russh = { version = "0.65", default-features = false, features = ["flate2", "ring", "rsa"] }
 
 [dev-dependencies]
 navidog-session = { path = "../navidog-session" }

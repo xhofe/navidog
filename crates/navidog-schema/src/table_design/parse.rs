@@ -76,6 +76,79 @@ pub(super) fn ident(input: &str) -> DbResult<(String, &str)> {
     }
     Ok((input[..len].into(), input[len..].trim_start()))
 }
+
+fn partition_clause(sql: &str, spans: &[span::Span]) -> Option<(usize, String)> {
+    let mut tokens = spans
+        .iter()
+        .filter(|token| {
+            // Executable MySQL comments are not whitespace. Handle the server's outer wrapper
+            // separately instead of silently removing one between the keywords.
+            let text = token.text(sql);
+            !token.kind.is_comment() || text.starts_with("/*!") || text.starts_with("/*M!")
+        })
+        .peekable();
+    while let Some(partition) = tokens.next() {
+        if partition.depth == 0
+            && partition.kind == SpanKind::Word
+            && partition.text(sql).eq_ignore_ascii_case("PARTITION")
+            && let Some(by) = tokens.peek()
+            && by.depth == 0
+            && by.kind == SpanKind::Word
+            && by.text(sql).eq_ignore_ascii_case("BY")
+        {
+            let start = partition.range.start;
+            let between = &sql[partition.range.end..by.range.start];
+            let clause = if between.trim().is_empty() {
+                sql[start..].to_owned()
+            } else {
+                // The designer accepts no SQL comments in a saved partition draft.
+                format!("PARTITION {}", &sql[by.range.start..])
+            };
+            return Some((start, clause));
+        }
+    }
+    None
+}
+
+fn version_comment_body<'a>(options: &'a str, token: &span::Span) -> Option<&'a str> {
+    if token.kind != SpanKind::BlockComment || token.depth != 0 {
+        return None;
+    }
+    let body = token
+        .text(options)
+        .strip_prefix("/*!")?
+        .strip_suffix("*/")?;
+    Some(body.trim_start_matches(|c: char| c.is_ascii_digit()).trim())
+}
+
+fn split_partition<'a>(options: &'a str, d: &dyn Dialect) -> (&'a str, String) {
+    if !d.features().supports_partitions {
+        return (options, String::new());
+    }
+    let spans = span::spans(options, d.lex());
+    if let Some((offset, clause)) = partition_clause(options, &spans) {
+        return (options[..offset].trim_end(), clause);
+    }
+    // MySQL SHOW CREATE TABLE wraps the clause in one or more trailing version comments.
+    if d.table_option_style() == navidog_sql::TableOptionStyle::Clauses {
+        let mut parts: Vec<&str> = Vec::new();
+        for token in spans.iter().rev() {
+            let Some(body) = version_comment_body(options, token) else {
+                break;
+            };
+            if let Some((0, mut clause)) = partition_clause(body, &span::spans(body, d.lex())) {
+                for part in parts.into_iter().rev() {
+                    clause.push(' ');
+                    clause.push_str(part);
+                }
+                return (options[..token.range.start].trim_end(), clause);
+            }
+            parts.push(body);
+        }
+    }
+    (options, String::new())
+}
+
 pub(super) fn create(ddl: &str, name: &str, d: &dyn Dialect) -> DbResult<TableDesign> {
     let statements = navidog_db::sql::split_script(ddl, d.lex());
     let sql = statements
@@ -106,17 +179,14 @@ pub(super) fn create(ddl: &str, name: &str, d: &dyn Dialect) -> DbResult<TableDe
         .find(|i| positions(&body_and_options[..*i], b',', d).is_ok())
         .ok_or_else(|| DbError::msg("Invalid table body."))?;
     let body = &body_and_options[..end];
+    let (options, partition) = split_partition(body_and_options[end + 1..].trim(), d);
     let mut design = TableDesign {
         name: name.into(),
         unlogged,
-        options: body_and_options[end + 1..].trim().into(),
+        options: options.into(),
+        partition,
         ..Default::default()
     };
-    let options_upper = design.options.to_uppercase();
-    if let Some(ix) = options_upper.find("PARTITION BY") {
-        design.partition = design.options[ix..].trim().to_string();
-        design.options = design.options[..ix].trim().to_string();
-    }
     let mut begin = 0;
     for finish in positions(body, b',', d)?
         .into_iter()
