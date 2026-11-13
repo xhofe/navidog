@@ -110,6 +110,17 @@ fn partition_clause(sql: &str, spans: &[span::Span]) -> Option<(usize, String)> 
     None
 }
 
+fn version_comment_body<'a>(options: &'a str, token: &span::Span) -> Option<&'a str> {
+    if token.kind != SpanKind::BlockComment || token.depth != 0 {
+        return None;
+    }
+    let body = token
+        .text(options)
+        .strip_prefix("/*!")?
+        .strip_suffix("*/")?;
+    Some(body.trim_start_matches(|c: char| c.is_ascii_digit()).trim())
+}
+
 fn split_partition<'a>(options: &'a str, d: &dyn Dialect) -> (&'a str, String) {
     if !d.features().supports_partitions {
         return (options, String::new());
@@ -118,17 +129,21 @@ fn split_partition<'a>(options: &'a str, d: &dyn Dialect) -> (&'a str, String) {
     if let Some((offset, clause)) = partition_clause(options, &spans) {
         return (options[..offset].trim_end(), clause);
     }
-    // MySQL SHOW CREATE TABLE wraps the trailing clause in a version comment.
-    if d.table_option_style() == navidog_sql::TableOptionStyle::Clauses
-        && let Some(last) = spans.last()
-        && last.kind == SpanKind::BlockComment
-        && last.depth == 0
-        && let Some(body) = last.text(options).strip_prefix("/*!")
-        && let Some(body) = body.strip_suffix("*/")
-    {
-        let body = body.trim_start_matches(|c: char| c.is_ascii_digit()).trim();
-        if let Some((0, clause)) = partition_clause(body, &span::spans(body, d.lex())) {
-            return (options[..last.range.start].trim_end(), clause);
+    // MySQL SHOW CREATE TABLE wraps the clause in one or more trailing version comments.
+    if d.table_option_style() == navidog_sql::TableOptionStyle::Clauses {
+        let mut parts: Vec<&str> = Vec::new();
+        for token in spans.iter().rev() {
+            let Some(body) = version_comment_body(options, token) else {
+                break;
+            };
+            if let Some((0, mut clause)) = partition_clause(body, &span::spans(body, d.lex())) {
+                for part in parts.into_iter().rev() {
+                    clause.push(' ');
+                    clause.push_str(part);
+                }
+                return (options[..token.range.start].trim_end(), clause);
+            }
+            parts.push(body);
         }
     }
     (options, String::new())

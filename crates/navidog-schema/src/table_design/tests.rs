@@ -54,6 +54,10 @@ fn partition_clause_ignores_table_comment_text() {
             "\n/*!50100 PARTITION BY HASH (`id`)\nPARTITIONS 2 */",
             "PARTITION BY HASH (`id`)\nPARTITIONS 2",
         ),
+        (
+            "\n/*!50100 PARTITION BY KEY */ /*!50611 ALGORITHM = 1 */ /*!50100 (id)\nPARTITIONS 2 */",
+            "PARTITION BY KEY ALGORITHM = 1 (id)\nPARTITIONS 2",
+        ),
     ] {
         let ddl = format!("CREATE TABLE `t` (`id` int NOT NULL) {options}{tail}");
         let design = super::parse::create(&ddl, "t", d).unwrap();
@@ -841,7 +845,7 @@ async fn check_partitioned_table_comment(r: &mut dyn Relational, scope: &Scope, 
         .await
         .unwrap();
     r.execute(&format!(
-        "CREATE TABLE {table} (id INT NOT NULL) COMMENT={} PARTITION BY HASH (id) PARTITIONS 2",
+        "CREATE TABLE {table} (id INT NOT NULL) COMMENT={} PARTITION BY KEY ALGORITHM=1 (id) PARTITIONS 2",
         d.string_literal(comment)
     ))
     .await
@@ -851,7 +855,11 @@ async fn check_partitioned_table_comment(r: &mut dyn Relational, scope: &Scope, 
         table_option(&old.design.options, "table_comment", d).unwrap(),
         comment
     );
-    assert!(old.design.partition.starts_with("PARTITION BY HASH"));
+    assert!(
+        old.design
+            .partition
+            .starts_with("PARTITION BY KEY ALGORITHM = 1")
+    );
     assert!(old.design.partition.ends_with("PARTITIONS 2"));
 
     let mut next = old.design.clone();
