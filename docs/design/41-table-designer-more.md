@@ -34,7 +34,7 @@ ALTER TABLE t ADD CONSTRAINT name EXCLUDE USING gist (expr WITH operator) WHERE 
 
 MySQL 写在 `CREATE` / `ALTER TABLE … PARTITION BY` 子句里。PostgreSQL 父表是 `PARTITION BY method (key)`，每个分区是 `CREATE TABLE name PARTITION OF parent FOR VALUES …`，和父表改动放在同一事务。已有分区表只改列表时，能 `ATTACH` / `DETACH` 的按名称做；方式或键变了明确拒绝，不重建父表。SQLite 没有这一页。
 
-加载已有表时，只把顶层 `PARTITION BY` 子句读入分区草稿。MySQL `SHOW CREATE TABLE` 若用版本注释包住末尾的分区子句，读取时去掉包装；表注释里出现 `PARTITION BY` 仍是普通文本。只改表注释时，预览和保存都不改分区。
+加载已有表时，只把顶层 `PARTITION BY` 子句读入分区草稿。MySQL `SHOW CREATE TABLE` 若用一个或多个版本注释包住末尾的分区子句，读取时去掉包装并按顺序合并；表注释里出现 `PARTITION BY` 仍是普通文本。只改表注释时，预览和保存都不改分区。
 
 ## 4. 迁移
 
