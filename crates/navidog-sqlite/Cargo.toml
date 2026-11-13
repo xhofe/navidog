@@ -15,4 +15,4 @@ rust-i18n.workspace = true
 tokio.workspace = true
 futures.workspace = true
 tracing.workspace = true
-rusqlite = { version = "0.40", features = ["bundled", "column_decltype", "column_metadata"] }
+rusqlite = { version = "0.41", features = ["bundled", "column_decltype", "column_metadata"] }

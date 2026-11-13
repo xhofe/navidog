@@ -115,6 +115,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 依赖审计补丁 | 完成 | `ctutils` 升至 0.4.5（RUSTSEC-2026-0385）、`tokio` 升至 1.54.1（RUSTSEC-2026-0386）；audit 与 deny 均通过，未新增忽略项 |
 | 界面对齐 | 完成 | 表设计器编辑字号、连续关闭未保存选项卡、测试连接底栏、选中色、对象列表详细信息、系统对象开关、新建连接菜单、缺省主题与行底纹、关于文案、全局解锁；CI lint 修复后全工作区 clippy 与 334 项测试通过。见 [验收记录](pr/acceptance-ui-polish.md) |
 | 表注释与分区回读 | 完成 | MySQL 和 MariaDB 正确区分表注释里的 `PARTITION BY` 与实际分区子句；只改注释时保留分区定义。见[验收记录](pr/acceptance-partition-comments.md) |
+| PR #36 依赖审计修复 | 完成 | `rusqlite` 0.41.1 / `libsqlite3-sys` 0.39.1（RUSTSEC-2026-0459）与 `russh` 0.65.1（RUSTSEC-2026-0495）；未新增忽略项。见[验收记录](pr/acceptance-partition-comments.md) |
 
 ## 3. 功能状态
 
