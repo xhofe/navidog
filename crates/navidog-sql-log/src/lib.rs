@@ -16,6 +16,7 @@ pub const FILE_NAME: &str = "QueryExec.log";
 
 #[derive(Clone, Debug)]
 pub struct LogEntry {
+    pub plugin_source: Option<String>,
     pub time: chrono::DateTime<chrono::Local>,
     pub connection: String,
     /// 0 when the server has no session ID (SQLite)
@@ -71,6 +72,9 @@ impl LogEntry {
                 out.push_str(&text);
                 out.push(']');
             }
+        }
+        if let Some(source) = &self.plugin_source {
+            out.push_str(&format!("[plugin:{source}]"));
         }
         out
     }
@@ -178,6 +182,7 @@ pub fn since(from: u64) -> (Vec<LogEntry>, u64) {
 /// Who sent a statement, stamped on each entry.
 #[derive(Clone, Debug, Default)]
 pub struct Tag {
+    pub plugin_source: Option<String>,
     pub connection: String,
     pub kind: String,
     pub session: u64,
@@ -186,6 +191,7 @@ pub struct Tag {
 impl Tag {
     pub fn new(connection: &str, driver_name: &str) -> Self {
         Self {
+            plugin_source: None,
             connection: connection.to_string(),
             kind: driver_name.to_ascii_uppercase(),
             session: 0,
@@ -199,6 +205,7 @@ mod tests {
 
     fn entry(sql: &str, error: Option<&str>) -> LogEntry {
         LogEntry {
+            plugin_source: None,
             time: chrono::TimeZone::with_ymd_and_hms(&chrono::Local, 2026, 10, 10, 23, 49, 1)
                 .unwrap(),
             connection: "sakila 本地".into(),

@@ -385,22 +385,20 @@ impl ExplainView {
                             (!a.node_type.is_empty()).then(|| a.node_type.to_string());
                         cx.notify();
                     }))
-                    .on_scroll_wheel(cx.listener(
-                        |this, e: &gpui_kit::ScrollWheelEvent, window, cx| {
-                            if !e.modifiers.platform {
-                                return;
-                            }
-                            cx.stop_propagation();
-                            let dy = e.delta.pixel_delta(window.line_height()).y;
-                            let factor = if dy > gpui_kit::Pixels::ZERO {
-                                1.1
-                            } else {
-                                1. / 1.1
-                            };
-                            this.visual.zoom = (this.visual.zoom * factor).clamp(0.25, 4.);
-                            cx.notify();
-                        },
-                    ))
+                    .on_scroll(cx.listener(|this, e: &gpui_kit::ScrollEvent, window, cx| {
+                        if !e.modifiers.platform {
+                            return;
+                        }
+                        cx.stop_propagation();
+                        let dy = e.delta.pixel_delta(window.line_height()).y;
+                        let factor = if dy > gpui_kit::Pixels::ZERO {
+                            1.1
+                        } else {
+                            1. / 1.1
+                        };
+                        this.visual.zoom = (this.visual.zoom * factor).clamp(0.25, 4.);
+                        cx.notify();
+                    }))
                     .child(
                         div()
                             .relative()

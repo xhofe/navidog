@@ -94,11 +94,12 @@ impl ResultGrid {
                 Box::new(ToggleRowId),
             );
         }
-        menu.separator().menu_with_check(
+        let menu = menu.separator().menu_with_check(
             t!("grid.raw_data").to_string(),
             self.raw,
             Box::new(ToggleRawData),
-        )
+        );
+        navidog_app_state::plugin::context_menu(menu, "grid.context", cx)
     }
 
     pub(super) fn copy_text(&self, format: &str, cx: &App) -> String {

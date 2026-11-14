@@ -30,7 +30,7 @@ impl Default for SqliteDriver {
         Self {
             info: DriverInfo {
                 default_port: navidog_model::connection::driver_defaults("sqlite").port,
-                icon: "icons/db/sqlite.svg",
+                icon: "icons/db/sqlite.svg".into(),
                 file_based: true,
                 ..DriverInfo::relational("sqlite", "SQLite", Arc::new(SqliteDialect))
             },

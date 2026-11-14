@@ -30,6 +30,9 @@ pub(super) fn plan_on(
     occupied: &[String],
     day: &str,
 ) -> DbResult<Vec<String>> {
+    if d.designer_templates().is_some() {
+        return super::declared::plan(d, scope, before, after);
+    }
     let mut after = after.clone();
     let mut before = before.cloned();
     if d.features().separate_comments {
@@ -636,13 +639,14 @@ pub(super) fn transferred_sequences<'a>(
     before: &'a TableSnapshot,
     after: &'a TableDesign,
 ) -> DbResult<Vec<(&'a OwnedSequence, &'a DesignColumn)>> {
-    if d.features().rebuilds_tables
+    if d.designer_templates().is_some()
+        || d.features().rebuilds_tables
         || d.features().supports_column_position
         || !columns_reordered(&before.design, after)
     {
         return Ok(Vec::new());
     }
-    let sequences = before.owned_sequences.as_ref().ok_or_else(|| {
+    let sequences = before.owned_sequences().ok_or_else(|| {
         DbError::msg("Reload the table before rebuilding it to read PostgreSQL sequence ownership.")
     })?;
     Ok(sequences
@@ -703,7 +707,7 @@ fn postgres_rebuild(
     // Detaching keeps the original sequence alive when the old table is dropped.
     // The replacement can keep its complete defaults, including references to that sequence.
     for (sequence, _) in &sequences {
-        let sequence = sequence.qualified(d);
+        let sequence = qualified_sequence(sequence, d);
         out.push(format!("ALTER SEQUENCE {sequence} OWNED BY NONE"));
     }
     out.push(format!("DROP TABLE {}", d.qualified(scope, &old.name)));
@@ -745,7 +749,7 @@ fn postgres_rebuild(
     for (sequence, column) in sequences {
         out.push(format!(
             "ALTER SEQUENCE {} OWNED BY {renamed}.{}",
-            sequence.qualified(d),
+            qualified_sequence(sequence, d),
             d.quote_ident(&column.name)
         ));
     }

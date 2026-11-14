@@ -180,13 +180,11 @@ pub(super) fn create(ddl: &str, name: &str, d: &dyn Dialect) -> DbResult<TableDe
         .ok_or_else(|| DbError::msg("Invalid table body."))?;
     let body = &body_and_options[..end];
     let (options, partition) = split_partition(body_and_options[end + 1..].trim(), d);
-    let mut design = TableDesign {
-        name: name.into(),
-        unlogged,
-        options: options.into(),
-        partition,
-        ..Default::default()
-    };
+    let mut design = TableDesign::default();
+    design.name = name.into();
+    design.unlogged = unlogged;
+    design.options = options.into();
+    design.partition = partition;
     let mut begin = 0;
     for finish in positions(body, b',', d)?
         .into_iter()

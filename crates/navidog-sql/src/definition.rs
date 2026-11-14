@@ -153,6 +153,8 @@ pub struct DefinitionDraft {
     pub loaded: String,
     /// Server DDL from the last load or save. The external-change guard compares this, not `body`.
     pub server_ddl: String,
+    pub revision: Option<String>,
+    pub unknown: Vec<String>,
     pub options: BTreeMap<String, String>,
 }
 
@@ -166,6 +168,8 @@ impl DefinitionDraft {
             raw: false,
             loaded: String::new(),
             server_ddl: String::new(),
+            revision: None,
+            unknown: Vec::new(),
             options: BTreeMap::new(),
         }
     }

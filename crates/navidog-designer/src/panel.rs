@@ -1,3 +1,4 @@
+use navidog_schema::table_design::{TableComments as _, TableDesignExt as _};
 use std::sync::Arc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -275,7 +276,7 @@ pub struct TableDesigner {
     table: Entity<TableState<DesignerGrid>>,
     properties: Vec<complete::Line>,
     entry_inputs: Vec<complete::Line>,
-    table_option_inputs: std::collections::BTreeMap<&'static str, Entity<InputState>>,
+    table_option_inputs: std::collections::BTreeMap<String, Entity<InputState>>,
     entry_selected: Option<usize>,
     active_cell: Option<usize>,
     syncing: bool,
@@ -312,6 +313,7 @@ pub struct TableDesigner {
     needs_reload: bool,
     error: Option<String>,
     preview: Option<Vec<String>>,
+    plugin_preview: Option<table_design::PreviewPlan>,
     close_approved: bool,
     /// Column to select once the table snapshot arrives.
     focus_column: Option<String>,
@@ -667,7 +669,7 @@ impl TableDesigner {
                                 }
                             },
                         ));
-                        (*key, input)
+                        (key.to_string(), input)
                     })
                     .collect();
             let mut this = Self {
@@ -715,6 +717,7 @@ impl TableDesigner {
                 needs_reload: false,
                 error: migration_error,
                 preview: None,
+                plugin_preview: None,
                 close_approved: false,
                 focus_column: None,
                 task: None,
@@ -880,6 +883,13 @@ impl TableDesigner {
         cx.notify();
     }
     fn move_field(&mut self, up: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .dialect
+            .designer_templates()
+            .is_some_and(|templates| !templates.contains_key("move_column"))
+        {
+            return;
+        }
         if self.page != Page::Fields {
             return;
         }
@@ -999,6 +1009,14 @@ impl TableDesigner {
                         cx,
                     )
                 });
+                self.plugin_preview = self.dialect.designer_templates().map(|_| {
+                    table_design::PreviewPlan::new(
+                        self.dialect.as_ref(),
+                        self.baseline.clone(),
+                        self.draft.clone(),
+                        sql.clone(),
+                    )
+                });
                 self.preview = Some(sql);
                 self.page = Page::Preview;
                 self.error = None;
@@ -1069,6 +1087,7 @@ impl TableDesigner {
         let scope = self.scope.clone();
         let draft = self.draft.clone();
         let baseline = self.baseline.clone();
+        let plugin_plan = self.plugin_preview.clone();
         self.task = Some(cx.spawn_in(window, async move |this, cx| {
             let result: DbResult<TableSnapshot> = async {
                 let mut session = job.await.map_err(|e| DbError::msg(e.to_string()))??;
@@ -1085,7 +1104,11 @@ impl TableDesigner {
                             r.execute(&sql).await?;
                         }
                         if save {
-                            table_design::apply(r, &scope, baseline.as_ref(), &draft).await
+                            if let Some(plan) = plugin_plan {
+                                plan.execute(r, &scope, &draft).await
+                            } else {
+                                table_design::apply(r, &scope, baseline.as_ref(), &draft).await
+                            }
                         } else {
                             table_design::load(r, &scope, &draft.name).await
                         }

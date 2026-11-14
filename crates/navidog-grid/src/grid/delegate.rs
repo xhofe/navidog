@@ -8,6 +8,7 @@ use gpui_kit::component::ActiveTheme as _;
 
 pub struct GridDelegate {
     pub model: GridModel,
+    pub(super) formatters: BTreeMap<String, String>,
     pub(super) editing: Option<(Pos, Entity<InputState>)>,
     pub(super) sort: Option<(usize, bool)>,
     /// The sort the rows were last reordered by. A refused header click restores `sort` to this.
@@ -445,7 +446,7 @@ impl TableDelegate for GridDelegate {
                         let any_frozen = d.layout.any_frozen();
                         let present = d.names();
                         let at_server = d.layout.is_server_order(&present);
-                        column_menu(
+                        let mut menu = column_menu(
                             c,
                             name.clone(),
                             show_type,
@@ -453,8 +454,36 @@ impl TableDelegate for GridDelegate {
                             frozen,
                             any_frozen,
                             at_server,
-                        )
-                        .show(e.position, window, cx);
+                        );
+                        menu = menu.separator().menu(
+                            t!("grid.formatter_original").to_string(),
+                            Box::new(SetFormatter {
+                                column: name.clone(),
+                                formatter: None,
+                            }),
+                        );
+                        if let Some(registry) =
+                            cx.try_global::<navidog_app_state::plugin::Contributions>()
+                        {
+                            for (id, _, value) in registry.formatters.iter() {
+                                if let Ok(formatter) = serde_json::from_value::<
+                                    navidog_model::cell_formatter::Formatter,
+                                >(
+                                    value.clone()
+                                ) && d.model.columns.get(c).is_some_and(|column| {
+                                    formatter.matches_column(&column.name, &column.type_name)
+                                }) {
+                                    menu = menu.menu(
+                                        formatter.name.unwrap_or(formatter.id),
+                                        Box::new(SetFormatter {
+                                            column: name.clone(),
+                                            formatter: Some(id.clone()),
+                                        }),
+                                    );
+                                }
+                            }
+                        }
+                        menu.show(e.position, window, cx);
                     },
                 ))
             })
@@ -510,9 +539,30 @@ impl TableDelegate for GridDelegate {
             .find
             .as_ref()
             .is_some_and(|(query, case)| self.model.cell_matches(r, c, query, *case));
-        let shown = self
+        let mut formatter_tone = None;
+        let mut shown = self
             .model
             .display_text(r, c, self.raw, self.dialect.as_deref());
+        if let Some(column) = self.model.columns.get(c)
+            && let Some(id) = self.formatters.get(column.name.as_ref())
+            && let Some(registry) = cx.try_global::<navidog_app_state::plugin::Contributions>()
+            && let Some(value) = registry.formatters.get(id)
+            && let Ok(formatter) =
+                serde_json::from_value::<navidog_model::cell_formatter::Formatter>(value.clone())
+            && let Some(Some(value)) = self.model.value(r, c)
+            && let Some(display) = formatter.apply(&column.name, &column.type_name, value)
+        {
+            shown = display.text().to_string().into();
+            formatter_tone = display.tone().map(|tone| match tone {
+                "secondary" => p.label_secondary,
+                "tertiary" => p.label_tertiary,
+                "success" => p.success,
+                "danger" => p.danger,
+                "warning" => cx.theme().warning,
+                "info" => cx.theme().info,
+                _ => p.label,
+            });
+        }
         // Unfilled cells of a new row show Navicat's literal "(Default)" and are not written.
         let (text, tone): (SharedString, Option<gpui_kit::Hsla>) = match self.model.value(r, c) {
             // A cell shows one line, like Navicat; the cell editor shows the full value
@@ -538,7 +588,9 @@ impl TableDelegate for GridDelegate {
                 |d| d.bg(p.grid_edited),
             )
             .when(hit && !selected, |d| d.bg(p.selection_inactive))
-            .when_some(tone.filter(|_| !selected), |d, color| d.text_color(color))
+            .when_some(tone.or(formatter_tone).filter(|_| !selected), |d, color| {
+                d.text_color(color)
+            })
             .when(selected, |d| {
                 // The row wash and the cell fill share `list_active` on the Default theme, so a
                 // selected cell disappears into its row. The border color stays distinct there.

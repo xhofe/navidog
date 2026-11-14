@@ -10,7 +10,7 @@ use navidog_sql::{
 pub struct SqliteDialect;
 
 impl Dialect for SqliteDialect {
-    fn id(&self) -> &'static str {
+    fn id(&self) -> &str {
         "sqlite"
     }
     fn lex(&self) -> Lex {
@@ -25,7 +25,7 @@ impl Dialect for SqliteDialect {
     fn qualify_prefix<'a>(&self, scope: &'a Scope) -> Option<&'a str> {
         Some(scope.database.as_str())
     }
-    fn object_kinds(&self) -> &'static [ObjectKind] {
+    fn object_kinds(&self) -> &[ObjectKind] {
         &[
             ObjectKind::Table,
             ObjectKind::View,
@@ -54,7 +54,7 @@ impl Dialect for SqliteDialect {
             draft,
         )
     }
-    fn begin_transaction(&self) -> &'static str {
+    fn begin_transaction(&self) -> &str {
         "BEGIN"
     }
     fn is_system_database(&self, _: &str) -> bool {
@@ -66,13 +66,13 @@ impl Dialect for SqliteDialect {
     fn is_system_object(&self, name: &str) -> bool {
         name.starts_with("sqlite_")
     }
-    fn extra_keywords(&self) -> &'static [&'static str] {
+    fn extra_keywords(&self) -> &[&str] {
         crate::words::KEYWORDS
     }
-    fn extra_functions(&self) -> &'static [&'static str] {
+    fn extra_functions(&self) -> &[&str] {
         crate::words::FUNCTIONS
     }
-    fn autoincrement_keyword(&self) -> &'static str {
+    fn autoincrement_keyword(&self) -> &str {
         "AUTOINCREMENT"
     }
     fn context_selection(&self) -> ContextSelection {
@@ -95,16 +95,16 @@ impl Dialect for SqliteDialect {
     fn table_option_style(&self) -> TableOptionStyle {
         TableOptionStyle::TableFlags
     }
-    fn bool_table_options(&self) -> &'static [&'static str] {
+    fn bool_table_options(&self) -> &[&str] {
         &["without_rowid", "strict"]
     }
     fn explain_style(&self) -> ExplainStyle {
         ExplainStyle::QueryPlanRows
     }
-    fn column_types(&self) -> &'static [ColumnType] {
-        COLUMN_TYPES
+    fn column_types(&self) -> &[ColumnType] {
+        &COLUMN_TYPES
     }
-    fn table_rebuild_catalog(&self) -> Option<&'static str> {
+    fn table_rebuild_catalog(&self) -> Option<&str> {
         Some("main")
     }
     fn console_prompt(&self, _: &str, _: bool, continuation: bool) -> String {
@@ -152,88 +152,90 @@ const LEX: Lex = Lex::SQLITE;
 
 // SQLite stores the declared type text, so these spellings come back unchanged.
 // `int` becomes `INTEGER` because only that exact name aliases rowid.
-const COLUMN_TYPES: &[ColumnType] = &[
-    ColumnType {
-        name: "INTEGER",
-        synonyms: &["INT"],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "BIGINT",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "SMALLINT",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "VARCHAR",
-        synonyms: &[],
-        args: TypeArgs::Length,
-    },
-    ColumnType {
-        name: "CHAR",
-        synonyms: &[],
-        args: TypeArgs::Length,
-    },
-    ColumnType {
-        name: "TEXT",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "DECIMAL",
-        synonyms: &[],
-        args: TypeArgs::LengthAndScale,
-    },
-    ColumnType {
-        name: "NUMERIC",
-        synonyms: &[],
-        args: TypeArgs::LengthAndScale,
-    },
-    ColumnType {
-        name: "REAL",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "DOUBLE PRECISION",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "BOOLEAN",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "DATE",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "TIME",
-        synonyms: &[],
-        args: TypeArgs::Length,
-    },
-    ColumnType {
-        name: "TIMESTAMP",
-        synonyms: &[],
-        args: TypeArgs::Length,
-    },
-    ColumnType {
-        name: "BLOB",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-    ColumnType {
-        name: "JSON",
-        synonyms: &[],
-        args: TypeArgs::None,
-    },
-];
+static COLUMN_TYPES: std::sync::LazyLock<Vec<ColumnType>> = std::sync::LazyLock::new(|| {
+    vec![
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("INTEGER"),
+            synonyms: vec!["INT".into()],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("BIGINT"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("SMALLINT"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("VARCHAR"),
+            synonyms: vec![],
+            args: TypeArgs::Length,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("CHAR"),
+            synonyms: vec![],
+            args: TypeArgs::Length,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("TEXT"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("DECIMAL"),
+            synonyms: vec![],
+            args: TypeArgs::LengthAndScale,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("NUMERIC"),
+            synonyms: vec![],
+            args: TypeArgs::LengthAndScale,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("REAL"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("DOUBLE PRECISION"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("BOOLEAN"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("DATE"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("TIME"),
+            synonyms: vec![],
+            args: TypeArgs::Length,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("TIMESTAMP"),
+            synonyms: vec![],
+            args: TypeArgs::Length,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("BLOB"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+        ColumnType {
+            name: std::borrow::Cow::Borrowed("JSON"),
+            synonyms: vec![],
+            args: TypeArgs::None,
+        },
+    ]
+});
 
 #[cfg(test)]
 mod tests {

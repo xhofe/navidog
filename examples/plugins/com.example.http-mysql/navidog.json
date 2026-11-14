@@ -1,0 +1,118 @@
+{
+  "api": 1,
+  "drivers": [
+    {
+      "id": "mysql",
+      "name": "HTTP MySQL",
+      "family": "relational",
+      "default_port": 13306,
+      "fields": [
+        "host",
+        "port",
+        "user",
+        "password",
+        "database"
+      ],
+      "dialect": {
+        "id": "http-mysql",
+        "quote": "`",
+        "has_schemas": false,
+        "object_kinds": [
+          "table",
+          "view",
+          "function"
+        ],
+        "dollar_quotes": false,
+        "nested_comments": false,
+        "begin": "BEGIN",
+        "savepoint": "SAVEPOINT navidog_apply",
+        "rollback_savepoint": "ROLLBACK TO SAVEPOINT navidog_apply",
+        "transactional_ddl": false,
+        "keywords": [
+          "RETURNING",
+          "ILIKE"
+        ],
+        "templates": {
+          "create_table": {
+            "sql": "CREATE TABLE ${table} (${definition})",
+            "parameters": {
+              "table": "fragment",
+              "definition": "fragment"
+            }
+          },
+          "add_column": {
+            "sql": "ALTER TABLE ${table} ADD COLUMN ${column} ${definition}",
+            "parameters": {
+              "table": "fragment",
+              "column": "identifier",
+              "definition": "fragment"
+            }
+          },
+          "drop_column": {
+            "sql": "ALTER TABLE ${table} DROP COLUMN ${column}",
+            "parameters": {
+              "table": "fragment",
+              "column": "identifier"
+            }
+          },
+          "explain": {
+            "sql": "EXPLAIN ${body}",
+            "parameters": {
+              "body": "fragment"
+            }
+          }
+        },
+        "types": [
+          {
+            "name": "int",
+            "synonyms": [
+              "INTEGER"
+            ],
+            "args": "none"
+          },
+          {
+            "name": "text",
+            "synonyms": [],
+            "args": "none"
+          }
+        ],
+        "database_prefix": true,
+        "designer": {
+          "properties": [
+            "type",
+            "length",
+            "scale",
+            "not_null",
+            "default",
+            "primary_key"
+          ],
+          "constraints": [
+            "primary",
+            "foreign_key",
+            "unique",
+            "check"
+          ]
+        },
+        "objects": {
+          "view": {
+            "fields": {},
+            "create": {
+              "sql": "CREATE VIEW ${table} AS ${body}",
+              "parameters": {
+                "table": "fragment",
+                "body": "fragment"
+              }
+            },
+            "update": {
+              "sql": "ALTER VIEW ${table} AS ${body}",
+              "parameters": {
+                "table": "fragment",
+                "body": "fragment"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

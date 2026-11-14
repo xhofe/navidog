@@ -13,7 +13,7 @@ use navidog_sql::dialect::Dialect;
 #[derive(Clone)]
 pub struct Commit {
     pub statements: Vec<String>,
-    pub begin: &'static str,
+    pub begin: String,
     pub dialect: Arc<dyn Dialect>,
 }
 
@@ -21,7 +21,7 @@ impl Commit {
     pub fn new(dialect: Arc<dyn Dialect>, statements: Vec<String>) -> Self {
         Self {
             statements,
-            begin: dialect.begin_transaction(),
+            begin: dialect.begin_transaction().to_owned(),
             dialect,
         }
     }
@@ -38,11 +38,17 @@ pub async fn apply(
     in_tx: bool,
     end: bool,
 ) -> DbResult<()> {
-    const SAVEPOINT: &str = "SAVEPOINT navidog_apply";
+    if !commit.dialect.grid_writes() {
+        return Err(DbError::msg(
+            "This driver has not declared safe grid transaction and savepoint operations.",
+        ));
+    }
+    let savepoint = commit.dialect.savepoint_sql();
+    let rollback_savepoint = commit.dialect.rollback_savepoint_sql();
     let (start, undo) = if in_tx {
-        (SAVEPOINT, "ROLLBACK TO SAVEPOINT navidog_apply")
+        (savepoint, rollback_savepoint)
     } else {
-        (commit.begin, "ROLLBACK")
+        (commit.begin.as_str(), "ROLLBACK")
     };
     rel.execute(start).await?;
     for statement in &commit.statements {
