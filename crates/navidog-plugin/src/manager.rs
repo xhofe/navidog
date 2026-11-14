@@ -346,23 +346,24 @@ impl Plugins {
             let id: gpui_kit::SharedString =
                 format!("{}/{}", plugin.shell().id(), command.id).into();
             let action_id = id.clone();
-            cx.global_mut::<navidog_app_state::registry::CommandRegistry>()
-                .register(
-                    id,
-                    source.clone(),
-                    navidog_app_state::registry::CommandInfo {
-                        title: command.title.clone().into(),
-                        icon: command.icon.clone().map(Into::into),
-                        shortcut: command.shortcut.clone().map(Into::into),
-                        action: std::rc::Rc::new(move || {
-                            Box::new(navidog_app_state::plugin::PluginCommand {
-                                id: action_id.clone(),
-                            })
-                        }),
-                        locations: vec![command.menu.clone().into()],
-                        enabled: None,
-                    },
-                )
+            use navidog_app_state::registry::{
+                CommandGroup, CommandInfo, CommandRegistry, CommandTitle,
+            };
+            let mut info = CommandInfo::new(
+                CommandGroup::Other(plugin.shell().name().to_string().into()),
+                CommandTitle::static_text(command.title.clone()),
+                move || {
+                    Box::new(navidog_app_state::plugin::PluginCommand {
+                        id: action_id.clone(),
+                    })
+                },
+            )
+            .hidden_from_palette();
+            info.icon = command.icon.clone().map(Into::into);
+            info.shortcut = command.shortcut.clone().map(Into::into);
+            info.locations = vec![command.menu.clone().into()];
+            cx.global_mut::<CommandRegistry>()
+                .register(id, source.clone(), info)
                 .map_err(|e| e.to_string())?;
         }
         let contributions = cx.global_mut::<Contributions>();

@@ -207,11 +207,44 @@ impl Auth {
     }
 }
 
+/// A public key offered in a `publickey` authentication request
+/// (RFC 4252 §7), passed to [`Handler::auth_publickey_offered`].
+///
+/// Ownership of the key has not been verified at this stage.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy)]
+pub struct PublicKeyOffer<'a> {
+    /// The offered public key.
+    pub public_key: &'a ssh_key::PublicKey,
+    /// The public key algorithm named in the request.
+    ///
+    /// The same RSA key can be offered as `ssh-rsa` (SHA-1), `rsa-sha2-256`
+    /// or `rsa-sha2-512` (RFC 8332). For an OpenSSH certificate, this is the
+    /// signature algorithm the certificate type maps to (for example
+    /// `rsa-sha2-256` for `rsa-sha2-256-cert-v01@openssh.com`).
+    pub algorithm: &'a ssh_key::Algorithm,
+}
+
+/// A public key whose ownership has been verified, passed to
+/// [`Handler::auth_publickey`].
+///
+/// Only russh creates values of this type, after verifying the signature
+/// of the request.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy)]
+pub struct VerifiedPublicKey<'a> {
+    /// The verified public key.
+    pub public_key: &'a ssh_key::PublicKey,
+    /// The algorithm of the verified signature, which is also the
+    /// algorithm named in the request (`ssh-rsa`, `rsa-sha2-256`,
+    /// `ssh-ed25519`, ...).
+    pub algorithm: &'a ssh_key::Algorithm,
+}
+
 /// Server handler. Each client will have their own handler.
 ///
 /// Note: this is an async trait. The trait functions return `impl Future`,
 /// and you can simply define them as `async fn` instead.
-#[cfg_attr(feature = "async-trait", async_trait::async_trait)]
 pub trait Handler: Sized {
     type Error: From<crate::Error> + Send;
 
@@ -256,6 +289,10 @@ pub trait Handler: Sized {
     /// in most cases not be counted towards an eventual authentication
     /// attempt limit.
     ///
+    /// [`PublicKeyOffer::algorithm`] gives the algorithm named in the
+    /// request, which lets a server apply a policy similar to OpenSSH's
+    /// `PubkeyAcceptedAlgorithms`.
+    ///
     /// The default implementation accepts all keys, allowing them to
     /// proceed to [`Handler::auth_publickey`].
     ///
@@ -265,7 +302,7 @@ pub trait Handler: Sized {
     fn auth_publickey_offered(
         &mut self,
         user: &str,
-        public_key: &ssh_key::PublicKey,
+        offer: PublicKeyOffer<'_>,
     ) -> impl Future<Output = Result<Auth, Self::Error>> + Send {
         async { Ok(Auth::Accept) }
     }
@@ -274,13 +311,16 @@ pub trait Handler: Sized {
     /// is called after the signature has been verified and key
     /// ownership has been confirmed.
     ///
+    /// [`VerifiedPublicKey::algorithm`] gives the algorithm of the
+    /// verified signature.
+    ///
     /// Russh makes sure rejection takes a constant [`Config::auth_rejection_time`],
     /// except if this method takes more than that.
     #[allow(unused_variables)]
     fn auth_publickey(
         &mut self,
         user: &str,
-        public_key: &ssh_key::PublicKey,
+        key: VerifiedPublicKey<'_>,
     ) -> impl Future<Output = Result<Auth, Self::Error>> + Send {
         async { Ok(Auth::reject()) }
     }
@@ -885,7 +925,6 @@ impl<F: Future<Output = std::io::Result<()>> + Unpin + Send> Future for RunningS
     }
 }
 
-#[cfg_attr(feature = "async-trait", async_trait::async_trait)]
 /// Trait used to create new handlers when clients connect.
 pub trait Server {
     /// The type of handlers.
@@ -1137,12 +1176,17 @@ async fn reply<H: Handler + Send>(
             pkt.seqn.0,
             pkt.buffer.len()
         );
-        let strict_kex = match session.kex {
-            SessionKexState::InProgress(ref kex) => kex.strict_kex(),
-            _ => session.common.strict_kex,
+        let (strict_kex, guess_ignored) = match session.kex {
+            SessionKexState::InProgress(ref kex) => (kex.strict_kex(), kex.guess_ignored()),
+            _ => (session.common.strict_kex, false),
         };
         if strict_kex && session.common.encrypted.is_none() {
-            let seqno = pkt.seqn.0 - 1; // was incremented after read()
+            let mut seqno = pkt.seqn.0 - 1; // was incremented after read()
+            // A wrong first_kex_packet_follows guess took sequence number 1 (and was validated as
+            // the KEX packet it is): the real KEX packet and NEWKEYS follow one later.
+            if guess_ignored && seqno >= 2 {
+                seqno -= 1;
+            }
             validate_client_msg_strict_kex(*message_type, seqno as usize)?;
         }
 

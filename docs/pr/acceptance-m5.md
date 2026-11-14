@@ -40,7 +40,7 @@
 6. Dock 保存布局恢复缺失/停用插件身份已通过 dock UI 测试；已打开面板表有弱实体去重。另一窗口的同一面板实体停用占位、再启用恢复及 Dialog 操作已通过 management UI 回归。
 7. 服务监督入口通过官方 Task.is_done 和 timer 检测任务结束；无限循环触发官方 watchdog 后的运输层停用已通过 failure 检查（约 5 秒）。面板 build_error 同步撤销；已打开草稿保留。
 8. JS 堆无公开硬上限，官方 watchdog/栈限制不可配置；M5 不提供进程隔离。
-9. gpui-shell 0.8.1 标准库要求 RSA rc.19，当前 russh 0.64.1 固定 rc.18；保留最新版协议实现的本地兼容补丁只改 RSA/PKCS pins 及 PKCS#1 borrowed 类型名。在线 audit 和 SSH live 通过；上游兼容后应移除 vendor patch。
+9. 初版兼容补丁基于 russh 0.64.1；与 main 同步时升级为 0.65.1。gpui-shell 0.8.1 标准库要求 RSA rc.19，已发布的 russh 0.65.1 固定 rc.18；保留最新版协议实现的本地兼容补丁只改 RSA/PKCS pins 及 PKCS#1 borrowed 类型名。在线 audit 和 SSH live 通过；上游兼容后应移除 vendor patch。
 10. 76 张现有/新增截图已逐张查看（浅深色插件页与回归联系表），最终全量与截图测试通过。release 真实执行器 HTTP 取消 541ms。同 main commit 无插件 release 已独立重编译；二十列全启用插件显示规则 avg 3.31/4.46ms，0/600 帧超过 8.3ms，比无规则约增 0.14/0.17ms。
 
 最终 410 项/75 套件、101 项实库回归与 PostgreSQL/MySQL HTTP 两套验收通过，Docker 测试服务已关闭。M6 向导、M2/M3 历史目测和既有 M4 遗留不在本次范围。测试截图保留 target/snapshots，不提交 git。

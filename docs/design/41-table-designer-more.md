@@ -34,11 +34,14 @@ ALTER TABLE t ADD CONSTRAINT name EXCLUDE USING gist (expr WITH operator) WHERE 
 
 MySQL 写在 `CREATE` / `ALTER TABLE … PARTITION BY` 子句里。PostgreSQL 父表是 `PARTITION BY method (key)`，每个分区是 `CREATE TABLE name PARTITION OF parent FOR VALUES …`，和父表改动放在同一事务。已有分区表只改列表时，能 `ATTACH` / `DETACH` 的按名称做；方式或键变了明确拒绝，不重建父表。SQLite 没有这一页。
 
+加载已有表时，只把顶层 `PARTITION BY` 子句读入分区草稿。MySQL `SHOW CREATE TABLE` 若用一个或多个版本注释包住末尾的分区子句，读取时去掉包装并按顺序合并；表注释里出现 `PARTITION BY` 仍是普通文本。只改表注释时，预览和保存都不改分区。
+
 ## 4. 迁移
 
 仍先预览再执行。预览在语句前加一行注释，说明这是整表重建；转成 `WITHOUT ROWID` 时再写明隐式 rowid 会丢掉。注释不执行。
 
 - PostgreSQL 现有列顺序变化：同一事务里 `CREATE TABLE` 临时名（列按新顺序，含约束）、按 `original` 列名 `INSERT … SELECT`、`DROP TABLE` 旧表（不用 `CASCADE`）、临时表改回原名、重建独立索引、再写注释和拥有者。入站外键或视图挡住 `DROP` 时整笔回滚，错误原文留下。不在表达式里替换标识符。
+- PostgreSQL 序列：从 `pg_depend` 读取原表各列实际拥有的普通序列（自动依赖），纳入保存前的外部变更检查。重建只为保留的原列转移这些归属，保留序列状态和完整默认表达式；仅引用其他列或其他表的序列不会改归属。执行时先锁住待迁移序列再复查；挂回前让替换表与原序列的角色所有者一致。若删除序列所属列但还有默认值依赖该序列，按 PostgreSQL 的 `RESTRICT` 行为拒绝并回滚。identity 序列仍走 identity 逻辑。旧快照没有归属信息时，重建前要求重新加载表。
 - identity：只改了 `GENERATED … AS IDENTITY` 子句时，添加用 `ADD GENERATED {ALWAYS|BY DEFAULT} AS IDENTITY`，删除用 `DROP IDENTITY`，模式切换仍用 `SET GENERATED`。括号里的序列选项必须与原来相同，否则拒绝。和其他列改动一起出现时，先做类型 / NULL / DEFAULT，再做 identity。
 - SQLite 生成列：重建时把生成列写进 `CREATE`，`INSERT` 不包含它们。表达式原样拷贝，不求值。
 - SQLite 已有表切换 `WITHOUT ROWID`：允许。不拷贝隐式 `rowid`。普通表重建仍拷贝一个未占用的 rowid 别名。
@@ -50,7 +53,9 @@ MySQL 写在 `CREATE` / `ALTER TABLE … PARTITION BY` 子句里。PostgreSQL �
 - [ ] 排除约束可添加、修改、删除，PostgreSQL 实库往返。
 - [ ] 三种库的触发器可添加和替换，失败回滚或保留草稿。
 - [ ] MySQL 与 PostgreSQL 的分区方式和列表可预览并执行；改方式被拒绝。
+- [x] MySQL 和 MariaDB 回读含 `PARTITION BY` 字样的表注释，分区状态正确；修改注释后分区定义不变。见[验收记录](../pr/acceptance-partition-comments.md)。
 - [x] PostgreSQL 列重排在事务内完成，有依赖时整笔失败。
+- [x] PostgreSQL 实库重建后，原 `serial` 序列继续自增，引用其他表的序列仍归原主列；预览后的归属变更会阻止保存。见[验收记录](../pr/acceptance-postgres-sequence-ownership.md)。
 - [x] identity 可添加、删除和切换模式；改序列选项被拒绝。
 - [x] SQLite 生成列、`WITHOUT ROWID` 和合并重命名保留数据，预览写明重建。
 - [x] 未知选项、依赖字段、附加库重建仍被拒绝。

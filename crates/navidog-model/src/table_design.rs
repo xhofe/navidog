@@ -60,6 +60,8 @@ pub struct TableSnapshot {
     pub unknown: Vec<String>,
     #[serde(default)]
     pub attachments: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owned_sequences: Option<Vec<OwnedSequence>>,
 }
 
 impl TableSnapshot {
@@ -71,6 +73,48 @@ impl TableSnapshot {
             revision: None,
             unknown: Vec::new(),
             attachments: Vec::new(),
+            owned_sequences: None,
+        }
+    }
+
+    /// This metadata is absent in snapshots from legacy layouts and plugin drivers.
+    pub fn owned_sequences(&self) -> Option<&[OwnedSequence]> {
+        self.owned_sequences.as_deref()
+    }
+
+    pub fn with_owned_sequences(mut self, sequences: Option<Vec<OwnedSequence>>) -> Self {
+        self.owned_sequences = sequences;
+        self
+    }
+
+    pub fn matches_baseline(&self, before: &Self) -> bool {
+        self.design == before.design
+            && self.ddl == before.ddl
+            && self.triggers == before.triggers
+            && self.revision == before.revision
+            && self.unknown == before.unknown
+            && self.attachments == before.attachments
+            // Legacy drafts can save without rebuilding; rebuilds require a fresh baseline.
+            && (before.owned_sequences.is_none() || self.owned_sequences == before.owned_sequences)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct OwnedSequence {
+    pub column: String,
+    pub schema: String,
+    pub name: String,
+    pub oid: u32,
+}
+
+impl OwnedSequence {
+    pub fn new(column: String, schema: String, name: String, oid: u32) -> Self {
+        Self {
+            column,
+            schema,
+            name,
+            oid,
         }
     }
 }

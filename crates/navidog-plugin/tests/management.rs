@@ -1,6 +1,9 @@
 //! Approval UI invokes the actual isolated runtime and publishes all declared contributions.
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{AppContext as _, TestAppContext, WindowOptions};
+use navidog_app_state::registry::{
+    CommandGroup, CommandInfo, CommandRegistry, CommandTitle, Source,
+};
 use navidog_plugin::{Plugins, preferences::PluginPreferences};
 #[gpui_kit::test]
 fn discover_partial_approval_disable_and_reload_cleanup(cx: &mut TestAppContext) {
@@ -29,6 +32,17 @@ fn discover_partial_approval_disable_and_reload_cleanup(cx: &mut TestAppContext)
         navidog_session::init(cx);
         navidog_ui::theme::init(cx);
         navidog_ui::tabs::init(cx);
+        cx.global_mut::<CommandRegistry>()
+            .register(
+                "query.new",
+                Source::Builtin,
+                CommandInfo::new(
+                    CommandGroup::Query,
+                    CommandTitle::static_text("New Query"),
+                    || Box::new(navidog_app_state::actions::NewQuery),
+                ),
+            )
+            .unwrap();
         navidog_plugin::init(cx);
     });
     let (handle, _) = cx
@@ -69,6 +83,18 @@ fn discover_partial_approval_disable_and_reload_cleanup(cx: &mut TestAppContext)
             "{:?}",
             plugins.read(cx).installations()[0].failure()
         );
+        let registry = cx.global::<CommandRegistry>();
+        let command = registry.get("com.example.commands/tools").unwrap();
+        assert!(!command.show_in_palette);
+        assert_eq!(
+            (command.action)()
+                .as_any()
+                .downcast_ref::<navidog_app_state::actions::PluginCommand>()
+                .unwrap()
+                .id,
+            "com.example.commands/tools"
+        );
+        assert!(registry.get("query.new").is_some());
         let approval = plugins.read(cx).approval("com.example.commands");
         assert!(!approval.granted.contains("editor.write"));
         assert!(approval.granted.contains("grid.read"));
@@ -278,6 +304,9 @@ fn discover_partial_approval_disable_and_reload_cleanup(cx: &mut TestAppContext)
         )
     });
     cx.read(|cx| {
+        let registry = cx.global::<CommandRegistry>();
+        assert!(registry.get("query.new").is_some());
+        assert!(registry.get("com.example.commands/tools").is_none());
         assert!(!cx.key_bindings().borrow().bindings().any(|binding| {
             binding
                 .action()

@@ -108,6 +108,29 @@ impl Dialect for PostgresDialect {
     fn exclusive_lock_sql(&self, qualified: &str) -> Option<String> {
         Some(format!("LOCK TABLE {qualified} IN ACCESS EXCLUSIVE MODE"))
     }
+    fn owned_sequences_sql(&self, qualified: &str) -> Option<String> {
+        Some(format!(
+            "SELECT a.attname, n.nspname, s.relname, s.oid \
+             FROM pg_catalog.pg_depend dep \
+             JOIN pg_catalog.pg_class s ON s.oid = dep.objid AND s.relkind = 'S' \
+             JOIN pg_catalog.pg_namespace n ON n.oid = s.relnamespace \
+             JOIN pg_catalog.pg_attribute a ON a.attrelid = dep.refobjid AND a.attnum = dep.refobjsubid \
+             WHERE dep.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND dep.objsubid = 0 \
+               AND dep.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass \
+               AND dep.refobjid = {}::pg_catalog.regclass AND dep.deptype = 'a' \
+               AND a.attnum > 0 AND NOT a.attisdropped \
+             ORDER BY a.attnum, s.oid",
+            self.string_literal(qualified)
+        ))
+    }
+    fn lock_owned_sequence_sql(&self, qualified: &str) -> Option<String> {
+        // LOCK TABLE does not accept a sequence. This read takes a transaction-long
+        // RowExclusiveLock, which conflicts with ALTER SEQUENCE, without advancing it.
+        Some(format!(
+            "SELECT pg_catalog.pg_sequence_last_value({}::pg_catalog.regclass)",
+            self.string_literal(qualified)
+        ))
+    }
     fn table_owner_sql(&self, table: &str, owner: &str) -> Option<String> {
         Some(format!(
             "ALTER TABLE {table} OWNER TO {}",

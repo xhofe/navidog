@@ -8,6 +8,7 @@ rust_i18n::i18n!("locales", fallback = "en");
 pub mod actions;
 mod editors;
 pub mod main_window;
+mod menu_catalog;
 mod menus;
 mod opening;
 mod popout;
@@ -113,8 +114,8 @@ pub fn init_with_settings(cx: &mut App, settings: Settings) {
     navidog_grid::init(cx);
     navidog_query::init(cx);
     navidog_designer::init(cx);
+    menu_catalog::init(cx);
     navidog_plugin::init(cx);
-    register_commands(cx);
     cx.set_global(AppState::load());
 }
 
@@ -139,23 +140,6 @@ pub fn apply_theme(window: Option<&mut gpui_kit::Window>, cx: &mut App) {
         &s.syntax_colors.light
     };
     navidog_ui::theme::apply_syntax_colors(colors, cx);
-}
-
-/// Shell commands shown on the main toolbar.
-fn register_commands(cx: &mut App) {
-    use navidog_app_state::registry::{CommandInfo, CommandRegistry, Source};
-    let _ = cx.global_mut::<CommandRegistry>().0.register(
-        "query.new",
-        Source::Builtin,
-        CommandInfo {
-            title: "toolbar.new_query".into(),
-            icon: Some("icons/square-terminal.svg".into()),
-            shortcut: Some("cmd-y".into()),
-            action: std::rc::Rc::new(|| Box::new(navidog_app_state::actions::NewQuery)),
-            locations: Vec::new(),
-            enabled: None,
-        },
-    );
 }
 
 pub fn main_window_options(state: &AppState, cx: &mut App) -> WindowOptions {

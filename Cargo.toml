@@ -60,5 +60,5 @@ opt-level = "s"
 # (21-table-viewer.md §1); release keeps "s".
 
 [patch.crates-io]
-# Published russh pins RSA rc.18; Shell 0.8.1 requires rc.19. See vendor/russh/README.navidog.md.
+# Published russh 0.65.1 pins RSA rc.18; Shell 0.8.1 requires rc.19. See vendor/russh/README.navidog.md.
 russh = { path = "vendor/russh" }

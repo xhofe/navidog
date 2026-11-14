@@ -314,6 +314,14 @@ pub trait Dialect: std::fmt::Debug + Send + Sync {
     fn exclusive_lock_sql(&self, _qualified: &str) -> Option<String> {
         None
     }
+    /// Rows of column name, sequence schema/name, and sequence OID for ordinary owned sequences.
+    fn owned_sequences_sql(&self, _qualified: &str) -> Option<String> {
+        None
+    }
+    /// Acquires a transaction lock that conflicts with changing a sequence's ownership.
+    fn lock_owned_sequence_sql(&self, _qualified: &str) -> Option<String> {
+        None
+    }
     /// `ALTER TABLE ... OWNER TO`, when the product has table owners.
     fn table_owner_sql(&self, _table: &str, _owner: &str) -> Option<String> {
         None
