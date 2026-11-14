@@ -230,9 +230,105 @@ pub struct TableSnapshot {
     pub design: TableDesign,
     pub ddl: String,
     pub triggers: Vec<String>,
+    /// `None` for older snapshots or dialects without PostgreSQL sequence ownership.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owned_sequences: Option<Vec<OwnedSequence>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct OwnedSequence {
+    column: String,
+    schema: String,
+    name: String,
+    oid: u32,
+}
+
+impl OwnedSequence {
+    fn qualified(&self, d: &dyn Dialect) -> String {
+        format!(
+            "{}.{}",
+            d.quote_ident(&self.schema),
+            d.quote_ident(&self.name)
+        )
+    }
+}
+
+impl TableSnapshot {
+    fn matches_baseline(&self, before: &Self) -> bool {
+        self.design == before.design
+            && self.ddl == before.ddl
+            && self.triggers == before.triggers
+            // Old drafts can still save without rebuilding. A rebuild separately
+            // requires the ownership baseline to be present in the preview.
+            && (before.owned_sequences.is_none() || self.owned_sequences == before.owned_sequences)
+    }
+}
+
+async fn load_owned_sequences(r: &mut dyn Relational, sql: &str) -> DbResult<Vec<OwnedSequence>> {
+    r.execute(sql)
+        .await?
+        .into_iter()
+        .flat_map(|set| set.rows)
+        .map(|row| {
+            let [Some(column), Some(schema), Some(name), Some(oid)] = row.as_slice() else {
+                return Err(DbError::msg(
+                    "Invalid PostgreSQL sequence ownership metadata.",
+                ));
+            };
+            Ok(OwnedSequence {
+                column: column.clone(),
+                schema: schema.clone(),
+                name: name.clone(),
+                oid: oid
+                    .parse()
+                    .map_err(|_| DbError::msg("Invalid PostgreSQL sequence ownership metadata."))?,
+            })
+        })
+        .collect()
 }
 
 pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult<TableSnapshot> {
+    let d = r.dialect();
+    let scoped_path = d
+        .features()
+        .enriches_from_catalog
+        .then(|| scope.schema.as_deref().or(d.default_schema()))
+        .flatten()
+        .and_then(|schema| d.set_search_path_sql(schema));
+    let Some(set_path) = scoped_path else {
+        return load_in_context(r, scope, name).await;
+    };
+    // Deparse defaults under the same search path used to apply the plan. A regclass
+    // literal outside this schema must stay qualified when it is replayed.
+    let context = d.session_context_sql().ok_or_else(missing_search_path)?;
+    let sets = r.execute(context).await?;
+    let path = sets
+        .iter()
+        .flat_map(|set| &set.rows)
+        .next()
+        .and_then(|row| row.get(2))
+        .and_then(|cell| cell.as_deref())
+        .ok_or_else(missing_search_path)?;
+    let restore = d
+        .restore_search_path_sql(path)
+        .ok_or_else(missing_search_path)?;
+    r.execute(&set_path).await?;
+    let result = load_in_context(r, scope, name).await;
+    let restored = r.execute(&restore).await;
+    let snapshot = result?;
+    restored?;
+    Ok(snapshot)
+}
+
+fn missing_search_path() -> DbError {
+    DbError::msg("Could not read or restore the schema search path.")
+}
+
+async fn load_in_context(
+    r: &mut dyn Relational,
+    scope: &Scope,
+    name: &str,
+) -> DbResult<TableSnapshot> {
     let dialect = r.dialect();
     let mut ddl = r.object_ddl(scope, ObjectKind::Table, name).await?;
     let mut design = parse::create(&ddl, name, dialect.as_ref())?;
@@ -313,6 +409,12 @@ pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult
                 .unwrap_or_default()
         ));
     }
+    let owned_sequences =
+        if let Some(sql) = dialect.owned_sequences_sql(&dialect.qualified(scope, name)) {
+            Some(load_owned_sequences(r, &sql).await?)
+        } else {
+            None
+        };
     let mut triggers = Vec::new();
     if dialect.features().rebuilds_tables {
         let sql = format!(
@@ -349,6 +451,7 @@ pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult
         design,
         ddl,
         triggers,
+        owned_sequences,
     })
 }
 
@@ -393,7 +496,7 @@ pub async fn apply(
     let before = legacy_before.as_ref();
     if let Some(old) = before {
         let current = load(r, scope, &old.design.name).await?;
-        if &current != old {
+        if !current.matches_baseline(old) {
             return Err(DbError::msg(
                 "The table changed outside this designer. Reload before saving.",
             ));
@@ -470,7 +573,13 @@ pub async fn apply(
             if let Some(sql) = d.exclusive_lock_sql(&d.qualified(scope, &old.design.name)) {
                 r.execute(&sql).await?;
             }
-            if load(r, scope, &old.design.name).await? != *old {
+            for (sequence, _) in plan::transferred_sequences(d.as_ref(), old, after)? {
+                let sql = d.lock_owned_sequence_sql(&sequence.qualified(d.as_ref())).ok_or_else(|| {
+                    DbError::msg("Cannot lock a sequence before transferring its ownership.")
+                })?;
+                r.execute(&sql).await?;
+            }
+            if !load(r, scope, &old.design.name).await?.matches_baseline(old) {
                 return Err(DbError::msg(
                     "The table changed outside this designer. Reload before saving.",
                 ));

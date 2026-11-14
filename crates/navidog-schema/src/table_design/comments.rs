@@ -219,6 +219,7 @@ mod tests {
             design,
             ddl: String::new(),
             triggers: vec![],
+            owned_sequences: None,
         }
     }
     #[test]
