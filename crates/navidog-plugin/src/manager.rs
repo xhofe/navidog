@@ -1,6 +1,6 @@
 //! Plugin lifecycle owns approval persistence, runtime generations and contribution cleanup.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Window};
 use navidog_app_state::{
@@ -52,7 +52,7 @@ impl Installation {
 }
 pub struct Plugins {
     root: PathBuf,
-    file: PluginsFile,
+    file: Result<PluginsFile, String>,
     installations: Vec<Installation>,
     failure: Option<String>,
     watch: Option<gpui_kit::Task<()>>,
@@ -60,18 +60,22 @@ pub struct Plugins {
 }
 struct GlobalPlugins(Entity<Plugins>);
 impl Global for GlobalPlugins {}
+
+fn settings_path(root: &Path) -> PathBuf {
+    root.parent().unwrap_or(root).join("plugins.json")
+}
+
 impl Plugins {
     pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalPlugins>().0.clone()
     }
     pub fn new(root: PathBuf) -> Self {
-        let loaded = PluginsFile::load(&root.parent().unwrap_or(&root).join("plugins.json"));
-        let failure = loaded.as_ref().err().cloned();
+        let file = PluginsFile::load(&settings_path(&root));
         Self {
             root,
-            file: loaded.unwrap_or_default(),
+            file,
             installations: Vec::new(),
-            failure,
+            failure: None,
             watch: None,
             next_generation: 0,
         }
@@ -80,13 +84,22 @@ impl Plugins {
         &self.installations
     }
     pub fn failure(&self) -> Option<&str> {
-        self.failure.as_deref()
+        self.file
+            .as_ref()
+            .err()
+            .map(String::as_str)
+            .or(self.failure.as_deref())
     }
     pub fn root(&self) -> &std::path::Path {
         &self.root
     }
     pub fn approval(&self, id: &str) -> Approval {
-        self.file.approval(id).cloned().unwrap_or_default()
+        self.file
+            .as_ref()
+            .ok()
+            .and_then(|file| file.approval(id))
+            .cloned()
+            .unwrap_or_default()
     }
     pub fn scan(&mut self, cx: &mut Context<Self>) {
         // Rescanning uses the same stop boundary; a new manifest never replaces live code in place.
@@ -109,24 +122,21 @@ impl Plugins {
                 source_revision: source_revision(&directory),
             })
             .collect();
+        let Ok(file) = &mut self.file else {
+            cx.notify();
+            return;
+        };
+        let path = settings_path(&self.root);
         for installation in &mut self.installations {
             if let Ok(plugin) = &installation.plugin {
-                let mut approval = self
-                    .file
+                let mut approval = file
                     .approval(plugin.shell().id())
                     .cloned()
                     .unwrap_or_default();
                 if approval.reconcile(plugin.requested(), plugin.fingerprint().into()) {
                     installation.failure = Some("New capabilities require approval.".into());
                 }
-                let path = self
-                    .root
-                    .parent()
-                    .unwrap_or(&self.root)
-                    .join("plugins.json");
-                if let Err(error) =
-                    self.file
-                        .save_approval(&path, plugin.shell().id().into(), approval)
+                if let Err(error) = file.save_approval(&path, plugin.shell().id().into(), approval)
                 {
                     self.failure = Some(error);
                 }
@@ -195,15 +205,10 @@ impl Plugins {
     pub fn disable(&mut self, id: &str, cx: &mut Context<Self>) -> Result<(), String> {
         let mut approval = self.approval(id);
         approval.enabled = false;
-        self.file.save_approval(
-            &self
-                .root
-                .parent()
-                .unwrap_or(&self.root)
-                .join("plugins.json"),
-            id.into(),
-            approval,
-        )?;
+        self.file
+            .as_mut()
+            .map_err(|error| error.clone())?
+            .save_approval(&settings_path(&self.root), id.into(), approval)?;
         self.stop(id, "Plugin disabled.", cx);
         Ok(())
     }
@@ -214,6 +219,7 @@ impl Plugins {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
+        let file = self.file.as_mut().map_err(|error| error.clone())?;
         let ix = self
             .installations
             .iter()
@@ -226,15 +232,7 @@ impl Plugins {
         {
             return Err("Plugin capabilities changed; review permissions again.".into());
         }
-        self.file.save_approval(
-            &self
-                .root
-                .parent()
-                .unwrap_or(&self.root)
-                .join("plugins.json"),
-            id.into(),
-            approval.clone(),
-        )?;
+        file.save_approval(&settings_path(&self.root), id.into(), approval.clone())?;
         self.stop(id, "Plugin reloaded.", cx);
         self.installations[ix].plugin = Ok(plugin.clone());
         let bridge = Bridge::new(self.installations[ix].generation, approval.limits)
@@ -287,6 +285,7 @@ impl Plugins {
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
         let mut approval = self.approval(id);
+        let file = self.file.as_mut().map_err(|error| error.clone())?;
         let directory = self
             .installations
             .iter()
@@ -302,15 +301,7 @@ impl Plugins {
             }
         };
         if approval.reconcile(plugin.requested(), plugin.fingerprint().into()) {
-            self.file.save_approval(
-                &self
-                    .root
-                    .parent()
-                    .unwrap_or(&self.root)
-                    .join("plugins.json"),
-                id.into(),
-                approval,
-            )?;
+            file.save_approval(&settings_path(&self.root), id.into(), approval)?;
             self.stop(id, "New capabilities require approval.", cx);
             return Err("New capabilities require approval.".into());
         }
