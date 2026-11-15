@@ -17,7 +17,7 @@
 | M2 对象树、对象选项卡、表查看器 | 进行中 | `m2-specs`、`m2-objects-grid` | 20-objects、21-table-viewer | 任务都已完成，剩两份规格验收清单里的并排目测 |
 | M3 查询编辑器 | 进行中 | `feat/m3`、`codex/m3-completion` | 30-query-editor、31-query-results | 运行/选择/当前语句/停止、存储过程、结果上限和命令列交互验收已补齐；剩配色、解释视图和消息措辞的目测项。见 [本机验收记录](pr/acceptance-m3.md)。查询创建工具（F-QRY-013）移到 M7 |
 | M4 表设计器及其他对象设计器 | 完成 | `feat/m4-remainder` | 40、41、42、43 | 查询创建工具留在 M7。偏差见第 4 节。见 [验收记录](pr/acceptance-m4-remainder.md) |
-| M5 插件体系 | 完成 | `m5-plugin-system` | 03-plugin-api | 宿主、扩展点、JS 驱动与声明式原生设计器、作者文档和实库/UI/性能验收完成，见 [验收记录](pr/acceptance-m5.md) |
+| M5 插件体系 | 完成 | `m5-plugin-system` | 03-plugin-api | 宿主、扩展点、JS 驱动与声明式原生设计器、作者文档和实库/UI/性能验收完成，见 [验收记录](pr/acceptance-m5.md)；补齐[插件配置读失败保护](pr/acceptance-plugin-settings-recovery.md) |
 | M6 导入导出 | 未开始 | | | |
 | M7 模型和 ER 图 | 未开始 | | | 含查询创建工具，与 ER 图共用画布 |
 | M8 数据传输与同步 | 未开始 | | | |
@@ -288,6 +288,7 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 
 | 项目 | 引入于 | 计划处理 |
 | --- | --- | --- |
+| 无法读取插件配置时，保持插件停用与配置原样；恢复文件后需要重启 | M5 | 不自动覆盖或迁移；恢复步骤见[配置保护验收](pr/acceptance-plugin-settings-recovery.md) |
 | 表设计器已恢复字段网格和结构化表单；引擎私有属性表单、字段拖放和运行态 Navicat 并排仍未做 | M4 | ⌘↑ / ⌘↓ 移动字段。并排对照不阻塞本里程碑 |
 | 未知表选项、删除仍被依赖的字段、附加库上的表重建仍然拒绝 | M4 | 不自动丢掉依赖对象，不猜测生成表达式里的标识符 |
 | 不做加密 SQLite，不换 `bundled`，不做就地加密或解密，不做 SQLite 2 | M4 | 保持 rusqlite `bundled` |
@@ -367,12 +368,12 @@ M2 的任务都已完成，逐项记录见 git 历史；M2 的功能状态仍在
 | 功能 | 状态 | 验证 | 说明 |
 | --- | --- | --- | --- |
 | F-PLUG-001 插件加载 | 完成 | manifest/runtime/management/failure | 官方 0.8.1、独立 VM、同步 Policy；Task.is_done 监督与 watchdog 终止 |
-| F-PLUG-002 能力授权 | 完成 | settings/management/runtime | 默认停用、部分 grant、扩大申请停用、持久化、撤权重载 |
+| F-PLUG-002 能力授权 | 完成 | settings/management/runtime/approval_persistence | 默认停用、部分 grant、扩大申请停用、持久化、撤权重载；读取失败保留授权原文件 |
 | F-PLUG-003 命令与菜单 | 完成 | manifest、management、app-state context、plugin_context | 五处同一描述/Action、快捷键撤销、延迟插入原窗口与关闭失效通过 |
 | F-PLUG-004 导入导出格式 | 完成 | format/protocol | 可注册/调用/分批输入与回应、背压/限额；向导留 M6 |
 | F-PLUG-005 单元格格式化器 | 完成 | model 六规则/grid UI | 选择与持久化、复制原值、停用回退和恢复显示通过 |
 | F-PLUG-006 JS 驱动 | 完成 | HTTP PostgreSQL/MySQL、runtime_live、plugin_designer、schema/live | 必需目录、方言声明、网格写入、原生表/视图、字段控件、取消/部分失败/预览保护通过 |
 | F-PLUG-007 Dock 面板 | 完成 | management Dialog、dock、snapshot | 占位/布局恢复、已有面板去重与跨窗口停用原位恢复通过 |
-| F-PLUG-008 插件管理 | 完成 | management/settings/snapshot | 状态、授权、启停、重载、限额真实键盘保存重载及浅深色截图通过 |
+| F-PLUG-008 插件管理 | 完成 | management/settings/snapshot/approval_persistence | 状态、授权、启停、重载、限额真实键盘保存重载及浅深色截图通过；读取失败仍可发现插件，拒绝修改配置 |
 
 详情与临时偏差见 [pr/acceptance-m5.md](pr/acceptance-m5.md)。与最新 main 的整合验证见[同步验收](pr/acceptance-m5-main-sync.md)。M6 完整导入导出向导独立实施；Shell 堆/栈限制与 russh 兼容补丁维护见验收记录。
