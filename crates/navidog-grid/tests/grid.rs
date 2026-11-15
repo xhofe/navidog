@@ -809,3 +809,69 @@ fn hiding_a_column_keeps_a_pending_write(cx: &mut TestAppContext) {
         })
     });
 }
+
+#[gpui_kit::test]
+fn plugin_formatter_changes_display_selection_without_changing_copy_or_values(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        navidog_ui::theme::init(cx);
+        navidog_app_state::plugin::init(cx);
+        navidog_grid::init(cx);
+    });
+    let (handle, grid) = cx
+        .update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| ResultGrid::new(window, cx))
+            })
+        })
+        .unwrap();
+    cx.update(|cx|{
+        cx.global_mut::<navidog_app_state::plugin::Contributions>().formatters.register("plugin/number",navidog_app_state::registry::Source::Plugin("plugin".into()),serde_json::json!({"id":"number","match":{},"display":{"kind":"number","decimals":2,"grouping":true}})).unwrap();
+        grid.update(cx,|grid,cx|grid.set_data(vec![col("value",false)],vec![vec![Some("1234.5".into())]],cx));
+    });
+    cx.update_window(handle, |_, window, cx| {
+        use gpui_kit::Focusable as _;
+        window.render_frame(cx);
+        window.focus(&grid.focus_handle(cx), cx);
+        window.dispatch_action(
+            Box::new(navidog_grid::grid::SetFormatter {
+                column: "value".into(),
+                formatter: Some("plugin/number".into()),
+            }),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("cmd-c", cx);
+    })
+    .unwrap();
+    cx.update(|cx| {
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|c| c.text()).as_deref(),
+            Some("1234.5")
+        )
+    });
+    cx.read(|cx| assert_eq!(grid.read(cx).formatted_text(0, 0, cx), "1,234.50"));
+    cx.update(|cx| {
+        cx.global_mut::<navidog_app_state::plugin::Contributions>()
+            .remove(&navidog_app_state::registry::Source::Plugin(
+                "plugin".into(),
+            ))
+    });
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    cx.read(|cx| {
+        assert_eq!(
+            grid.read(cx).model(cx).value(0, 0).unwrap().as_deref(),
+            Some("1234.5")
+        )
+    });
+    cx.read(|cx| assert_eq!(grid.read(cx).formatted_text(0, 0, cx), "1234.5"));
+    cx.update(|cx|cx.global_mut::<navidog_app_state::plugin::Contributions>().formatters.register("plugin/number",navidog_app_state::registry::Source::Plugin("plugin".into()),serde_json::json!({"id":"number","match":{},"display":{"kind":"number","decimals":2,"grouping":true}})).unwrap());
+    cx.read(|cx| assert_eq!(grid.read(cx).formatted_text(0, 0, cx), "1,234.50"));
+}

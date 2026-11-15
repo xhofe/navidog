@@ -800,6 +800,62 @@ mod macos {
         shot_of(&mut cx, prefs, "preferences-dark.png");
         cx.update_window(prefs, |_, window, cx| {
             window.render_frame(cx);
+            window.click("page-插件", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        shot_of(&mut cx, prefs, "plugins-empty-dark.png");
+        cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
+        shot_of(&mut cx, prefs, "plugins-empty-light.png");
+        let plugin_source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/plugins/com.example.commands");
+        let plugin_dir = home.join("plugins/com.example.commands");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        for name in ["gpui-shell.json", "navidog.json", "main.js", "panel.js"] {
+            std::fs::copy(plugin_source.join(name), plugin_dir.join(name)).unwrap();
+        }
+        cx.update(|cx| {
+            navidog_plugin::Plugins::global(cx).update(cx, |plugins, cx| plugins.scan(cx))
+        });
+        cx.update_window(prefs, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("plugin-select-com.example.commands", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        shot_of(&mut cx, prefs, "plugins-detail-light.png");
+        cx.update(|cx| Theme::change(ThemeMode::Dark, None, cx));
+        shot_of(&mut cx, prefs, "plugins-detail-dark.png");
+        cx.update_window(prefs, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("plugin-toggle", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        shot_of(&mut cx, prefs, "plugins-approval-dark.png");
+        cx.update(|cx| Theme::change(ThemeMode::Light, None, cx));
+        shot_of(&mut cx, prefs, "plugins-approval-light.png");
+        cx.update_window(prefs, |_, window, cx| window.close_dialog(cx))
+            .unwrap();
+        cx.update_window(prefs, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("plugin-limits", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        shot_of(&mut cx, prefs, "plugins-limits-light.png");
+        cx.update(|cx| Theme::change(ThemeMode::Dark, None, cx));
+        shot_of(&mut cx, prefs, "plugins-limits-dark.png");
+        cx.update_window(prefs, |_, window, cx| window.close_dialog(cx))
+            .unwrap();
+
+        cx.update_window(prefs, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("page-常规", cx);
+        })
+        .unwrap();
+        cx.update_window(prefs, |_, window, cx| {
+            window.render_frame(cx);
             navidog::preferences::open_master_dialog(window, cx);
             window.render_frame(cx);
         })

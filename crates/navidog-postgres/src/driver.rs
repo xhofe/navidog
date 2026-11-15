@@ -37,7 +37,7 @@ impl Default for PostgresDriver {
         Self {
             info: DriverInfo {
                 default_port: navidog_model::connection::driver_defaults("postgres").port,
-                icon: "icons/db/postgresql.svg",
+                icon: "icons/db/postgresql.svg".into(),
                 multi_host: true,
                 supports_network: true,
                 supports_ssl: true,

@@ -1,5 +1,6 @@
 //! Lossless table drafts and guarded, dialect-specific schema changes.
 mod comments;
+pub use comments::TableComments;
 mod entries;
 mod options;
 mod parse;
@@ -7,88 +8,50 @@ mod properties;
 pub use entries::{DesignEntry, EntryKind, parse_entry, split_field_list};
 pub use options::{edit_table_option, table_option};
 pub use properties::{ColumnProperties, ColumnProperty, column_properties, edit_column};
+mod declared;
+mod preview;
+pub use preview::PreviewPlan;
 mod plan;
 #[cfg(test)]
 mod tests;
 
 use navidog_db::{DbError, DbResult, Relational};
 use navidog_model::object::{ObjectKind, Scope};
+use navidog_model::table_design::OwnedSequence;
+pub use navidog_model::table_design::{DesignColumn, TableDesign, TableSnapshot};
 use navidog_sql::dialect::Dialect;
 pub use plan::{plan, plan_with};
-use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct DesignColumn {
-    pub id: u64,
-    pub original: Option<String>,
-    pub name: String,
-    pub definition: String,
-    #[serde(default)]
-    pub comment: String,
+pub trait TableDesignExt {
+    fn new() -> Self;
+    fn blank(dialect: &dyn Dialect) -> Self;
+    fn is_blank(&self) -> bool;
+    fn create_sql(&self, dialect: &dyn Dialect, scope: &Scope, name: &str) -> DbResult<String>;
+    fn validate(&self, dialect: &dyn Dialect) -> DbResult<()>;
 }
-impl DesignColumn {
-    pub fn new(id: u64, name: impl Into<String>, definition: impl Into<String>) -> Self {
-        Self {
-            id,
-            original: None,
-            name: name.into(),
-            definition: definition.into(),
-            comment: String::new(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct TableDesign {
-    pub name: String,
-    pub columns: Vec<DesignColumn>,
-    pub constraints: Vec<String>,
-    pub indexes: Vec<String>,
-    pub options: String,
-    #[serde(default)]
-    pub comment: String,
-    #[serde(default)]
-    pub owner: String,
-    #[serde(default)]
-    pub unlogged: bool,
-    /// `None` means “use the snapshot’s trigger list”. `Some` is an explicit edit, including
-    /// an empty list when every trigger was removed.
-    #[serde(default)]
-    pub triggers: Option<Vec<String>>,
-    /// `PARTITION BY …` clause, without a leading space. Empty when the table is not partitioned.
-    #[serde(default)]
-    pub partition: String,
-    /// Extra statements for PostgreSQL child partitions (`CREATE TABLE … PARTITION OF`).
-    #[serde(default)]
-    pub partition_children: Vec<String>,
-}
-impl TableDesign {
-    pub fn new() -> Self {
-        Self {
-            columns: vec![DesignColumn::new(1, "id", "INTEGER NOT NULL")],
-            constraints: vec!["PRIMARY KEY (id)".into()],
-            ..Default::default()
-        }
+impl TableDesignExt for TableDesign {
+    fn new() -> Self {
+        let mut design = Self::default();
+        design.columns = vec![DesignColumn::new(1, "id", "INTEGER NOT NULL")];
+        design.constraints = vec!["PRIMARY KEY (id)".into()];
+        design
     }
     /// A new, unmodified table for this dialect. The `id` column uses the type the server
     /// prints back, so saving and reloading does not rewrite it.
-    pub fn blank(dialect: &dyn Dialect) -> Self {
-        Self {
-            columns: vec![DesignColumn::new(
-                1,
-                "id",
-                format!("{} NOT NULL", dialect.default_column_type()),
-            )],
-            constraints: vec!["PRIMARY KEY (id)".into()],
-            ..Default::default()
-        }
+    fn blank(dialect: &dyn Dialect) -> Self {
+        let mut design = Self::default();
+        design.columns = vec![DesignColumn::new(
+            1,
+            "id",
+            format!("{} NOT NULL", dialect.default_column_type()),
+        )];
+        design.constraints = vec!["PRIMARY KEY (id)".into()];
+        design
     }
     /// An untouched new table when the dialect is no longer known. A live designer compares
     /// against [`TableDesign::blank`] for that connection, so another dialect's id type counts
     /// as an edit.
-    pub fn is_blank(&self) -> bool {
+    fn is_blank(&self) -> bool {
         self.name.is_empty()
             && self.indexes.is_empty()
             && self.options.is_empty()
@@ -110,7 +73,7 @@ impl TableDesign {
                 "int NOT NULL" | "integer NOT NULL" | "INTEGER NOT NULL"
             )
     }
-    pub fn create_sql(&self, dialect: &dyn Dialect, scope: &Scope, name: &str) -> DbResult<String> {
+    fn create_sql(&self, dialect: &dyn Dialect, scope: &Scope, name: &str) -> DbResult<String> {
         self.validate(dialect)?;
         let mut parts: Vec<_> = self
             .columns
@@ -224,44 +187,12 @@ impl TableDesign {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct TableSnapshot {
-    pub design: TableDesign,
-    pub ddl: String,
-    pub triggers: Vec<String>,
-    /// `None` for older snapshots or dialects without PostgreSQL sequence ownership.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    owned_sequences: Option<Vec<OwnedSequence>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct OwnedSequence {
-    column: String,
-    schema: String,
-    name: String,
-    oid: u32,
-}
-
-impl OwnedSequence {
-    fn qualified(&self, d: &dyn Dialect) -> String {
-        format!(
-            "{}.{}",
-            d.quote_ident(&self.schema),
-            d.quote_ident(&self.name)
-        )
-    }
-}
-
-impl TableSnapshot {
-    fn matches_baseline(&self, before: &Self) -> bool {
-        self.design == before.design
-            && self.ddl == before.ddl
-            && self.triggers == before.triggers
-            // Old drafts can still save without rebuilding. A rebuild separately
-            // requires the ownership baseline to be present in the preview.
-            && (before.owned_sequences.is_none() || self.owned_sequences == before.owned_sequences)
-    }
+fn qualified_sequence(sequence: &OwnedSequence, d: &dyn Dialect) -> String {
+    format!(
+        "{}.{}",
+        d.quote_ident(&sequence.schema),
+        d.quote_ident(&sequence.name)
+    )
 }
 
 async fn load_owned_sequences(r: &mut dyn Relational, sql: &str) -> DbResult<Vec<OwnedSequence>> {
@@ -275,19 +206,27 @@ async fn load_owned_sequences(r: &mut dyn Relational, sql: &str) -> DbResult<Vec
                     "Invalid PostgreSQL sequence ownership metadata.",
                 ));
             };
-            Ok(OwnedSequence {
-                column: column.clone(),
-                schema: schema.clone(),
-                name: name.clone(),
-                oid: oid
-                    .parse()
-                    .map_err(|_| DbError::msg("Invalid PostgreSQL sequence ownership metadata."))?,
-            })
+            let oid = oid
+                .parse()
+                .map_err(|_| DbError::msg("Invalid PostgreSQL sequence ownership metadata."))?;
+            Ok(OwnedSequence::new(
+                column.clone(),
+                schema.clone(),
+                name.clone(),
+                oid,
+            ))
         })
         .collect()
 }
 
 pub async fn load(r: &mut dyn Relational, scope: &Scope, name: &str) -> DbResult<TableSnapshot> {
+    if let Some(snapshot) = r.table_snapshot(scope, name).await? {
+        let mut table = snapshot.snapshot.with_owned_sequences(None);
+        table.revision = Some(snapshot.revision);
+        table.unknown = snapshot.unknown;
+        table.attachments = snapshot.attachments;
+        return Ok(table);
+    }
     let d = r.dialect();
     let scoped_path = d
         .features()
@@ -447,12 +386,7 @@ async fn load_in_context(
         }
         design.triggers = Some(triggers.clone());
     }
-    Ok(TableSnapshot {
-        design,
-        ddl,
-        triggers,
-        owned_sequences,
-    })
+    Ok(TableSnapshot::new(design, ddl, triggers).with_owned_sequences(owned_sequences))
 }
 
 /// Table names in one SQLite database, used to pick a free `_table_old_YYYYMMDD` backup.
@@ -574,7 +508,7 @@ pub async fn apply(
                 r.execute(&sql).await?;
             }
             for (sequence, _) in plan::transferred_sequences(d.as_ref(), old, after)? {
-                let sql = d.lock_owned_sequence_sql(&sequence.qualified(d.as_ref())).ok_or_else(|| {
+                let sql = d.lock_owned_sequence_sql(&qualified_sequence(sequence, d.as_ref())).ok_or_else(|| {
                     DbError::msg("Cannot lock a sequence before transferring its ownership.")
                 })?;
                 r.execute(&sql).await?;

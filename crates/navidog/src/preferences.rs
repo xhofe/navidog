@@ -3,6 +3,7 @@
 
 mod query;
 
+use gpui_kit::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -61,6 +62,7 @@ enum Page {
     CodeCompletion,
     AutoRecovery,
     Advanced,
+    Plugins,
 }
 
 /// One row of the theme menu. The title is translated when drawn, so a language change updates it.
@@ -90,6 +92,7 @@ struct Preferences {
     records_per_page: Entity<InputState>,
     grid_font_pt: Entity<InputState>,
     query: query::QueryPrefs,
+    plugins: Entity<navidog_plugin::preferences::PluginPreferences>,
 }
 
 impl Preferences {
@@ -178,6 +181,7 @@ impl Preferences {
             records_per_page,
             grid_font_pt,
             query,
+            plugins: cx.new(navidog_plugin::preferences::PluginPreferences::new),
         }
     }
 
@@ -515,9 +519,14 @@ impl Render for Preferences {
             (Page::CodeCompletion, t!("prefs.code_completion_page")),
             (Page::AutoRecovery, t!("prefs.auto_recovery")),
             (Page::Advanced, t!("prefs.advanced")),
+            (
+                Page::Plugins,
+                navidog_plugin::preferences::title().to_string().into(),
+            ),
         ];
         let page = self.page;
         let content = match page {
+            Page::Plugins => self.plugins.clone().into_any_element(),
             Page::General => self.render_general(cx).into_any_element(),
             Page::Tabs => self.render_tabs(cx).into_any_element(),
             Page::Records => self.render_records(cx).into_any_element(),
@@ -572,6 +581,7 @@ impl Render for Preferences {
                                         this.page = pg;
                                         cx.notify();
                                     }))
+                                    .test_support()
                             })),
                     )
                     .child(

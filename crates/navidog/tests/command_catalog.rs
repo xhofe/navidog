@@ -28,6 +28,7 @@ fn built_in_commands_form_a_complete_localized_catalogue(cx: &mut TestAppContext
         rust_i18n::set_locale("en");
     });
 
+    let os = cx.read(|cx| cx.platform_info().os);
     let commands = read_commands(cx);
     assert_eq!(
         commands.len(),
@@ -49,7 +50,7 @@ fn built_in_commands_form_a_complete_localized_catalogue(cx: &mut TestAppContext
             command.id
         );
         if let Some(shortcut) = &command.shortcut {
-            Keystroke::parse(shortcut)
+            Keystroke::parse_with_os(shortcut, os)
                 .unwrap_or_else(|error| panic!("{} has an invalid shortcut: {error}", command.id));
         }
     }

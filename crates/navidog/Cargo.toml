@@ -19,6 +19,7 @@ navidog-connection.workspace = true
 navidog-navigator.workspace = true
 navidog-grid.workspace = true
 navidog-query.workspace = true
+navidog-plugin.workspace = true
 navidog-designer.workspace = true
 navidog-util.workspace = true
 serde.workspace = true
@@ -35,6 +36,7 @@ mimalloc = { version = "0.1", optional = true }
 mimalloc = ["dep:mimalloc"]
 
 [dev-dependencies]
+tempfile = "3"
 navidog-sqlite = { path = "../navidog-sqlite" }
 navidog-test-support = { path = "../navidog-test-support" }
 gpui-kit = { workspace = true, features = ["test-support"] }

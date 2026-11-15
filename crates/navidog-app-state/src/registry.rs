@@ -168,7 +168,6 @@ impl CommandTitle {
 
 /// A command: one Action shared by menus, toolbars, context menus and shortcuts. This is catalog
 /// metadata only; invoking it still dispatches the typed GPUI Action.
-#[derive(Debug)]
 pub struct CommandInfo {
     pub group: CommandGroup,
     pub title: CommandTitle,
@@ -182,13 +181,18 @@ pub struct CommandInfo {
     pub target: CommandTarget,
     /// Whether a palette without a target picker should list this command.
     pub show_in_palette: bool,
-    pub action: fn() -> Box<dyn Action>,
+    pub action: std::rc::Rc<dyn Fn() -> Box<dyn Action>>,
+    pub locations: Vec<SharedString>,
     /// Whether it is currently enabled (for example a database must be selected); `None` means always
     pub enabled: Option<fn(&App) -> bool>,
 }
 
 impl CommandInfo {
-    pub fn new(group: CommandGroup, title: CommandTitle, action: fn() -> Box<dyn Action>) -> Self {
+    pub fn new(
+        group: CommandGroup,
+        title: CommandTitle,
+        action: impl Fn() -> Box<dyn Action> + 'static,
+    ) -> Self {
         Self {
             group,
             title,
@@ -197,7 +201,8 @@ impl CommandInfo {
             keywords: &[],
             target: CommandTarget::None,
             show_in_palette: true,
-            action,
+            action: std::rc::Rc::new(action),
+            locations: Vec::new(),
             enabled: None,
         }
     }

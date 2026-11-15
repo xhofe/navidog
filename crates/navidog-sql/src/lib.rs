@@ -16,3 +16,7 @@ pub use dialect::{
     TableOptionStyle, TypeArgs, rename_create_table,
 };
 pub use span::Lex;
+
+pub mod template;
+
+pub mod declared;

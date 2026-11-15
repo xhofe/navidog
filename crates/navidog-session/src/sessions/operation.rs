@@ -42,6 +42,15 @@ impl OperationScope {
         params: ConnectParams,
         f: impl for<'a> FnOnce(&'a mut dyn Relational) -> BoxFuture<'a, DbResult<T>> + Send + 'static,
     ) -> JoinHandle<DbResult<T>> {
+        self.run_cancellable(driver, params, None, f)
+    }
+    pub(super) fn run_cancellable<T: Send + 'static>(
+        &self,
+        driver: Arc<dyn Driver>,
+        params: ConnectParams,
+        mut cancellation: Option<watch::Receiver<bool>>,
+        f: impl for<'a> FnOnce(&'a mut dyn Relational) -> BoxFuture<'a, DbResult<T>> + Send + 'static,
+    ) -> JoinHandle<DbResult<T>> {
         let mut revoked = self.revoked.subscribe();
         runtime::spawn(async move {
             let initialization_may_write = !params.initial_queries.trim().is_empty();
@@ -52,6 +61,7 @@ impl OperationScope {
                 tokio::select! {
                     biased;
                     _ = until_revoked(&mut revoked) => None,
+                    _ = until_plugin_cancelled(&mut cancellation) => None,
                     result = poll_fn(|cx| {
                         let current = state.borrow();
                         if *current {
@@ -99,6 +109,7 @@ impl OperationScope {
                 tokio::select! {
                     biased;
                     _ = until_revoked(&mut revoked) => None,
+                    _ = until_plugin_cancelled(&mut cancellation) => None,
                     result = poll_fn(|cx| {
                         // Revocation and starting/polling the business closure have a definite
                         // order. Never begin another closure poll after this domain is revoked.
@@ -148,4 +159,12 @@ async fn until_revoked(revoked: &mut watch::Receiver<bool>) {
 fn interrupted(outcome_unknown: bool) -> DbError {
     DbError::msg("The operation's connection was closed or reopened.")
         .with_session_loss(outcome_unknown)
+}
+
+async fn until_plugin_cancelled(cancellation: &mut Option<watch::Receiver<bool>>) {
+    if let Some(cancellation) = cancellation {
+        until_revoked(cancellation).await;
+    } else {
+        std::future::pending::<()>().await;
+    }
 }

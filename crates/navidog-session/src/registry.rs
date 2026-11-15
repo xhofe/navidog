@@ -17,10 +17,10 @@ impl DriverRegistry {
         cx.global::<Self>().0.get(id).cloned()
     }
 
-    pub fn icon(cx: &App, id: &str) -> &'static str {
+    pub fn icon(cx: &App, id: &str) -> gpui_kit::SharedString {
         Self::get(cx, id)
-            .map(|driver| driver.info().icon)
-            .unwrap_or("icons/db/mysql.svg")
+            .map(|driver| driver.info().icon.clone().into())
+            .unwrap_or_else(|| "icons/db/mysql.svg".into())
     }
 
     pub fn dialect(cx: &App, id: &str) -> Option<Arc<dyn Dialect>> {

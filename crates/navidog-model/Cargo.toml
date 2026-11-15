@@ -9,6 +9,8 @@ description = "Pure navidog data model: connections, objects, crypto, paths, que
 
 [dependencies]
 serde.workspace = true
+regex.workspace = true
+chrono.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 uuid.workspace = true

@@ -23,8 +23,10 @@ navidog-navigator = { version = "0.0.1", path = "crates/navidog-navigator" }
 navidog-grid = { version = "0.0.1", path = "crates/navidog-grid" }
 navidog-designer = { version = "0.0.1", path = "crates/navidog-designer" }
 navidog-query = { version = "0.0.1", path = "crates/navidog-query" }
+navidog-plugin = { version = "0.0.1", path = "crates/navidog-plugin" }
 
-gpui-kit = { version = "0.8", features = ["gpui-fast"] }
+gpui-kit = { version = "=0.8.1", features = ["gpui-fast"] }
+gpui-shell = { version = "=0.8.1", default-features = false, features = ["quickjs", "components", "gpui-fast"] }
 rust-i18n = "4"
 anyhow = "1"
 thiserror = "2"
@@ -56,3 +58,7 @@ opt-level = "s"
 # panic = "abort"
 # "s" for a smaller binary. The 2026-10-10 spike scrolled about 20% slower than opt-level 3
 # (21-table-viewer.md §1); release keeps "s".
+
+[patch.crates-io]
+# Published russh 0.65.1 pins RSA rc.18; Shell 0.8.1 requires rc.19. See vendor/russh/README.navidog.md.
+russh = { path = "vendor/russh" }

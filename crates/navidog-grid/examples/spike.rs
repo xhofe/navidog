@@ -11,6 +11,7 @@ mod macos {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
+    use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{AppContext as _, HeadlessAppContext, WindowBounds, WindowOptions, size};
     use navidog_grid::ResultGrid;
     use navidog_grid::model::GridColumn;
@@ -81,6 +82,29 @@ mod macos {
             .collect();
         cx.update(|cx| grid.update(cx, |g, cx| g.set_data(columns, rows, cx)));
         println!("loaded {ROWS} rows × {COLS} columns: {:?}", t.elapsed());
+        if std::env::var_os("NAVIDOG_SPIKE_FORMATTERS").is_some() {
+            cx.update(|cx| {
+                navidog_app_state::plugin::init(cx);
+                cx.global_mut::<navidog_app_state::plugin::Contributions>().formatters.register("plugin/display",navidog_app_state::registry::Source::Plugin("plugin".into()),serde_json::json!({"id":"display","match":{},"display":{"kind":"template","template":"{value}"}})).unwrap();
+            });
+            cx.update_window(handle, |_, window, cx| {
+                use gpui_kit::Focusable as _;
+                window.render_frame(cx);
+                window.focus(&grid.focus_handle(cx), cx);
+                for column in 0..COLS {
+                    window.dispatch_action(
+                        Box::new(navidog_grid::grid::SetFormatter {
+                            column: format!("column_{column}").into(),
+                            formatter: Some("plugin/display".into()),
+                        }),
+                        cx,
+                    );
+                }
+            })
+            .unwrap();
+            cx.run_until_parked();
+            println!("plugin display formatter enabled on {COLS} columns");
+        }
 
         let frame = |cx: &mut HeadlessAppContext| {
             let t = Instant::now();

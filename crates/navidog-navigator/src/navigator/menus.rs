@@ -4,6 +4,13 @@ use super::*;
 
 impl NavigatorPanel {
     pub(crate) fn context_menu(node: Option<&Node>, cx: &App) -> NativeMenu {
+        navidog_app_state::plugin::context_menu(
+            Self::builtin_context_menu(node, cx),
+            "objects.context",
+            cx,
+        )
+    }
+    fn builtin_context_menu(node: Option<&Node>, cx: &App) -> NativeMenu {
         let new_conn =
             navidog_session::DriverRegistry::all(cx)
                 .into_iter()

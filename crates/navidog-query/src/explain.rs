@@ -50,6 +50,17 @@ pub(crate) async fn fetch_plan(
     sql: &str,
 ) -> DbResult<Plan> {
     let mut p = Plan::default();
+    if dialect.designer_templates().is_some() {
+        let sql = dialect.explain_sql(sql).ok_or_else(|| {
+            navidog_db::DbError::msg("This plugin driver has not declared an explain template.")
+        })?;
+        p.grid = rel
+            .execute(&sql)
+            .await?
+            .into_iter()
+            .find(|set| !set.columns.is_empty());
+        return Ok(p);
+    }
     match dialect.explain_style() {
         ExplainStyle::TableAndJson => {
             let grid = rel.execute(&format!("EXPLAIN {sql}")).await?;

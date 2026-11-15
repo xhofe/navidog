@@ -32,7 +32,8 @@ fn context_menu(menu: NativeMenu, state: &Entity<EditorState>, cx: &App) -> Nati
     use gpui_kit::component::input::{Paste, SelectAll};
     let selected = state.read(cx).selected_text().to_string();
     let none = selected.is_empty();
-    menu.menu_with_disabled(t!("query.cut").to_string(), none, Box::new(Cut))
+    let menu = menu
+        .menu_with_disabled(t!("query.cut").to_string(), none, Box::new(Cut))
         .menu_with_disabled(t!("query.copy").to_string(), none, Box::new(Copy))
         .menu(t!("query.paste").to_string(), Box::new(Paste))
         .menu(
@@ -78,5 +79,6 @@ fn context_menu(menu: NativeMenu, state: &Entity<EditorState>, cx: &App) -> Nati
             Box::new(navidog_app_state::actions::CreateSnippet {
                 code: selected.into(),
             }),
-        )
+        );
+    navidog_app_state::plugin::context_menu(menu, "editor.context", cx)
 }

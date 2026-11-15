@@ -43,7 +43,8 @@ impl MySqlDriver {
                     "icons/db/mariadb.svg"
                 } else {
                     "icons/db/mysql.svg"
-                },
+                }
+                .into(),
                 supports_network: true,
                 supports_ssl: true,
                 supports_ssh: true,

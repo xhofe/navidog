@@ -249,6 +249,7 @@ fn read_only_grid(set: &ResultSet, window: &mut Window, cx: &mut App) -> Entity<
     let grid = cx.new(|cx| ResultGrid::new(window, cx));
     let (columns, rows) = grid_data(set);
     grid.update(cx, |g, cx| {
+        g.set_formatter_persistence(false);
         g.set_quick_filter(false);
         g.set_data(columns, rows, cx);
         g.set_locked(true, cx);

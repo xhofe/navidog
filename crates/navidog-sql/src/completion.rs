@@ -497,7 +497,7 @@ mod tests {
     struct Plain;
 
     impl Dialect for Plain {
-        fn id(&self) -> &'static str {
+        fn id(&self) -> &str {
             "plain"
         }
         fn lex(&self) -> Lex {
@@ -512,10 +512,10 @@ mod tests {
         fn qualify_prefix<'a>(&self, _: &'a Scope) -> Option<&'a str> {
             None
         }
-        fn object_kinds(&self) -> &'static [ObjectKind] {
+        fn object_kinds(&self) -> &[ObjectKind] {
             &[]
         }
-        fn begin_transaction(&self) -> &'static str {
+        fn begin_transaction(&self) -> &str {
             "BEGIN"
         }
         fn is_system_database(&self, _: &str) -> bool {
@@ -524,10 +524,10 @@ mod tests {
         fn is_system_schema(&self, _: &str) -> bool {
             false
         }
-        fn extra_keywords(&self) -> &'static [&'static str] {
+        fn extra_keywords(&self) -> &[&str] {
             &[]
         }
-        fn extra_functions(&self) -> &'static [&'static str] {
+        fn extra_functions(&self) -> &[&str] {
             &[]
         }
         fn rename_object(&self, _: &Scope, _: ObjectKind, _: &str, _: &str) -> Option<String> {

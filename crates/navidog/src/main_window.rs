@@ -3,12 +3,13 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+use gpui_kit::AppContext as _;
 use gpui_kit::component::dock::{
     BasePanelView, DockArea, DockAreaState, DockEvent, DockLayout, DockPlacement, DockSkin,
     PanelId, PanelInfo, panel_handle,
 };
 use gpui_kit::component::status_bar::StatusBar;
-use gpui_kit::component::{TitleBar, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, TitleBar, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -40,6 +41,7 @@ use crate::state::{AppState, Frame};
 const DOCK_VERSION: usize = 1;
 
 pub struct MainWindow {
+    plugin_panels: std::collections::HashMap<String, Entity<navidog_plugin::panel::PluginPanel>>,
     focus_handle: FocusHandle,
     dock: Entity<DockArea>,
     _skin: Rc<DockSkin>,
@@ -167,6 +169,15 @@ impl MainWindow {
                     cx.defer_in(window, |this, window, cx| this.pin_objects_tab(window, cx));
                 }
             }),
+            cx.observe_in(
+                &navidog_plugin::Plugins::global(cx),
+                window,
+                |this, _, window, cx| {
+                    this.sync_plugin_panels(window, cx);
+                    crate::menus::set_menus(cx);
+                    cx.notify();
+                },
+            ),
             cx.observe(&Workspace::global(cx), |_, _, cx| cx.notify()),
             cx.observe(&ConnectionStore::global(cx), |_, _, cx| cx.notify()),
             // The status bar's object count changes when a catalog load finishes.
@@ -217,6 +228,7 @@ impl MainWindow {
             }
         });
         Self {
+            plugin_panels: Default::default(),
             focus_handle: cx.focus_handle(),
             dock,
             _skin: skin,
@@ -698,10 +710,10 @@ impl MainWindow {
         });
     }
 
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_toolbar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
         let registry = cx.global::<CommandRegistry>();
-        let items: Vec<_> = TOOLBAR
+        let mut items: Vec<_> = TOOLBAR
             .iter()
             .map(|(id, icon, label, command)| {
                 if *id == "|" {
@@ -715,7 +727,7 @@ impl MainWindow {
                 let action = command
                     .and_then(|c| registry.get(c))
                     .filter(|info| info.is_enabled(cx))
-                    .map(|info| info.action);
+                    .map(|info| info.action.clone());
                 let item = ToolbarItem::new(*id, lucide(icon), t!(*label).to_string())
                     .disabled(action.is_none());
                 let item = match tokens::icon_color(icon, cx) {
@@ -728,6 +740,24 @@ impl MainWindow {
                 .into_any_element()
             })
             .collect();
+        if let Some(contributions) = cx.try_global::<navidog_app_state::plugin::Contributions>() {
+            for (id, command) in contributions.commands_at("main.toolbar") {
+                let action = navidog_app_state::plugin::PluginCommand { id: id.clone() };
+                let mut button = gpui_kit::component::button::Button::new(id.clone());
+                if let Some(icon) = &command.icon {
+                    button = button.icon(gpui_kit::component::Icon::default().path(icon.clone()));
+                }
+                items.push(
+                    button
+                        .label(command.title())
+                        .disabled(!command.is_enabled(window.window_handle().window_id(), cx))
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(Box::new(action.clone()), cx)
+                        })
+                        .into_any_element(),
+                );
+            }
+        }
         h_flex()
             .h(tokens::toolbar::HEIGHT.rems())
             .px(tokens::toolbar::INSET_X.rems())
@@ -859,6 +889,15 @@ impl Render for MainWindow {
             .size_full()
             .bg(p.window_bg)
             .text_color(p.label)
+            .on_action(cx.listener(
+                |_, action: &navidog_app_state::plugin::PluginCommand, window, cx| {
+                    let result = navidog_plugin::Plugins::global(cx)
+                        .update(cx, |p, cx| p.command(&action.id, window, cx));
+                    if let Err(error) = result {
+                        tracing::warn!("{error}");
+                    }
+                },
+            ))
             .on_action(cx.listener(|this, a: &OpenObject, window, cx| {
                 this.open_object(&a.object, window, cx)
             }))
@@ -1140,7 +1179,7 @@ impl Render for MainWindow {
             ),
         )
         .when(self.state.show_toolbar, |r| {
-            r.child(self.render_toolbar(cx))
+            r.child(self.render_toolbar(window, cx))
         })
         .child(div().flex_1().min_h_0().child(self.dock.clone()))
         .when(self.state.show_status_bar, |r| {
@@ -1154,6 +1193,49 @@ impl Render for MainWindow {
             )
         })
         .child(navidog_navigator::snippet_form(cx))
+    }
+}
+
+impl MainWindow {
+    fn sync_plugin_panels(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let descriptors: Vec<_> = cx
+            .global::<navidog_app_state::plugin::Contributions>()
+            .panels
+            .iter()
+            .map(|(id, _, value)| (id.to_string(), value.clone()))
+            .collect();
+        for (id, value) in descriptors {
+            if self.plugin_panels.contains_key(&id)
+                || navidog_plugin::panel::PluginPanel::open(&id, cx).is_some()
+            {
+                continue;
+            }
+            // Persisted panels are restored by the Dock builder. Avoid duplicate live identity.
+            let panel = cx.new(|cx| {
+                navidog_plugin::panel::PluginPanel::new(
+                    id.clone(),
+                    value["title"]
+                        .as_str()
+                        .unwrap_or("Plugin")
+                        .to_string()
+                        .into(),
+                    cx,
+                )
+            });
+            let placement = match value["placement"].as_str() {
+                Some("left") => DockPlacement::Left,
+                Some("bottom") => DockPlacement::Bottom,
+                Some("right") => DockPlacement::Right,
+                _ => DockPlacement::Center,
+            };
+            let size = value["size"]
+                .as_f64()
+                .map(|size| tokens::Pt(size as f32).to_pixels(window.rem_size()));
+            self.plugin_panels.insert(id, panel.clone());
+            self.dock.update(cx, |dock, cx| {
+                dock.add_panel_view(panel_handle(panel), placement, size, window, cx)
+            });
+        }
     }
 }
 
